@@ -1,5 +1,12 @@
 # First Test Instructions (for Windows, written for a non-programmer)
 
+> **A desktop window version now exists.** Most people should use
+> **STAGE2_WINDOWS_TEST_INSTRUCTIONS.md** instead of this file --
+> it covers `RUN_GUI.bat`, a normal drag-and-drop window with no
+> command line involved. This file (`FIRST_TEST_INSTRUCTIONS.md`)
+> covers the original command-line version (`RUN_STAGE1.bat`), which
+> still works and is still fully supported.
+
 This guide assumes you have never used Command Prompt, Python, or any
 developer tool before. Follow the steps in order. If anything on your
 screen doesn't match what's described here, skip to "How to report a

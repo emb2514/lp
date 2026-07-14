@@ -3,14 +3,16 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ============================================================
-echo   Lender Package Builder - Setup and Test  (Stage 1)
+echo   Lender Package Builder - Setup and Test  (Stage 1 + 2)
 echo ============================================================
 echo.
 echo This will, on THIS computer only:
 echo   1. Look for a supported Python (3.11, 3.12, or 3.13)
 echo   2. Create a private virtual environment in this folder ^(.venv^)
-echo   3. Install the required packages into that environment only
-echo   4. Run the automated test suite and show you the results
+echo   3. Install the required packages into that environment only,
+echo      including the desktop interface (PySide6/Qt)
+echo   4. Run the automated test suite - engine and GUI - and show
+echo      you the results
 echo.
 echo No administrator rights are needed and nothing is installed
 echo system-wide or outside this folder.
@@ -105,8 +107,9 @@ if "%TEST_RESULT%"=="0" (
     echo Setup is complete and the application is working correctly
     echo on this computer.
     echo.
-    echo Next: open FIRST_TEST_INSTRUCTIONS.md for a simple walkthrough
-    echo of building your first test package.
+    echo Next: double-click RUN_GUI.bat to open the desktop application,
+    echo or see STAGE2_WINDOWS_TEST_INSTRUCTIONS.md for a full walkthrough
+    echo ^(FIRST_TEST_INSTRUCTIONS.md covers the command-line version^).
 ) else (
     echo  SOME TESTS FAILED  ^(see the output above for details^)
     echo ============================================================

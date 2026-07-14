@@ -1,4 +1,4 @@
-# Lender Package Builder (Stage 1)
+# Lender Package Builder (Stage 1 + Stage 2)
 
 A local, offline tool that turns a lender ZIP, nested ZIP, folder, or
 loose document collection into two organized PDF packages:
@@ -15,16 +15,26 @@ below.
 Everything runs on your own computer. No file, filename, hash, or
 report is ever uploaded anywhere. There is no telemetry.
 
-This is **Stage 1**: a command-line engine only. There is no graphical
-window yet (that is Stage 2) and no standalone `.exe` installer yet
-(Stage 3). See "Roadmap" below.
+**Stage 1** is the command-line processing engine. **Stage 2** adds a
+polished PySide6 desktop window around that same engine -- no command
+line required. There is no standalone, Python-free `.exe` package yet
+(that is Stage 3). See "Roadmap" below.
 
 ---
 
 ## Quick start (Windows, non-technical)
 
-See **FIRST_TEST_INSTRUCTIONS.md** for a full plain-English walkthrough.
-The short version:
+**Desktop application (recommended):** see
+**STAGE2_WINDOWS_TEST_INSTRUCTIONS.md** for a full plain-English
+walkthrough. The short version:
+
+1. Double-click `SETUP_AND_TEST.bat` and wait for it to finish.
+2. Double-click `RUN_GUI.bat`.
+3. Drag a ZIP, folder, or document onto the window and click
+   **Build Lender Packages**.
+
+**Command line:** see **FIRST_TEST_INSTRUCTIONS.md**. The short
+version:
 
 1. Double-click `SETUP_AND_TEST.bat` and wait for it to finish.
 2. Drag a ZIP file onto `RUN_STAGE1.bat`.
@@ -108,6 +118,54 @@ Options:
 
 The exit code is `0` only when the build completed **and** every
 required integrity check passed.
+
+## Desktop application (Stage 2)
+
+A native PySide6/Qt desktop window around the exact same engine --
+`gui/main_window.py` calls `cli.build_package()` directly, on a
+background `QThread`, and never re-implements any processing logic.
+
+Launch it with:
+
+```
+python -m lender_package_builder.gui         (any OS with a display)
+```
+
+or, on Windows, double-click **`RUN_GUI.bat`**.
+
+| State | Screenshot |
+|---|---|
+| Idle / drop | ![Idle / drop state](docs/screenshots/01_idle_drop_state.png) |
+| Processing | ![Processing state](docs/screenshots/02_processing_state.png) |
+| Completion | ![Completion state](docs/screenshots/03_completion_state.png) |
+
+Screenshots were captured from this repository's own automated test
+harness using synthetic data (see "Manual GUI verification performed"
+below) -- not a real lender package.
+
+Highlights:
+
+- **Drag-and-drop or Browse File/Browse Folder** -- accepts exactly one
+  ZIP, folder, or document at a time; dropping more than one shows a
+  friendly message instead of silently picking one.
+- **Advanced Settings** (collapsed by default) exposes the same
+  `max_pages_per_part` / `max_size_mb_per_part` ceilings as the CLI,
+  with the same "these are maximums, not targets, and no document is
+  ever split" explanation baked into the UI text.
+- **Structured progress**, via `lender_package_builder.progress`
+  (`ProgressStage` / `ProgressEvent`) -- a new, additive, optional
+  `progress_callback` parameter on `build_package()`. Existing callers
+  that don't pass one see no behavior change at all.
+- **Background worker** (`gui/worker.py`) -- the engine always runs on
+  a `QThread`, never the UI thread; the window stays responsive and
+  disables input controls while a job is running, and warns (rather
+  than silently allowing) closing the window mid-job.
+- **Success / warning / failure states** driven entirely by the real
+  `RunResult` -- a run is only ever shown as successful when every
+  integrity check actually passed, even if PDFs were produced.
+- **Large-input confirmation** -- exceeding the configured hard safety
+  limit requires an explicit "Process This Known Large Package" click
+  before `allow_large_input=True` is ever passed to the engine.
 
 ## Configuration
 
@@ -247,6 +305,7 @@ src/lender_package_builder/
 ├── cli.py            Argument parsing + top-level pipeline orchestration
 ├── config.py          config.toml loading
 ├── models.py           Core data classes (SourceOccurrence, OutputPart, ...)
+├── progress.py           ProgressStage / ProgressEvent structured progress API
 ├── inventory.py         Discovery, traversal order, natural sort
 ├── archives.py           ZIP safety: path sanitization, ignored-artifact detection, size estimation
 ├── hashing.py             Whole-file SHA-256
@@ -257,7 +316,18 @@ src/lender_package_builder/
 ├── validation.py                22 integrity checks (18 required + 4 strengthened re-verification checks)
 ├── reporting.py                  Plain-text + JSON report generation
 ├── workspace.py                   Temporary workspace management
-└── exceptions.py                   Error types
+├── exceptions.py                   Error types
+└── gui/                              Stage 2: PySide6 desktop application
+    ├── app.py                          QApplication bootstrap
+    ├── main_window.py                  Top-level window, state, wiring
+    ├── worker.py                       Background QThread worker layer
+    ├── theme.py                        Colors, fonts, stylesheet
+    ├── state.py                        GUI-side data models (no Qt)
+    ├── dialogs.py                      Large-input confirm, close-warning dialogs
+    ├── os_actions.py                   Open-folder (QDesktopServices) actions
+    ├── formatting.py                   Byte-size / elapsed-time display helpers
+    ├── assets/app_icon.svg               Local application icon
+    └── widgets/                          drop_zone, advanced_settings, progress_view, result_view
 ```
 
 ## Testing
@@ -267,26 +337,75 @@ src/lender_package_builder/
 .venv/bin/python -m pytest tests -v              (macOS/Linux)
 ```
 
-38 automated tests cover all 22 scenarios required for Stage 1 (see
-`tests/`), plus extra coverage for ignored system artifacts, non-
-overwriting duplicate ZIP filenames, report reconciliation, the
-pure-Python DOCX/XLSX fallback renderer, and (on machines with
-LibreOffice installed) the real high-fidelity DOCX/XLSX/DOC/XLS
-conversion path.
+83 automated tests: 49 engine tests (`tests/*.py`) covering all 22
+Stage 1 scenarios plus extra coverage (ignored system artifacts,
+non-overwriting duplicate ZIP filenames, report reconciliation, the
+pure-Python DOCX/XLSX fallback renderer, LibreOffice conversion when
+available, the structured progress API, and the maximum-constraint
+splitting behavior), and 34 GUI tests (`tests/gui/*.py`, using
+`pytest-qt` with the Qt `offscreen` platform) covering all 20 Stage 2
+scenarios: initial state, drag-and-drop and Browse fallbacks, the
+multiple-items rejection message, Advanced Settings defaults/
+validation, structured progress rendering, the real background
+worker's threading and cleanup, success/warning/failure result views,
+large-input confirmation, folder-opening actions, "Process Another
+Package", close-while-processing, and a full synthetic package run
+through the real GUI worker end to end.
+
+**Environment note:** on the headless Linux container this project was
+built and tested in, `QT_QPA_PLATFORM=offscreen` is required (no real
+display); on real Windows the native Qt platform plugin is used
+automatically instead. In that headless container, running the full
+83-test suite in one process occasionally (roughly 1 run in 4-6)
+segfaults strictly at Python/Qt interpreter *shutdown*, after every
+test has already passed -- a known category of PySide6/Shiboken
+fragility specific to the `offscreen` platform under heavy repeated
+widget construction/destruction in one long-lived process, not a defect
+in any individual test or in the application. Every individual test
+passes reliably and repeatedly; no crash has ever occurred with
+application code on the stack. This has not been observed running the
+GUI normally (one window, one process lifetime) and is not expected on
+real Windows with the native window system.
 
 ## Roadmap
 
-- **Stage 1 (this delivery):** local processing engine, CLI, automated
-  tests, setup scripts, conversion, deduplication, PDF merging/splitting,
-  reports. Complete.
-- **Stage 2 (not started):** a simple Windows drag-and-drop window.
+- **Stage 1:** local processing engine, CLI, automated tests, setup
+  scripts, conversion, deduplication, PDF merging/splitting, reports.
+  Complete.
+- **Stage 2 (this delivery):** PySide6 desktop window around the same
+  engine, structured progress API, background worker, drag-and-drop,
+  advanced settings, success/warning/failure states, GUI automated
+  tests. Complete.
 - **Stage 3 (not started):** a portable Windows package needing no
   Python install, no admin rights, and no installer.
 
-## Known Stage 1 limitations
+## Known limitations
 
-See the "Known Stage 1 Limitations" section provided at the end of the
-build for the full list (Windows/Office-automation testing status, MSG
-fixture coverage, very large nested archives, etc). Nothing in that
-list weakens the non-negotiable safety rule -- it only describes
-conversion-fidelity and environment edge cases.
+**Stage 1** -- see the "Known Stage 1 Limitations" summary from the
+original build for the full list (Windows/Office-automation testing
+status, MSG fixture coverage, very large nested archives, etc). Nothing
+in that list weakens the non-negotiable safety rule -- it only
+describes conversion-fidelity and environment edge cases.
+
+**Stage 2 additions:**
+
+- The GUI has been run and tested extensively on this Linux development
+  machine (real widget behavior, drag-and-drop logic, the real
+  background worker, a full synthetic end-to-end run) using Qt's
+  `offscreen` platform and `Xvfb`-free screenshot capture -- it has
+  **not** been run on a real Windows 11 desktop. Windows-specific
+  concerns (native drag-and-drop from Explorer, DPI scaling on a real
+  multi-monitor setup, SmartScreen prompts, `pythonw.exe` launch
+  behavior) still need real-machine verification; see
+  `STAGE2_WINDOWS_TEST_INSTRUCTIONS.md`.
+- See "Testing" above for the headless-offscreen-platform shutdown-crash
+  caveat in this development container.
+- The large-input confirmation dialog only appears when the
+  background size estimate has already completed by the time you click
+  **Build Lender Packages**; if you click before it finishes (rare, on
+  a very large input, with an unusually slow disk), the engine's own
+  safety check still applies and safely stops with a clear error --
+  nothing is silently bypassed, but the friendlier confirmation dialog
+  is skipped in that edge case.
+- No cancellation button exists, by design (see Stage 2 spec) -- closing
+  the window is blocked with a warning while a job is running instead.

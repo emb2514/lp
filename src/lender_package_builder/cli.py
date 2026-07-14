@@ -30,6 +30,7 @@ from .exceptions import (
 )
 from .inventory import InventoryBuilder
 from .models import ConversionOutcome, ProcessingStatus, RunResult
+from .progress import ProgressCallback, ProgressEvent, ProgressSeverity, ProgressStage
 from .workspace import Workspace
 
 logger = logging.getLogger("lender_package_builder")
@@ -149,6 +150,55 @@ def _print_summary(run: RunResult) -> None:
 # ---------------------------------------------------------------------
 
 
+class _ProgressReporter:
+    """Bridges pipeline progress to console printing, the log file, and
+    an optional structured `progress_callback` -- without changing what
+    the CLI has always printed/logged for callers that pass no callback.
+    """
+
+    _LOG_FUNCS = {
+        ProgressSeverity.INFO: logger.info,
+        ProgressSeverity.WARNING: logger.warning,
+        ProgressSeverity.ERROR: logger.error,
+    }
+
+    def __init__(self, callback: ProgressCallback | None, print_enabled: bool):
+        self._callback = callback
+        self._print_enabled = print_enabled
+
+    def emit(
+        self,
+        stage: ProgressStage,
+        message: str,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        current_item: str | None = None,
+        severity: ProgressSeverity = ProgressSeverity.INFO,
+        detail: str | None = None,
+        print_message: bool = True,
+    ) -> None:
+        if self._print_enabled and print_message:
+            print(message)
+        self._LOG_FUNCS[severity](message)
+        if self._callback is not None:
+            event = ProgressEvent(
+                stage=stage,
+                message=message,
+                current=current,
+                total=total,
+                current_item=current_item,
+                severity=severity,
+                detail=detail,
+            )
+            # A misbehaving callback (e.g. a GUI bug) must never take down
+            # the processing job itself.
+            try:
+                self._callback(event)
+            except Exception:
+                logger.exception("progress_callback raised; continuing processing")
+
+
 def build_package(
     input_path: Path,
     output_dir: Path | None,
@@ -157,6 +207,7 @@ def build_package(
     keep_temp: bool = False,
     verbose: bool = False,
     progress: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> RunResult:
     if not input_path.exists():
         raise InvalidInputError(f"Input path does not exist: {input_path}")
@@ -176,9 +227,10 @@ def build_package(
     file_handler = _setup_logging(logs_dir, verbose)
     start_dt = datetime.now()
     start_perf = time.perf_counter()
+    reporter = _ProgressReporter(progress_callback, print_enabled=progress)
 
     try:
-        _preflight_checks(input_path, resolved_output_dir, config, allow_large_input)
+        _preflight_checks(input_path, resolved_output_dir, config, allow_large_input, reporter)
 
         workspace = Workspace()
         run_succeeded = False
@@ -194,6 +246,7 @@ def build_package(
                 allow_large_input=allow_large_input,
                 workspace=workspace,
                 progress=progress,
+                reporter=reporter,
             )
             run_succeeded = True
         finally:
@@ -215,7 +268,15 @@ def build_package(
             "max_size_mb_per_part": config.max_size_mb_per_part,
             "allow_large_input": allow_large_input,
         }
+        reporter.emit(ProgressStage.WRITING_REPORTS, "Writing reports...")
         reporting.write_all_reports(run, config, meta, reports_dir)
+
+        reporter.emit(
+            ProgressStage.COMPLETE,
+            "Processing complete." if run.success else "Processing finished with failed integrity checks.",
+            severity=ProgressSeverity.INFO if run.success else ProgressSeverity.WARNING,
+            print_message=False,
+        )
         return run
     finally:
         logger.removeHandler(file_handler)
@@ -249,13 +310,20 @@ def _setup_logging(logs_dir: Path, verbose: bool) -> logging.Handler:
 
 
 def _preflight_checks(
-    input_path: Path, output_dir: Path, config: AppConfig, allow_large_input: bool
+    input_path: Path,
+    output_dir: Path,
+    config: AppConfig,
+    allow_large_input: bool,
+    reporter: _ProgressReporter,
 ) -> None:
     estimate = archives.estimate_expansion(input_path)
-    logger.info(
-        "Preflight estimate: %d entries, %.1f MB expanded.",
-        estimate.total_entries,
-        estimate.total_uncompressed_bytes / (1024 * 1024),
+    reporter.emit(
+        ProgressStage.PREFLIGHT,
+        f"Preflight estimate: {estimate.total_entries} entries, "
+        f"{estimate.total_uncompressed_bytes / (1024 * 1024):.1f} MB expanded.",
+        detail=f"entries={estimate.total_entries} "
+        f"expanded_mb={estimate.total_uncompressed_bytes / (1024 * 1024):.1f}",
+        print_message=False,
     )
 
     if not allow_large_input:
@@ -272,10 +340,12 @@ def _preflight_checks(
                 "re-run with --allow-large-input."
             )
     elif estimate.total_uncompressed_bytes > config.large_input_warning_bytes:
-        logger.warning(
-            "Input expands to approximately %.0f MB, above the warning threshold of %.0f MB.",
-            estimate.total_uncompressed_bytes / (1024 * 1024),
-            config.large_input_warning_mb,
+        reporter.emit(
+            ProgressStage.PREFLIGHT,
+            f"Input expands to approximately {estimate.total_uncompressed_bytes / (1024 * 1024):.0f} MB, "
+            f"above the warning threshold of {config.large_input_warning_mb:.0f} MB.",
+            severity=ProgressSeverity.WARNING,
+            print_message=False,
         )
 
     check_root = output_dir.parent if output_dir.parent.exists() else Path(output_dir.anchor or "/")
@@ -303,27 +373,32 @@ def _execute_pipeline(
     allow_large_input: bool,
     workspace: Workspace,
     progress: bool,
+    reporter: _ProgressReporter,
 ) -> RunResult:
-    def say(msg: str) -> None:
-        if progress:
-            print(msg)
-        logger.info(msg)
-
-    say(f"[1/6] Discovering source files in: {input_path}")
+    reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/6] Discovering source files in: {input_path}")
     inventory_builder = InventoryBuilder(config, workspace, allow_large_input)
     occurrences = inventory_builder.build(input_path)
-    say(f"      Found {len(occurrences)} source occurrence(s).")
+    reporter.emit(
+        ProgressStage.DISCOVERING_FILES, f"      Found {len(occurrences)} source occurrence(s)."
+    )
 
-    say("[2/6] Detecting exact duplicates (whole-file SHA-256)...")
+    reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/6] Detecting exact duplicates (whole-file SHA-256)...")
     duplicate_groups = deduplication.find_duplicates(occurrences)
     dup_count = sum(len(g.duplicate_document_ids) for g in duplicate_groups)
-    say(f"      {dup_count} duplicate occurrence(s) in {len(duplicate_groups)} group(s).")
+    reporter.emit(
+        ProgressStage.DETECTING_DUPLICATES,
+        f"      {dup_count} duplicate occurrence(s) in {len(duplicate_groups)} group(s).",
+    )
 
     occ_by_id = {o.document_id: o for o in occurrences}
     backend_usage: dict[str, int] = {}
 
     non_ignored = [o for o in occurrences if not o.is_ignored_artifact]
-    say(f"[3/6] Converting {len(non_ignored)} document(s) to PDF...")
+    reporter.emit(
+        ProgressStage.CONVERTING_DOCUMENTS,
+        f"[3/6] Converting {len(non_ignored)} document(s) to PDF...",
+        total=len(non_ignored),
+    )
 
     for i, occ in enumerate(non_ignored, start=1):
         if occ.is_duplicate:
@@ -331,8 +406,14 @@ def _execute_pipeline(
             _copy_conversion_result(retained, occ)
             if occ.status == ProcessingStatus.UNCONVERTED_PLACEHOLDER:
                 _preserve_unconverted_original(occ, unconverted_dir)
-            say(f"      [{i}/{len(non_ignored)}] {occ.original_relative_path}: duplicate of "
-                f"{retained.document_id} (reused conversion)")
+            reporter.emit(
+                ProgressStage.CONVERTING_DOCUMENTS,
+                f"      [{i}/{len(non_ignored)}] {occ.original_relative_path}: duplicate of "
+                f"{retained.document_id} (reused conversion)",
+                current=i,
+                total=len(non_ignored),
+                current_item=occ.original_relative_path,
+            )
             backend_usage[occ.conversion_backend or "unknown"] = (
                 backend_usage.get(occ.conversion_backend or "unknown", 0) + 1
             )
@@ -378,15 +459,20 @@ def _execute_pipeline(
             _preserve_unconverted_original(occ, unconverted_dir)
 
         status_word = "OK" if occ.status == ProcessingStatus.CONVERTED else "PLACEHOLDER"
-        say(
+        reporter.emit(
+            ProgressStage.CONVERTING_DOCUMENTS,
             f"      [{i}/{len(non_ignored)}] {occ.original_relative_path}: {status_word} "
-            f"({occ.conversion_backend}, {occ.converted_page_count} page(s))"
+            f"({occ.conversion_backend}, {occ.converted_page_count} page(s))",
+            current=i,
+            total=len(non_ignored),
+            current_item=occ.original_relative_path,
+            severity=ProgressSeverity.WARNING if status_word == "PLACEHOLDER" else ProgressSeverity.INFO,
         )
         backend_usage[occ.conversion_backend or "unknown"] = (
             backend_usage.get(occ.conversion_backend or "unknown", 0) + 1
         )
 
-    say("[4/6] Merging OG package...")
+    reporter.emit(ProgressStage.BUILDING_OG, "[4/6] Merging OG package...")
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
         og_docs,
@@ -399,9 +485,9 @@ def _execute_pipeline(
     for part in og_parts:
         for doc_id in part.document_ids:
             occ_by_id[doc_id].og_part_index = part.index
-    say(f"      OG: {len(og_parts)} part(s) written.")
+    reporter.emit(ProgressStage.BUILDING_OG, f"      OG: {len(og_parts)} part(s) written.")
 
-    say("[5/6] Merging Final package...")
+    reporter.emit(ProgressStage.BUILDING_FINAL, "[5/6] Merging Final package...")
     final_docs = [o for o in occurrences if o.included_in_final]
     final_parts = merging.write_package(
         final_docs,
@@ -414,7 +500,7 @@ def _execute_pipeline(
     for part in final_parts:
         for doc_id in part.document_ids:
             occ_by_id[doc_id].final_part_index = part.index
-    say(f"      Final: {len(final_parts)} part(s) written.")
+    reporter.emit(ProgressStage.BUILDING_FINAL, f"      Final: {len(final_parts)} part(s) written.")
 
     run = RunResult(
         input_path=input_path,
@@ -428,12 +514,16 @@ def _execute_pipeline(
         unsafe_archive_incidents=inventory_builder.unsafe_incidents,
     )
 
-    say("[6/6] Running integrity checks...")
+    reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[6/6] Running integrity checks...")
     run.integrity_checks = validation.run_integrity_checks(
         run, config.max_pages_per_part, config.max_size_bytes_per_part
     )
     passed = sum(1 for c in run.integrity_checks if c.passed)
-    say(f"      {passed}/{len(run.integrity_checks)} integrity checks passed.")
+    reporter.emit(
+        ProgressStage.RUNNING_INTEGRITY_CHECKS,
+        f"      {passed}/{len(run.integrity_checks)} integrity checks passed.",
+        severity=ProgressSeverity.INFO if passed == len(run.integrity_checks) else ProgressSeverity.WARNING,
+    )
 
     return run
 

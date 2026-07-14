@@ -1,4 +1,4 @@
-# Core dependencies for Lender Package Builder (Stage 1)
+# Core dependencies for Lender Package Builder (Stage 1 + Stage 2 GUI)
 # Everything runs 100% locally. No dependency here contacts a remote
 # server at run time; PyPI is only used at install time by pip itself.
 
@@ -10,5 +10,9 @@ openpyxl>=3.1,<4.0
 beautifulsoup4>=4.12,<5.0
 extract-msg>=0.54,<0.56
 
-# Testing
+# Stage 2 desktop GUI (PySide6 / Qt for Python)
+PySide6>=6.7,<7.0
+
+# Testing (engine + GUI)
 pytest>=8.0,<9.0
+pytest-qt>=4.4,<5.0

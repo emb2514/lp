@@ -19,18 +19,24 @@ dependencies = [
     "openpyxl>=3.1,<4.0",
     "beautifulsoup4>=4.12,<5.0",
     "extract-msg>=0.54,<0.56",
+    "PySide6>=6.7,<7.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9.0",
+    "pytest-qt>=4.4,<5.0",
 ]
 
 [project.scripts]
 lender-package-builder = "lender_package_builder.cli:main"
+lender-package-builder-gui = "lender_package_builder.gui.app:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_background_thread: run against a real QThread instead of the synchronous GUI test fake",
+]
