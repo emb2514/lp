@@ -1,0 +1,40 @@
+# Lender Package Builder - Stage 1 configuration
+#
+# These are defaults. Most values can be overridden per-run with
+# command-line options (see README.md). Edit this file only if you want
+# to change the defaults for every run.
+
+[splitting]
+# Maximum pages targeted per output PDF part. A single oversized source
+# document may still exceed this on its own (see rule in README).
+page_limit = 200
+
+# Maximum size, in megabytes, targeted per output PDF part.
+size_limit_mb = 75
+
+[safety]
+# Warn (but still proceed) when the expanded input exceeds this many
+# megabytes, unless --allow-large-input is passed.
+large_input_warning_mb = 2000
+
+# Hard ceiling on expanded archive size, in megabytes, before refusing to
+# proceed unless --allow-large-input is passed.
+max_expanded_size_mb = 8000
+
+# Hard ceiling on the number of entries inside all archives combined,
+# before refusing to proceed unless --allow-large-input is passed.
+max_archive_entries = 200000
+
+# Required free disk space margin, as a multiple of the estimated
+# expanded input size, before processing starts.
+required_free_space_multiplier = 3.0
+
+[conversion]
+# Preferred office conversion backend order. "libreoffice" is used when
+# a local LibreOffice (soffice) install is found. "office_com" is only
+# ever attempted on Windows with Microsoft Office installed. "fallback"
+# is the built-in pure-Python best-effort renderer.
+office_backend_order = ["libreoffice", "office_com", "fallback"]
+
+[logging]
+level = "INFO"
