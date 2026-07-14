@@ -5,12 +5,27 @@
 # to change the defaults for every run.
 
 [splitting]
-# Maximum pages targeted per output PDF part. A single oversized source
-# document may still exceed this on its own (see rule in README).
-page_limit = 200
+# max_pages_per_part and max_size_mb_per_part are MAXIMUM CONSTRAINTS
+# on one output PDF part, not target sizes to fill. A part is closed
+# and a new one started as soon as adding the next COMPLETE source
+# document would exceed either maximum -- parts are never padded,
+# rearranged, or split to approach these numbers, so real parts will
+# usually land well below them. A single source document that alone
+# exceeds a maximum is kept intact in its own oversized part rather
+# than being split (see README.md and splitting.py).
+#
+# These defaults were chosen from benchmark measurements (see
+# benchmarks/results.md and README.md's "Choosing the output-part size
+# defaults" section) balancing smooth local opening/searching against
+# not fragmenting a package into an unmanageable number of parts. They
+# are a starting point, not a universal guarantee for every machine or
+# document mix -- change them freely for your environment.
 
-# Maximum size, in megabytes, targeted per output PDF part.
-size_limit_mb = 75
+# Maximum pages allowed in one output PDF part.
+max_pages_per_part = 750
+
+# Maximum size, in megabytes, allowed in one output PDF part.
+max_size_mb_per_part = 100
 
 [safety]
 # Warn (but still proceed) when the expanded input exceeds this many

@@ -49,9 +49,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     build.add_argument("input_path", help="Path to a ZIP file, folder, or single supported document.")
     build.add_argument("--output", type=Path, default=None, help="Explicit output directory.")
-    build.add_argument("--page-limit", type=int, default=None, help="Override max pages per output part.")
     build.add_argument(
-        "--size-limit-mb", type=float, default=None, help="Override max MB per output part."
+        "--max-pages-per-part",
+        type=int,
+        default=None,
+        help="Override the maximum pages allowed in one output part (a ceiling, not a target).",
+    )
+    build.add_argument(
+        "--max-size-mb-per-part",
+        type=float,
+        default=None,
+        help="Override the maximum MB allowed in one output part (a ceiling, not a target).",
     )
     build.add_argument(
         "--allow-large-input",
@@ -85,10 +93,10 @@ def _run_build_command(args: argparse.Namespace) -> int:
     config_path = args.config or _default_config_path()
     config = load_config(config_path)
 
-    if args.page_limit is not None:
-        config.page_limit = args.page_limit
-    if args.size_limit_mb is not None:
-        config.size_limit_mb = args.size_limit_mb
+    if args.max_pages_per_part is not None:
+        config.max_pages_per_part = args.max_pages_per_part
+    if args.max_size_mb_per_part is not None:
+        config.max_size_mb_per_part = args.max_size_mb_per_part
 
     try:
         run = build_package(
@@ -203,8 +211,8 @@ def build_package(
             "app_version": __version__,
             "os_info": platform.platform(),
             "python_version": platform.python_version(),
-            "page_limit": config.page_limit,
-            "size_limit_mb": config.size_limit_mb,
+            "max_pages_per_part": config.max_pages_per_part,
+            "max_size_mb_per_part": config.max_size_mb_per_part,
             "allow_large_input": allow_large_input,
         }
         reporting.write_all_reports(run, config, meta, reports_dir)
@@ -381,7 +389,12 @@ def _execute_pipeline(
     say("[4/6] Merging OG package...")
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
-        og_docs, og_dir, "Full_Lender_Package_OG_Files_Part", "OG", config.page_limit, config.size_limit_bytes
+        og_docs,
+        og_dir,
+        "Full_Lender_Package_OG_Files_Part",
+        "OG",
+        config.max_pages_per_part,
+        config.max_size_bytes_per_part,
     )
     for part in og_parts:
         for doc_id in part.document_ids:
@@ -395,8 +408,8 @@ def _execute_pipeline(
         final_dir,
         "Full_Lender_Package_Final_Part",
         "Final",
-        config.page_limit,
-        config.size_limit_bytes,
+        config.max_pages_per_part,
+        config.max_size_bytes_per_part,
     )
     for part in final_parts:
         for doc_id in part.document_ids:
@@ -416,7 +429,9 @@ def _execute_pipeline(
     )
 
     say("[6/6] Running integrity checks...")
-    run.integrity_checks = validation.run_integrity_checks(run, config.page_limit, config.size_limit_bytes)
+    run.integrity_checks = validation.run_integrity_checks(
+        run, config.max_pages_per_part, config.max_size_bytes_per_part
+    )
     passed = sum(1 for c in run.integrity_checks if c.passed)
     say(f"      {passed}/{len(run.integrity_checks)} integrity checks passed.")
 

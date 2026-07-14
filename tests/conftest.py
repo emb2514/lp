@@ -17,14 +17,6 @@ def config() -> AppConfig:
 
 
 @pytest.fixture
-def small_split_config() -> AppConfig:
-    cfg = AppConfig()
-    cfg.page_limit = 200
-    cfg.size_limit_mb = 75
-    return cfg
-
-
-@pytest.fixture
 def run_build():
     def _run(input_path, output_dir=None, config=None, **kwargs):
         cfg = config or AppConfig()

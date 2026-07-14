@@ -15,8 +15,14 @@ from pathlib import Path
 
 @dataclasses.dataclass
 class AppConfig:
-    page_limit: int = 200
-    size_limit_mb: float = 75.0
+    # Maximum output-part constraints (NOT targets -- see splitting.py).
+    # A part is closed as soon as adding the next whole document would
+    # exceed either maximum; parts are never padded or rearranged to
+    # approach these values. See "Choosing the output-part size
+    # defaults" in README.md for the benchmark-based reasoning behind
+    # the shipped defaults.
+    max_pages_per_part: int = 750
+    max_size_mb_per_part: float = 100.0
 
     large_input_warning_mb: float = 2000.0
     max_expanded_size_mb: float = 8000.0
@@ -28,8 +34,8 @@ class AppConfig:
     log_level: str = "INFO"
 
     @property
-    def size_limit_bytes(self) -> int:
-        return int(self.size_limit_mb * 1024 * 1024)
+    def max_size_bytes_per_part(self) -> int:
+        return int(self.max_size_mb_per_part * 1024 * 1024)
 
     @property
     def large_input_warning_bytes(self) -> int:
@@ -60,10 +66,10 @@ def load_config(config_path: Path | None) -> AppConfig:
     conversion = raw.get("conversion", {})
     logging_cfg = raw.get("logging", {})
 
-    if "page_limit" in splitting:
-        cfg.page_limit = int(splitting["page_limit"])
-    if "size_limit_mb" in splitting:
-        cfg.size_limit_mb = float(splitting["size_limit_mb"])
+    if "max_pages_per_part" in splitting:
+        cfg.max_pages_per_part = int(splitting["max_pages_per_part"])
+    if "max_size_mb_per_part" in splitting:
+        cfg.max_size_mb_per_part = float(splitting["max_size_mb_per_part"])
 
     if "large_input_warning_mb" in safety:
         cfg.large_input_warning_mb = float(safety["large_input_warning_mb"])

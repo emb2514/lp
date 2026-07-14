@@ -116,6 +116,13 @@ class OutputPart:
     file_size_bytes: int = 0
     is_oversized: bool = False
 
+    # Human-readable reason(s) this part ended where it did:
+    # "page_maximum", "size_maximum", "oversized_document", and/or
+    # "end_of_package". Derived after final part composition settles
+    # (including any actual-size rebuild), for reporting only -- it is
+    # not itself relied on by the integrity checks.
+    close_reasons: list[str] = dataclasses.field(default_factory=list)
+
 
 @dataclasses.dataclass
 class DuplicateGroup:

@@ -1,11 +1,16 @@
 """Whole-document PDF merging into OG/Final output parts.
 
 Builds each output part from complete converted documents in order,
-then enforces the actual on-disk size target: if a multi-document part
-exceeds the target, the last whole document is moved to the next part
-and the part is rebuilt, repeated conservatively until the part fits or
-holds exactly one (necessarily oversized) document. No document is ever
-split to meet a size or page target.
+then verifies the actual on-disk page count and size: if a
+multi-document part exceeds the configured MAXIMUM size after merging,
+the last whole document is removed from that part, moved to the next
+part, and the part is rebuilt and rechecked -- repeated conservatively
+until the part fits or holds exactly one (necessarily oversized)
+document. No document is ever split to meet a page or size maximum.
+
+`max_pages_per_part` and `max_size_bytes_per_part` are ceilings, not
+targets: parts are expected to vary in size and are never padded or
+rearranged to approach either maximum. See `splitting.py`.
 """
 
 from __future__ import annotations
@@ -37,8 +42,8 @@ def write_package(
     output_dir: Path,
     file_prefix: str,
     package_label: str,
-    page_limit: int,
-    size_limit_bytes: int,
+    max_pages_per_part: int,
+    max_size_bytes_per_part: int,
 ) -> list[OutputPart]:
     """Write `docs` (in order) as one or more PDF parts under `output_dir`.
 
@@ -49,7 +54,7 @@ def write_package(
     if not docs:
         return []
 
-    parts = plan_parts(docs, page_limit, size_limit_bytes)
+    parts = plan_parts(docs, max_pages_per_part, max_size_bytes_per_part)
 
     i = 0
     while i < len(parts):
@@ -57,14 +62,14 @@ def write_package(
             dest = output_dir / f"{file_prefix}_{i + 1:03d}.pdf"
             _build_merged_pdf(parts[i], dest)
             actual_size = dest.stat().st_size
-            if actual_size <= size_limit_bytes or len(parts[i]) <= 1:
+            if actual_size <= max_size_bytes_per_part or len(parts[i]) <= 1:
                 break
             logger.info(
-                "%s part %d exceeded the %d-byte size target after merging (%d bytes); "
+                "%s part %d exceeded the %d-byte maximum after merging (%d bytes); "
                 "moving the last document to the next part and rebuilding.",
                 package_label,
                 i + 1,
-                size_limit_bytes,
+                max_size_bytes_per_part,
                 actual_size,
             )
             moved = parts[i].pop()
@@ -78,9 +83,14 @@ def write_package(
     for idx, part_docs in enumerate(parts, start=1):
         dest = output_dir / f"{file_prefix}_{idx:03d}.pdf"
         size_bytes = dest.stat().st_size
-        page_count = sum(doc.converted_page_count or 0 for doc in part_docs)
+        # Re-read the actual merged file rather than trusting the sum of
+        # recorded per-document page counts, so this number is an
+        # independent, verifiable fact about the file on disk (see
+        # validation.py's page-count integrity checks).
+        actual_page_count = len(PdfReader(str(dest)).pages)
         is_oversized = len(part_docs) == 1 and (
-            (part_docs[0].converted_page_count or 0) > page_limit or size_bytes > size_limit_bytes
+            (part_docs[0].converted_page_count or 0) > max_pages_per_part
+            or size_bytes > max_size_bytes_per_part
         )
         output_parts.append(
             OutputPart(
@@ -88,10 +98,51 @@ def write_package(
                 index=idx,
                 file_path=dest,
                 document_ids=[doc.document_id for doc in part_docs],
-                page_count=page_count,
+                page_count=actual_page_count,
                 file_size_bytes=size_bytes,
                 is_oversized=is_oversized,
             )
         )
 
+    _assign_close_reasons(output_parts, docs, max_pages_per_part, max_size_bytes_per_part)
     return output_parts
+
+
+def _assign_close_reasons(
+    output_parts: list[OutputPart],
+    all_docs: list[SourceOccurrence],
+    max_pages_per_part: int,
+    max_size_bytes_per_part: int,
+) -> None:
+    """Best-effort, human-readable explanation of why each part ended.
+
+    Derived from the FINAL, settled part composition (after any
+    actual-size rebuild), so it reflects what really happened. This is
+    for Processing_Report.txt only; correctness does not depend on it.
+    """
+
+    by_id = {d.document_id: d for d in all_docs}
+
+    for i, part in enumerate(output_parts):
+        reasons: list[str] = []
+
+        if part.is_oversized:
+            reasons.append("oversized_document")
+
+        if i == len(output_parts) - 1:
+            reasons.append("end_of_package")
+        else:
+            next_part = output_parts[i + 1]
+            if next_part.document_ids:
+                next_doc = by_id[next_part.document_ids[0]]
+                next_pages = next_doc.converted_page_count or 0
+                next_size = next_doc.converted_size_bytes or 0
+                if part.page_count + next_pages > max_pages_per_part:
+                    reasons.append("page_maximum")
+                if part.file_size_bytes + next_size > max_size_bytes_per_part:
+                    reasons.append("size_maximum")
+
+        if not reasons:
+            reasons.append("end_of_package")
+
+        part.close_reasons = reasons

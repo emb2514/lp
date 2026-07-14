@@ -1,10 +1,17 @@
 """Whole-document output splitting plan.
 
-Produces a list of "parts" (each a list of complete source documents,
-in order) such that no part exceeds the configured page or size target
--- except a single document that alone exceeds a target, which is kept
-intact in its own oversized part. No document is ever split, and
-documents are never reordered to fill unused space.
+`max_pages_per_part` and `max_size_bytes_per_part` are MAXIMUM
+CONSTRAINTS on an output part, not target sizes to aim for. Complete
+source documents are added to the current part, in original order,
+until the next complete document would exceed either maximum; the part
+is then closed (however far below the maximum it happens to be) and a
+new part is started with that document. Parts are never padded,
+rearranged, or split to approach either maximum -- see the module
+docstring in `merging.py` and README.md ("Choosing the output-part
+size defaults") for the full reasoning.
+
+The only exception is a single document that alone exceeds a maximum:
+it is kept intact in its own oversized part rather than being split.
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ from .models import SourceOccurrence
 
 
 def plan_parts(
-    docs: list[SourceOccurrence], page_limit: int, size_limit_bytes: int
+    docs: list[SourceOccurrence], max_pages_per_part: int, max_size_bytes_per_part: int
 ) -> list[list[SourceOccurrence]]:
     parts: list[list[SourceOccurrence]] = []
     current: list[SourceOccurrence] = []
@@ -24,14 +31,17 @@ def plan_parts(
         pages = doc.converted_page_count or 0
         size = doc.converted_size_bytes or 0
 
-        if pages > page_limit or size > size_limit_bytes:
+        if pages > max_pages_per_part or size > max_size_bytes_per_part:
             if current:
                 parts.append(current)
                 current, current_pages, current_size = [], 0, 0
             parts.append([doc])
             continue
 
-        if current and (current_pages + pages > page_limit or current_size + size > size_limit_bytes):
+        if current and (
+            current_pages + pages > max_pages_per_part
+            or current_size + size > max_size_bytes_per_part
+        ):
             parts.append(current)
             current, current_pages, current_size = [], 0, 0
 

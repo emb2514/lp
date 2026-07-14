@@ -75,8 +75,8 @@ def test_full_end_to_end_reconciliation(tmp_path, run_build):
     make_zip(zip_path, entries)
 
     cfg = AppConfig()
-    cfg.page_limit = 200
-    cfg.size_limit_mb = 5000
+    cfg.max_pages_per_part = 200
+    cfg.max_size_mb_per_part = 5000
 
     run = run_build(zip_path, config=cfg)
 

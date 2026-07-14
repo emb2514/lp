@@ -64,6 +64,31 @@ def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+_CLOSE_REASON_TEXT = {
+    "page_maximum": "closed at the configured page maximum",
+    "size_maximum": "closed at the configured MB maximum",
+    "oversized_document": "contains one oversized document that alone exceeds a maximum",
+    "end_of_package": "end of package (no more documents to add)",
+}
+
+
+def _format_close_reasons(reasons: list[str]) -> str:
+    if not reasons:
+        return "unknown"
+    return "; ".join(_CLOSE_REASON_TEXT.get(r, r) for r in reasons)
+
+
+def _format_part_line(part) -> str:
+    oversized = " [OVERSIZED SINGLE DOCUMENT]" if part.is_oversized else ""
+    size_mb = part.file_size_bytes / (1024 * 1024)
+    reason = _format_close_reasons(part.close_reasons)
+    return (
+        f"    {part.file_path.name}: {len(part.document_ids)} document(s), "
+        f"{part.page_count} page(s), {size_mb:.2f} MB ({part.file_size_bytes:,} bytes){oversized}\n"
+        f"        Why this part ended here: {reason}"
+    )
+
+
 def write_processing_report(run: RunResult, config, meta: dict, path: Path) -> None:
     occurrences = run.occurrences
     non_ignored = [o for o in occurrences if not o.is_ignored_artifact]
@@ -101,10 +126,16 @@ def write_processing_report(run: RunResult, config, meta: dict, path: Path) -> N
     lines.append(f"Python version:        {meta.get('python_version')}")
 
     section("CONFIGURATION")
-    lines.append(f"Page limit per part:        {meta.get('page_limit')}")
-    lines.append(f"Size limit per part (MB):   {meta.get('size_limit_mb')}")
-    lines.append(f"Allow large input:          {meta.get('allow_large_input')}")
-    lines.append(f"Office backend order:       {', '.join(config.office_backend_order)}")
+    lines.append(
+        f"Configured maximum pages per part:  {meta.get('max_pages_per_part')}  "
+        "(a ceiling -- parts are not padded to reach it)"
+    )
+    lines.append(
+        f"Configured maximum MB per part:     {meta.get('max_size_mb_per_part')}  "
+        "(a ceiling -- parts are not padded to reach it)"
+    )
+    lines.append(f"Allow large input:                  {meta.get('allow_large_input')}")
+    lines.append(f"Office backend order:               {', '.join(config.office_backend_order)}")
 
     section("SOURCE INVENTORY")
     lines.append(f"Source occurrences discovered (total):  {len(occurrences)}")
@@ -126,19 +157,11 @@ def write_processing_report(run: RunResult, config, meta: dict, path: Path) -> N
 
     section("OG OUTPUT PARTS")
     for part in run.og_parts:
-        oversized = " [OVERSIZED]" if part.is_oversized else ""
-        lines.append(
-            f"    {part.file_path.name}: {len(part.document_ids)} document(s), "
-            f"{part.page_count} page(s), {part.file_size_bytes:,} bytes{oversized}"
-        )
+        lines.append(_format_part_line(part))
 
     section("FINAL OUTPUT PARTS")
     for part in run.final_parts:
-        oversized = " [OVERSIZED]" if part.is_oversized else ""
-        lines.append(
-            f"    {part.file_path.name}: {len(part.document_ids)} document(s), "
-            f"{part.page_count} page(s), {part.file_size_bytes:,} bytes{oversized}"
-        )
+        lines.append(_format_part_line(part))
 
     section("CONVERSION BACKEND USAGE")
     if run.conversion_backend_usage:
