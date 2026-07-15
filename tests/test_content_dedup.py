@@ -326,6 +326,25 @@ def test_placeholder_occurrences_excluded_from_candidate_pool(tmp_path: Path):
     assert "D1" in fingerprints
 
 
+# TEST 22b - a short label differing by one meaningful word must never
+# silently auto-merge, even though character-level similarity is high.
+# Found via manual testing: the render-tier escalation used to fire for
+# ANY short text (under the old 20-char "reliable" threshold) and its
+# coarse whole-page perceptual hash literally cannot see a one-word
+# label change, silently overwriting a correct text-based mismatch with
+# a false "identical" render-tier score. Fixed by (a) lowering the
+# reliable-text bar so short-but-precise text is trusted on its own, and
+# (b) only ever letting the render tier LOWER confidence via min(),
+# never replace it outright.
+def test_short_label_single_word_difference_not_silently_merged(tmp_path: Path):
+    a = builders.make_pdf(tmp_path / "a.pdf", pages=1, text_prefix="Content A")
+    b = builders.make_pdf(tmp_path / "b.pdf", pages=1, text_prefix="Content B")
+    occ_a, occ_b = _occ("D1", 1, a), _occ("D2", 2, b)
+    _run([occ_a, occ_b])
+    assert occ_a.is_content_duplicate is False
+    assert occ_b.is_content_duplicate is False
+
+
 # TEST 22 - oversized buckets fall back to hash-only grouping and are noted
 def test_oversized_bucket_falls_back_to_hash_only(tmp_path: Path):
     occs = []

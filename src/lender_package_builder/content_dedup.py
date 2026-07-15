@@ -39,12 +39,22 @@ from .pdf_content import DocumentFingerprint, PageFingerprint, build_document_fi
 AUTO_REMOVE_THRESHOLD = 0.95
 NEEDS_REVIEW_THRESHOLD = 0.80
 
-# A page's extracted text is only trusted as a strong standalone signal
-# once it has at least this many normalized characters; below this,
-# the render tier is consulted for genuinely ambiguous cases instead of
-# trusting a short/sparse text comparison alone (typical of a scanned
-# page with little or no OCR text).
-_MIN_RELIABLE_TEXT_CHARS = 20
+# A page's extracted text is trusted as a real signal once it has at
+# least this many normalized characters -- deliberately low. This is
+# NOT a "is this text long enough to be precise" bar (a short label like
+# "Content A 1 of 2" is exactly as precise/reliable as a long paragraph;
+# text extraction doesn't get less accurate just because there's less of
+# it) -- it only distinguishes "there is real extracted text here at
+# all" from "this page is genuinely text-empty" (a scanned page with no
+# OCR layer). Originally set much higher (20) under the assumption that
+# short text needed visual corroboration; testing caught this actively
+# making things LESS safe: a coarse whole-page perceptual hash (8x8
+# downsampled dHash) cannot see a single-character difference like
+# "Content A" vs "Content B" at all, so escalating a short-but-precise
+# text mismatch to the render tier let the render tier's blind spot
+# silently overwrite a signal that was already correct. See
+# compare_page()'s escalation guard below, which was changed to match.
+_MIN_RELIABLE_TEXT_CHARS = 5
 
 # Beyond this many documents in one structural bucket, full pairwise
 # comparison would be O(k^2) on a potentially large k -- fall back to an
@@ -240,16 +250,28 @@ def compare_page(pa: PageFingerprint, pb: PageFingerprint, pdf_path_a: Path, pdf
         components.append(image_similarity)
     confidence = min(components)
 
-    # Escalate to the last, most expensive tier only when cheaper
-    # signals leave genuine ambiguity AND text isn't reliable enough to
-    # trust alone (a scanned page with little/no extractable text) --
-    # exactly the "rendered visual comparison only for unresolved
-    # candidates" performance requirement.
-    if not has_reliable_text and NEEDS_REVIEW_THRESHOLD <= confidence < AUTO_REMOVE_THRESHOLD:
+    # Escalate to the last, most expensive tier only when NEITHER text
+    # NOR embedded-image extraction found anything usable at all -- a
+    # page whose real content isn't captured by ordinary extraction
+    # (e.g. vector-drawn scan-like content pypdf's image enumeration
+    # doesn't catch). If a reliable text or image signal already exists,
+    # it is trusted and never escalated, and the render tier's result --
+    # when it does run -- can only ever LOWER the confidence via min(),
+    # never raise it. A coarse whole-page perceptual hash (an 8x8
+    # downsampled dHash) is fundamentally unable to see a small but
+    # meaningful difference like a single-character label change or a
+    # short initials field, so it must never be allowed to override or
+    # replace a cheaper signal that already caught one -- confirmed by a
+    # real false-merge during development when the escalation guard
+    # incorrectly treated "short text" as "unreliable text" and let the
+    # render tier's blindness to small text differences silently
+    # overwrite a correct text-based mismatch.
+    if not has_reliable_text and image_similarity is None and NEEDS_REVIEW_THRESHOLD <= confidence < AUTO_REMOVE_THRESHOLD:
         try:
             hash_a = pdf_render.render_page_to_hash(pdf_path_a, pa.page_index)
             hash_b = pdf_render.render_page_to_hash(pdf_path_b, pb.page_index)
-            confidence = pdf_render.compare_rendered_pages(hash_a, hash_b)
+            render_confidence = pdf_render.compare_rendered_pages(hash_a, hash_b)
+            confidence = min(confidence, render_confidence)
         except Exception:
             pass  # keep the cheaper-tier confidence if rendering fails
 
