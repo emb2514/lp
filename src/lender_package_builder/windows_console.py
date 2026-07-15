@@ -8,9 +8,10 @@ console to write to. That makes any bare `print()` in the CLI modes
 nowhere to even print the traceback), rather than just being silently
 invisible.
 
-This function guarantees `sys.stdout`/`sys.stderr`/`sys.stdin` are
-real, writable objects by the time it returns -- `print()` must never
-crash the process regardless of what console (if any) is available:
+`attach_parent_console()` guarantees `sys.stdout`/`sys.stderr`/
+`sys.stdin` are real, writable objects by the time it returns --
+`print()` must never crash the process regardless of what console (if
+any) is available:
 
 1. Attach to an already-open console the process was launched from
    (a real terminal window), if one exists in the process's ancestry
@@ -28,9 +29,17 @@ crash the process regardless of what console (if any) is available:
    is invisible in that one narrow case (no console anywhere in the
    process's ancestry), which does not affect exit codes.
 
-A no-op (and always safe) on non-Windows platforms, and effectively a
-no-op when stdout/stderr are already valid streams (running from
-source via `python.exe`, or already attached).
+`release_console_streams()` undoes that reassignment before interpreter
+shutdown (see its own docstring). It is a no-op unless
+`attach_parent_console()` actually reassigned something -- critically,
+this means it never touches `sys.stdout`/`sys.stderr` when they were
+already valid to begin with (e.g. running under `pytest`'s own output
+capture, or from source via `python.exe`). An earlier version did not
+have this guard and corrupted `pytest`'s capture fixtures for the rest
+of the test session when the *test suite itself* ran on real Windows,
+where `sys.platform == "win32"` is true throughout.
+
+Both functions are a no-op on non-Windows platforms.
 """
 
 from __future__ import annotations
@@ -40,13 +49,19 @@ import sys
 
 _ATTACH_PARENT_PROCESS = -1
 
+_streams_attached = False
+
 
 def attach_parent_console() -> None:
+    global _streams_attached
+
     if sys.platform != "win32":
         return
     if sys.stdout is not None and sys.stderr is not None:
         # Already have working streams (e.g. running from source via
-        # python.exe, or already attached) -- nothing to fix.
+        # python.exe, under pytest's own capture, or already attached)
+        # -- nothing to fix, and nothing for release_console_streams()
+        # to undo later.
         return
 
     attached = False
@@ -86,6 +101,8 @@ def attach_parent_console() -> None:
         except OSError:
             pass
 
+    _streams_attached = True
+
 
 def release_console_streams() -> None:
     """Call this once a CLI mode is completely done printing, before
@@ -102,11 +119,20 @@ def release_console_streams() -> None:
     means whatever the interpreter does next can't corrupt the exit
     code this CLI mode already decided.
 
-    A no-op on non-Windows platforms.
+    A no-op on non-Windows platforms, and -- just as importantly -- a
+    no-op if `attach_parent_console()` never actually reassigned
+    anything (streams were already valid). Without that guard, this
+    would blindly close and replace whatever `sys.stdout`/`sys.stderr`
+    currently are, which is actively harmful when they belong to
+    something else entirely, such as pytest's own capture fixtures
+    when the test suite itself runs on real Windows.
     """
 
-    if sys.platform != "win32":
+    global _streams_attached
+
+    if not _streams_attached:
         return
+    _streams_attached = False
 
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)

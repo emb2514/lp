@@ -341,11 +341,26 @@ def test_windows_console_attach_short_circuits_when_streams_already_valid(monkey
     already attached), attach_parent_console() must do nothing at all
     -- not even attempt ctypes.windll, which doesn't exist off Windows
     and would raise if this guard were missing or broken.
+
+    Critically, release_console_streams() afterward must ALSO be a
+    no-op in this case. This is exactly the property a real Windows CI
+    regression exposed: the test suite itself runs with
+    sys.platform == "win32" throughout, so a test that calls
+    app_entry.main() (which calls attach then release) was silently
+    closing and replacing pytest's own capsys capture streams --
+    corrupting output capture for every later test in the same
+    session, not just the one that called it.
     """
     monkeypatch.setattr(sys, "platform", "win32")
     assert sys.stdout is not None and sys.stderr is not None
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
 
     windows_console.attach_parent_console()  # must not raise
+    windows_console.release_console_streams()  # must also be a no-op here
+
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
 
 
 # STAGE 3 TEST 25C - CONSOLE ATTACHMENT FALLS BACK TO A NULL WRITER WHEN AttachConsole FAILS
@@ -373,6 +388,12 @@ def test_windows_console_attach_falls_back_to_null_writer(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
     monkeypatch.setattr(sys, "stdin", None)
+    # This test calls the REAL attach_parent_console(), which mutates
+    # the module-level _streams_attached flag for real (not via
+    # monkeypatch) -- pin the starting value here so monkeypatch
+    # restores it afterward instead of leaking "attached" into later
+    # tests in the same process.
+    monkeypatch.setattr(windows_console, "_streams_attached", False)
 
     calls = []
 
@@ -404,9 +425,16 @@ def test_windows_console_release_survives_broken_stream(monkeypatch):
 
     release_console_streams() must replace whatever sys.stdout/stderr
     currently are with a plain, always-safe stream before the CLI mode
-    returns, even if flushing/closing the original ones raises.
+    returns, even if flushing/closing the original ones raises -- but
+    ONLY when attach_parent_console() is the one that put them there
+    (see test_windows_console_attach_short_circuits_when_streams_
+    already_valid for why release must otherwise be a no-op). This
+    test simulates that state directly via the module's internal flag
+    rather than going through a real attach, which is what a genuine
+    attach-then-something-breaks sequence would leave behind.
     """
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(windows_console, "_streams_attached", True)
 
     class _BrokenStream:
         def flush(self):
