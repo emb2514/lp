@@ -20,7 +20,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from . import archives
+from . import archives, pdf_portfolio
 from .config import AppConfig
 from .exceptions import ArchiveTooLargeError, InvalidInputError
 from .hashing import sha256_of_file
@@ -71,6 +71,13 @@ class InventoryBuilder:
             raise InvalidInputError(
                 f"Input path does not exist or is not a file/folder: {input_path}"
             )
+        # RC2: PDF Portfolio expansion is a discrete post-pass, not
+        # threaded into the traversal above -- Portfolio detection needs
+        # full PDF structural parsing, which the traversal above never
+        # otherwise does (it only hashes raw bytes). Renumbers
+        # traversal_index over the final spliced list; see
+        # pdf_portfolio.expand_portfolios()'s own docstring.
+        self.occurrences = pdf_portfolio.expand_portfolios(self.occurrences, self.workspace)
         return self.occurrences
 
     # -- folder traversal ----------------------------------------------
