@@ -261,6 +261,11 @@ class RunResult:
     integrity_checks: list[IntegrityCheckResult] = dataclasses.field(default_factory=list)
     conversion_backend_usage: dict[str, int] = dataclasses.field(default_factory=dict)
     unsafe_archive_incidents: list[str] = dataclasses.field(default_factory=list)
+    # RC2: performance-related notes from content-aware analysis, e.g. an
+    # oversized structural bucket that fell back to cheaper exact-hash-
+    # only grouping (see content_dedup.py). Never affects correctness,
+    # only which comparison tier ran for a given candidate set.
+    content_dedup_notes: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def success(self) -> bool:

@@ -26,7 +26,14 @@ def run_integrity_checks(
     occ_by_id: dict[str, SourceOccurrence] = {o.document_id: o for o in run.occurrences}
     non_ignored = [o for o in run.occurrences if not o.is_ignored_artifact]
     og_included = [o for o in non_ignored]  # every non-ignored occurrence belongs in OG
-    final_included = [o for o in non_ignored if not o.is_duplicate]
+    # RC2: `included_in_final` is the single source of truth for whether
+    # an occurrence belongs in Final, generalized over every exclusion
+    # reason (exact duplicate, content-aware duplicate, Portfolio
+    # container, contained-in-merged-document) -- not just exact-hash
+    # duplicates. `duplicates` is kept separately, scoped to exact-hash
+    # only, for the checks that specifically prove that one invariant.
+    final_included = [o for o in non_ignored if o.included_in_final]
+    excluded_from_final = [o for o in non_ignored if not o.included_in_final]
     duplicates = [o for o in non_ignored if o.is_duplicate]
 
     checks: list[IntegrityCheckResult] = []
@@ -34,7 +41,7 @@ def run_integrity_checks(
     checks.append(_check_no_silent_omission(run.og_parts, og_included))
     checks.append(_check_sha256_present_when_readable(non_ignored))
     checks.append(_check_og_document_count(run.og_parts, og_included))
-    checks.append(_check_final_document_count(run.og_parts, run.final_parts, duplicates))
+    checks.append(_check_final_document_count(run.og_parts, run.final_parts, excluded_from_final))
 
     # Independent, per-document proof that each document's recorded page
     # count matches what its own converted PDF file actually contains.
@@ -48,9 +55,13 @@ def run_integrity_checks(
 
     og_page_total = sum(p.page_count for p in run.og_parts)
     checks.append(_check_og_page_total(og_page_total, og_included))
-    checks.append(_check_final_page_total(og_page_total, run.final_parts, duplicates))
+    checks.append(_check_final_page_total(og_page_total, run.final_parts, excluded_from_final))
     checks.append(_check_duplicate_hash_match(duplicates, occ_by_id))
-    checks.append(_check_no_nonidentical_removed(final_included, run.final_parts))
+    checks.append(_check_final_contains_all_included(final_included, run.final_parts))
+    checks.append(_check_no_unexplained_removal(og_included))
+    checks.append(_check_needs_review_never_excluded(non_ignored))
+    checks.append(_check_content_duplicate_retained_exists(non_ignored, occ_by_id))
+    checks.append(_check_contained_in_document_retained_exists(non_ignored, occ_by_id))
     checks.append(_check_order_preserved(run.og_parts, occ_by_id, "OG"))
     checks.append(_check_order_preserved(run.final_parts, occ_by_id, "Final"))
     checks.append(_check_no_document_split_across_parts(run.og_parts, "OG"))
@@ -119,15 +130,15 @@ def _check_og_document_count(og_parts: list[OutputPart], og_included: list[Sourc
 
 
 def _check_final_document_count(
-    og_parts: list[OutputPart], final_parts: list[OutputPart], duplicates: list[SourceOccurrence]
+    og_parts: list[OutputPart], final_parts: list[OutputPart], excluded_from_final: list[SourceOccurrence]
 ) -> IntegrityCheckResult:
     og_count = sum(len(p.document_ids) for p in og_parts)
     final_count = sum(len(p.document_ids) for p in final_parts)
-    expected = og_count - len(duplicates)
+    expected = og_count - len(excluded_from_final)
     passed = final_count == expected
     detail = (
         f"Final contains {final_count} documents; expected {expected} "
-        f"(OG {og_count} minus {len(duplicates)} later duplicate occurrences)."
+        f"(OG {og_count} minus {len(excluded_from_final)} excluded occurrence(s), any reason)."
     )
     return IntegrityCheckResult("Every unique source document appears in Final", passed, detail)
 
@@ -203,18 +214,19 @@ def _check_og_page_total(og_page_total: int, og_included: list[SourceOccurrence]
 
 
 def _check_final_page_total(
-    og_page_total: int, final_parts: list[OutputPart], duplicates: list[SourceOccurrence]
+    og_page_total: int, final_parts: list[OutputPart], excluded_from_final: list[SourceOccurrence]
 ) -> IntegrityCheckResult:
     final_page_total = sum(p.page_count for p in final_parts)
-    dup_pages = sum(o.converted_page_count or 0 for o in duplicates)
-    expected = og_page_total - dup_pages
+    excluded_pages = sum(o.converted_page_count or 0 for o in excluded_from_final)
+    expected = og_page_total - excluded_pages
     passed = final_page_total == expected
     detail = (
         f"Final total pages is {final_page_total}; expected {expected} "
-        f"(OG {og_page_total} minus {dup_pages} pages from removed exact-duplicate source files)."
+        f"(OG {og_page_total} minus {excluded_pages} pages from {len(excluded_from_final)} "
+        "excluded occurrence(s), any reason)."
     )
     return IntegrityCheckResult(
-        "Final total pages equal OG pages minus only removed duplicate page counts", passed, detail
+        "Final total pages equal OG pages minus only explained excluded page counts", passed, detail
     )
 
 
@@ -237,9 +249,16 @@ def _check_duplicate_hash_match(
     )
 
 
-def _check_no_nonidentical_removed(
+def _check_final_contains_all_included(
     final_included: list[SourceOccurrence], final_parts: list[OutputPart]
 ) -> IntegrityCheckResult:
+    """Generalized over EVERY reason an occurrence might be excluded
+    from Final (exact duplicate, content-aware duplicate, Portfolio
+    container, contained-in-merged-document) via `included_in_final`,
+    not just exact-hash duplicates -- every occurrence NOT excluded for
+    one of those recorded reasons must actually be present.
+    """
+
     expected = {o.document_id for o in final_included}
     actual: set[str] = set()
     for part in final_parts:
@@ -247,11 +266,95 @@ def _check_no_nonidentical_removed(
     missing = expected - actual
     passed = not missing
     detail = (
-        "No non-duplicate (nonidentical) source document is missing from Final."
+        "Every occurrence eligible for Final (per included_in_final) is present."
         if passed
-        else f"{len(missing)} nonidentical occurrence(s) missing from Final: {sorted(missing)[:10]}"
+        else f"{len(missing)} occurrence(s) eligible for Final are missing: {sorted(missing)[:10]}"
     )
-    return IntegrityCheckResult("No nonidentical source hash was removed", passed, detail)
+    return IntegrityCheckResult("Final contains every occurrence not excluded for a recorded reason", passed, detail)
+
+
+def _check_no_unexplained_removal(og_included: list[SourceOccurrence]) -> IntegrityCheckResult:
+    """Every occurrence present in OG but excluded from Final must have
+    at least one non-empty, auditable explanation recorded among its
+    exclusion-reason fields. An unexplained exclusion is exactly the
+    "silently omit" failure mode this whole app exists to prevent --
+    this check re-derives the explanation independently from the raw
+    field values, rather than trusting `included_in_final`'s own logic.
+    """
+
+    unexplained = []
+    for occ in og_included:
+        if occ.included_in_final:
+            continue
+        explained = (
+            bool(occ.is_duplicate and occ.duplicate_of_document_id)
+            or bool(occ.is_content_duplicate and occ.content_duplicate_of_document_id and occ.duplicate_detection_method)
+            or occ.is_portfolio_container
+            or bool(occ.is_contained_in_merged_document and occ.contained_in_document_id)
+        )
+        if not explained:
+            unexplained.append(occ.document_id)
+    passed = not unexplained
+    detail = (
+        "Every occurrence excluded from Final has a recorded, auditable reason."
+        if passed
+        else f"{len(unexplained)} occurrence(s) excluded from Final with NO recorded reason: {unexplained[:10]}"
+    )
+    return IntegrityCheckResult("Every Final exclusion has an auditable reason", passed, detail)
+
+
+def _check_needs_review_never_excluded(occurrences: list[SourceOccurrence]) -> IntegrityCheckResult:
+    """Direct, independent re-verification of the "when uncertain, keep
+    both" safety rule: re-checks it from each occurrence's raw field
+    values rather than trusting `included_in_final`'s own guard logic.
+    """
+
+    violations = [o.document_id for o in occurrences if o.needs_review and not o.included_in_final]
+    passed = not violations
+    detail = (
+        "Every occurrence flagged needs_review is retained in Final."
+        if passed
+        else f"{len(violations)} needs_review occurrence(s) were EXCLUDED from Final: {violations[:10]}"
+    )
+    return IntegrityCheckResult("Occurrences flagged needs_review are never excluded from Final", passed, detail)
+
+
+def _check_content_duplicate_retained_exists(
+    non_ignored: list[SourceOccurrence], occ_by_id: dict[str, SourceOccurrence]
+) -> IntegrityCheckResult:
+    broken = []
+    for occ in non_ignored:
+        if not occ.is_content_duplicate:
+            continue
+        retained = occ_by_id.get(occ.content_duplicate_of_document_id or "")
+        if retained is None or not retained.included_in_final:
+            broken.append(occ.document_id)
+    passed = not broken
+    detail = (
+        "Every content-aware duplicate's retained counterpart is a real occurrence present in Final."
+        if passed
+        else f"{len(broken)} content-duplicate(s) reference a retained document missing from Final: {broken[:10]}"
+    )
+    return IntegrityCheckResult("Content-duplicate references resolve to a retained Final document", passed, detail)
+
+
+def _check_contained_in_document_retained_exists(
+    non_ignored: list[SourceOccurrence], occ_by_id: dict[str, SourceOccurrence]
+) -> IntegrityCheckResult:
+    broken = []
+    for occ in non_ignored:
+        if not occ.is_contained_in_merged_document:
+            continue
+        container = occ_by_id.get(occ.contained_in_document_id or "")
+        if container is None or not container.included_in_final:
+            broken.append(occ.document_id)
+    passed = not broken
+    detail = (
+        "Every merged-package-containment reference resolves to a container present in Final."
+        if passed
+        else f"{len(broken)} contained document(s) reference a container missing from Final: {broken[:10]}"
+    )
+    return IntegrityCheckResult("Containment references resolve to a retained Final container", passed, detail)
 
 
 def _check_order_preserved(

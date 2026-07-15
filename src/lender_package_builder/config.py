@@ -35,6 +35,14 @@ class AppConfig:
 
     log_level: str = "INFO"
 
+    # RC2: content-aware duplicate detection (Levels 2-4), PDF Portfolio
+    # support, and merged-document overlap detection. On by default;
+    # this is the conservative off-switch back to RC1's exact-SHA-256-
+    # only behavior for a user who wants it, per the task's "add a
+    # conservative advanced setting" requirement. Never removes anything
+    # the exact-hash pass wouldn't already have removed when False.
+    enable_content_aware_dedup: bool = True
+
     @property
     def max_size_bytes_per_part(self) -> int:
         return int(self.max_size_mb_per_part * 1024 * 1024)
@@ -71,6 +79,7 @@ def load_config(config_path: Path | None) -> AppConfig:
         safety = raw.get("safety", {}) or {}
         conversion = raw.get("conversion", {}) or {}
         logging_cfg = raw.get("logging", {}) or {}
+        deduplication = raw.get("deduplication", {}) or {}
 
         if "max_pages_per_part" in splitting:
             cfg.max_pages_per_part = int(splitting["max_pages_per_part"])
@@ -91,6 +100,9 @@ def load_config(config_path: Path | None) -> AppConfig:
 
         if "level" in logging_cfg:
             cfg.log_level = str(logging_cfg["level"])
+
+        if "enable_content_aware_dedup" in deduplication:
+            cfg.enable_content_aware_dedup = bool(deduplication["enable_content_aware_dedup"])
     except tomllib.TOMLDecodeError as exc:
         raise InvalidConfigError(
             f"The configuration file at {config_path} could not be parsed as valid TOML: {exc}. "

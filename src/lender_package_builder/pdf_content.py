@@ -129,6 +129,18 @@ class AnnotationSignal:
 class EmbeddedImageSignal:
     byte_sha256: str
     perceptual_hash: int | None  # None if the image could not be decoded
+    # Mean (R, G, B) in 0-255, None if the image could not be decoded.
+    # A difference-hash measures only LOCAL GRADIENTS between adjacent
+    # pixels, so it is structurally blind to absolute color: two solid,
+    # uniform-color images of any two different colors produce the
+    # identical (all-zero) dHash, since there is no internal gradient to
+    # compare at all. Found via direct testing -- a solid red test swatch
+    # and a solid blue one hashed identically and were falsely matched as
+    # the same image. average_color is compared alongside the
+    # perceptual hash (weakest-link) in content_dedup.py specifically to
+    # close this gap for solid/near-solid images (colored divider/cover
+    # pages, unprinted colored stock, etc).
+    average_color: tuple[float, float, float] | None
     is_blank: bool
     width: int
     height: int
@@ -227,6 +239,22 @@ def hamming_distance(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+def _average_color(image) -> tuple[float, float, float]:
+    """Mean (R, G, B), 0-255 each. See EmbeddedImageSignal.average_color's
+    docstring for why this is needed alongside the gradient-based dHash.
+    """
+
+    rgb_image = image.convert("RGB")
+    pixels = list(rgb_image.getdata())
+    if not pixels:
+        return (0.0, 0.0, 0.0)
+    n = len(pixels)
+    r = sum(p[0] for p in pixels) / n
+    g = sum(p[1] for p in pixels) / n
+    b = sum(p[2] for p in pixels) / n
+    return (r, g, b)
+
+
 def _classify_image_blank(image) -> bool:
     """Conservative check for whether a decoded raster image is itself
     blank (e.g. a scanned blank sheet). See the threshold constants'
@@ -262,11 +290,13 @@ def _extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...]:
             pil_image = image_file.image
             width, height = pil_image.size
             phash = _dhash(pil_image) if width > 1 and height > 1 else None
+            avg_color = _average_color(pil_image) if width >= 1 and height >= 1 else None
             is_blank = _classify_image_blank(pil_image) if width > 1 and height > 1 else False
             signals.append(
                 EmbeddedImageSignal(
                     byte_sha256=byte_hash,
                     perceptual_hash=phash,
+                    average_color=avg_color,
                     is_blank=is_blank,
                     width=width,
                     height=height,

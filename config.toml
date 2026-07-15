@@ -53,3 +53,21 @@ office_backend_order = ["libreoffice", "office_com", "fallback"]
 
 [logging]
 level = "INFO"
+
+[deduplication]
+# RC2: content-aware duplicate detection (documents that are the same
+# actual content despite different filenames, metadata, compression, or
+# extra blank pages; PDF Portfolio attachments; standalone documents
+# already contained inside a larger merged package). This is layered on
+# top of, never a replacement for, the original exact-SHA-256 duplicate
+# detection -- exact-byte duplicates are always caught first and are
+# unaffected by this setting.
+#
+# Only ever removes a document automatically when the match is
+# high-confidence by the app's own conservative rules (see
+# Duplicate_Removal_Log.txt / Document_Version_Report.txt /
+# Merged_Document_Overlap_Report.txt for exactly what was matched and
+# why); anything less than fully confident is kept and flagged for your
+# review instead of being removed. Set to false to fall back to the
+# original exact-byte-duplicate-only behavior.
+enable_content_aware_dedup = true

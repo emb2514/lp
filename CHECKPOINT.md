@@ -1,63 +1,211 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
-**Status as of this checkpoint: PLANNING/RESEARCH ONLY. Zero implementation code has been written.**
-`git status` is clean — no source files were touched this session for this task. This checkpoint exists
-because the user's usage limit was approaching mid-planning; work was paused at a safe boundary rather
-than left mid-edit.
+**Status as of this checkpoint: IMPLEMENTATION IN PROGRESS, substantial and fully tested.**
+The user approved both flagged decision points from §7b (TEST 4 gets updated with a documented reason;
+build BOTH the review dialog and the advanced-settings toggle) and said to implement. All 6 new
+detection modules, full pipeline wiring, and validation.py generalization are done and committed. GUI
+work, reporting expansion, the two new dedicated test files (test_validation.py/test_merging.py), the
+Robert-package acceptance test, and Windows CI packaging validation have **not** started yet. This
+checkpoint exists because the user needs to step away; work was paused at a safe, fully-tested boundary,
+not mid-edit. `git status` shows only clean, coherent, already-verified changes (see §4).
+
+**§5, §6, §7b below are unchanged and still the authoritative research/design reference — read them
+before touching anything.** §1–§4 below replace the old (now-stale) planning-phase status entirely.
 
 ---
 
-## 1. What is complete
+## 1. What is complete (all committed except the very latest local changes — see §4)
 
-- Full architecture research of the existing codebase (three parallel deep-dive passes covering:
-  (a) dedup/hashing/data model, (b) conversion/merging/splitting/reporting/validation, (c) GUI results
-  display/tests/packaging config). Findings condensed in §5 below — this is the expensive part to
-  redo, so it is preserved in full here.
-- One architecture decision explicitly confirmed with the user (§6 — do not re-ask).
-- A draft architecture designed from that research (§7) — six new modules, data model diff, pipeline
-  re-ordering, staged comparison design.
-- An architecture-validation pass was launched (a Plan sub-agent, prompted with the full draft
-  architecture in §7 and asked to critique 8 specific risk areas — see §8). **This agent COMPLETED and
-  its findings ARE captured below in §7b.** It read the actual source files (not just summaries) and
-  found several substantive corrections to the draft in §7 — §7b supersedes §7 wherever they conflict.
-  Read §7b before implementing anything.
-- Baseline test run to confirm the starting point is clean (§3).
+All of these are implemented, individually unit-tested, AND verified working together through a real
+`build_package()` end-to-end run (not just isolated unit tests):
 
-## 2. What is partially complete
+1. **`models.py`** — every new `SourceOccurrence` field from §7b's data model diff, `included_in_final`
+   generalized with the `needs_review` guard, new dataclasses `ContentDuplicateGroup`/`DocumentFamily`/
+   `OverlapFinding`, `RunResult` extended with `content_duplicate_groups`/`document_families`/
+   `overlap_findings`/`content_dedup_notes`.
+2. **`pdf_content.py`** (NEW) — per-page/per-document fingerprinting: normalized text, page geometry,
+   AcroForm field extraction (page-scoped, not `PdfReader.get_fields()` — verified empirically),
+   annotation extraction, signature-field detection, embedded-image extraction with a hand-rolled
+   Pillow-only difference-hash (`_dhash`) AND a mean-RGB `average_color` signal, conservative blank-page
+   classification, and `extract_structured_tokens` (dates/dollar-amounts/proper-noun name-hints).
+3. **`pdf_render.py`** (NEW) — the only module importing `pypdfium2`; last-tier page rasterization +
+   perceptual-hash comparison, LRU-cached, deliberately mockable.
+4. **`content_dedup.py`** (NEW) — Levels 2/3/4 engine. One `compare_documents()`/`compare_page()` pair
+   underlies all three levels. Hard-veto system (signature state, image-count, form fields, annotations,
+   dates, dollar amounts, name-hints) checked BEFORE any fuzzy similarity scoring. Whole-document
+   aggregation is WEAKEST-LINK, never average. Staged bucketing + oversized-bucket fallback.
+5. **`pdf_portfolio.py`** (NEW) — Portfolio/embedded-file detection wired into
+   `InventoryBuilder.build()` as a post-pass. `/Names/EmbeddedFiles` non-empty → extract attachments
+   regardless of `/Collection`; `/Collection` present → `is_portfolio_container=True` (only then are the
+   container's own pages excluded from Final). Verified against real pypdf-built fixtures, not assumed.
+6. **`overlap_detection.py`** (NEW) — merged-document containment, reusing `content_dedup.compare_page`
+   directly. Always excludes the standalone side, never the merged PDF. Per-container only, never
+   chained across two different containers.
+7. **`version_classification.py`** (NEW) — Level 5, purely descriptive, runs last, sets no
+   exclusion-relevant field. Family relatedness uses a looser structural key than duplicate-candidate
+   bucketing (deliberately excludes signature/form-field presence) plus explicit content-duplicate/
+   overlap links, so unsigned+e-signed+wet-signed siblings correctly cluster into one family — verified
+   against the task's own worked example.
+8. **`config.py`/`config.toml`** — new `[deduplication] enable_content_aware_dedup` toggle (default
+   `true`), following the exact existing per-key TOML parsing pattern. New `--disable-content-aware-dedup`
+   CLI flag too.
+9. **`cli.py`/`progress.py`/`gui/widgets/progress_view.py`** — full pipeline wiring. 4 new
+   `ProgressStage` members (`FINGERPRINTING_CONTENT`, `DETECTING_CONTENT_DUPLICATES`,
+   `ANALYZING_MERGED_PACKAGES`, `CLASSIFYING_VERSIONS`) inserted between Building OG and Building Final;
+   all pipeline stage message prefixes renumbered `[N/10]`. New `_run_content_aware_analysis()` helper
+   in `cli.py`, gated by `config.enable_content_aware_dedup` — when disabled, every new stage still
+   emits one "skipped" progress event (stable event sequence either way) but does no work and mutates
+   nothing, exactly RC1's original behavior.
+10. **`validation.py`** — generalized every exact-hash-only formula/check to use `included_in_final`
+    generically (works for ANY exclusion reason, not just `is_duplicate`). Added 4 new checks:
+    `_check_final_contains_all_included` (replaces the old `_check_no_nonidentical_removed`),
+    `_check_no_unexplained_removal` (every Final exclusion must have a non-empty, auditable reason),
+    `_check_needs_review_never_excluded`, `_check_content_duplicate_retained_exists`,
+    `_check_contained_in_document_retained_exists`. Total integrity checks: **26** (was 21).
+11. **Dependencies/packaging** — `pypdfium2` added (Apache-2.0/BSD-3, self-contained wheel,
+    `pyinstaller-hooks-contrib` already ships `hook-pypdfium2.py` so no manual binary bundling needed —
+    verified by inspecting the installed hooks package directly). Deliberately did NOT add the
+    `imagehash` package (would have pulled in numpy+scipy+PyWavelets, ~55MB, purely for a DCT/wavelet
+    hash a plain Pillow-only difference-hash doesn't need) — this is a considered deviation from the
+    literal "pypdfium2 + imagehash" phrasing the user approved; the approved INTENT (permissive-licensed,
+    self-contained, staged/last-tier-only rendering) is fully honored. `pyproject.toml`,
+    `requirements.txt`, `requirements-windows-lock.txt`, `LenderPackageBuilder.spec`,
+    `packaging/collect_licenses.py`, `THIRD_PARTY_NOTICES.txt` all updated.
+12. **TEST 4** (`test_identical_visible_content_different_source_bytes`) — updated per the user's
+    approved decision: now asserts exactly one copy is excluded from Final via Level 2
+    (`is_content_duplicate=True`, `duplicate_detection_method="normalized_pdf"`), with a comment
+    explaining why the expected behavior changed from RC1.
+13. **`tests/test_progress.py`** — `expected_order` updated for the 4 new stages; added a new test
+    proving the stage sequence is stable even with content-aware dedup disabled via config.
 
-- **The formal plan file was never written to `/root/.claude/plans/`** — planning was interrupted
-  before Phase 4 (write final plan) / Phase 5 (call `ExitPlanMode` for user approval). No plan has been
-  presented to or approved by the user yet. **Resuming this task means re-entering plan mode (or
-  proceeding directly to implementation with explicit new user approval), not assuming §7 below is
-  pre-approved.**
-- No code, tests, config, dependency, or packaging-spec changes exist yet in any form — nothing is
-  "half-done" at the file level, but the entire feature is undesigned-in-code / unimplemented.
+### Four real safety bugs found via direct testing during this work, all fixed and regression-tested
 
-## 3. Tests run and results (baseline, before any change)
+These were NOT theoretical — each was caught by actually running synthetic fixtures through the real
+engine, not just by reasoning about the design:
+
+1. **Exact-match shortcut bypassed form-field/annotation differences.** `compare_page`'s fast path
+   originally checked only `text_hash` + images; since AcroForm field VALUES and annotation contents
+   never appear in extracted page text at all, two pages with identical visible text but different loan
+   amounts were silently treated as an exact match, skipping the hard-veto system entirely. Fixed by
+   requiring form-fields/annotations/signature-state to also agree before the shortcut fires.
+2. **Render-tier escalation used text LENGTH as a proxy for text RELIABILITY.** A short-but-perfectly-
+   extracted label ("Content A" vs "Content B") was wrongly escalated to the last-tier render comparison
+   under the old 20-character threshold; that tier's coarse 8x8-downsampled perceptual hash literally
+   cannot see a single-character difference, silently overwriting a text signal that was already
+   correct. Fixed by (a) lowering the reliable-text bar to distinguish "no text" from "short text," and
+   (b) the render tier's result can now only ever LOWER confidence via `min()`, never replace it outright
+   — and only fires when neither text nor embedded-image extraction found anything usable at all.
+3. **Character-level fuzzy text similarity is fundamentally unsafe for realistic document lengths.**
+   `difflib.SequenceMatcher` on raw strings trends toward 1.0 as shared text gets longer, so a SINGLE
+   meaningfully different word becomes proportionally invisible — "version with some content A" vs
+   "...content B" scored 0.963 character-level (crossing the 0.95 auto-remove threshold) but only 0.80
+   word-level. Fixed by switching `_text_similarity` to word-level (tokenized) comparison, which counts
+   one differing word as one non-matching token regardless of surrounding text length. This is a more
+   conservative trade-off (some genuine OCR-noise-only duplicates that would have auto-merged now land
+   in `needs_review` instead), which is the explicitly correct direction per the task's own safety
+   philosophy.
+4. **A plain difference-hash (dHash) is structurally blind to absolute color.** Two solid, uniformly-
+   colored images of ANY two different colors produce the identical (all-zero) dHash, since dHash only
+   measures local gradients between adjacent pixels and a solid color has none — a solid red test image
+   and a solid blue-ish TIFF frame were falsely matched as "exact contained." Fixed by adding a
+   mean-RGB `average_color` signal to `EmbeddedImageSignal`, blended via `min()` (weakest-link) with the
+   dHash-based similarity in `content_dedup._image_similarity`.
+
+Each bug has a dedicated regression test (see file list in §4) proving it stays fixed.
+
+## 2. What is partially complete / not yet started
+
+Per §7b's module dependency chain and the task's own required deliverable list, still remaining:
+
+- **`reporting.py`** — expand `Duplicate_Removal_Log.txt` with per-method sections (exact-byte/
+  normalized-PDF/content-equivalent/blank-page-tolerant); add `write_document_version_report()` →
+  `Document_Version_Report.txt`; add `write_merged_overlap_report()` → `Merged_Document_Overlap_Report.txt`.
+  `Processing_Manifest.json` needs no code change (confirmed: the existing blind `dataclasses.asdict()`
+  walk already picks up every new field automatically) but should get a test proving it.
+- **`tests/test_reporting_v2.py`** (new file) — for the above.
+- **`tests/test_validation.py`** and **`tests/test_merging.py`** (new files, per §7b's test plan) — a
+  dedicated safety test proving OG's document set is invariant to every new exclusion field, and
+  dedicated tests for the 5 new validation checks (currently only exercised indirectly through
+  end-to-end tests, which IS passing, but a focused test file was planned and not yet written).
+- **GUI work** (none started): `gui/widgets/uncertain_review_dialog.py` (new, read-only `QDialog`
+  listing `needs_review=True` groups, inspection only, no approval workflow — triggered by a button in
+  `ResultView`); `gui/widgets/advanced_settings.py`/`gui/state.py` (new `enable_content_aware_dedup`
+  `QCheckBox`, wired into `main_window.py`'s existing `dataclasses.replace(...)` call);
+  `gui/widgets/result_view.py` (`_populate_stats` new rows: content-equivalent duplicates removed,
+  blank-page-variant duplicates removed, merged-package overlaps resolved, distinct signed/dated
+  versions preserved, uncertain comparisons retained for safety). New GUI tests extending
+  `tests/gui/test_advanced_settings.py`/`tests/gui/test_results.py`.
+- **`tests/test_robert_package_regression.py`** (new file) — existing 14 SHA-256 groups still correct;
+  synthetic 619-vs-1099-page recreation of the reported bug (Final = one copy of each unique logical
+  document version, explicitly NO fixed-page-total assertion).
+- **Full local test suite run** including GUI tests (aware of the pre-existing sandbox Qt segfault —
+  see old §3 below, still applies; GUI correctness must ultimately be confirmed on real Windows CI).
+- **Windows CI build+package validation** — a real `--onedir` PyInstaller build has NOT been run since
+  RC2's changes; `pypdfium2` packaging (native binary bundling via the hooks-contrib hook) is unverified
+  on an actual Windows runner. This is required before RC2 can be called done.
+- **Final RC2 deliverable report** (root-cause summary, files changed, detection design, test results,
+  known limitations, manual Robert-package testing instructions, path to the built artifact) — not
+  written yet, waiting on all of the above.
+
+## 3. Tests run and results (current, this session)
 
 ```
 .venv/bin/python -m pytest -q tests/ --ignore=tests/gui
-=> 83 passed, 1 warning in 65.29s
+=> 150 passed, 1 warning in 46.06s
 ```
-Clean. This is the pre-existing engine-test baseline any new work must not regress.
+Clean. Breakdown: 83 pre-existing engine tests (all still passing, including the RC1 baseline) + 67 new/
+updated tests across `test_content_fingerprinting.py` (16), `test_pdf_render.py` (5),
+`test_content_dedup.py` (24), `test_pdf_portfolio.py` (8), `test_merged_document_overlap.py` (7),
+`test_version_classification.py` (6), plus `test_progress.py` (+1 new test) and
+`test_hashing_and_deduplication.py` (TEST 4 rewritten, not a net-new test).
 
+GUI tests (`tests/gui/`) were not re-run this session beyond what already passed in earlier milestones —
+the pre-existing sandbox Qt-offscreen segfault (documented in the original §3, preserved below) is
+unrelated to RC2 and still applies; GUI correctness for anything RC2 touches (none yet — no GUI code
+written) will need confirming once GUI work starts, and ultimately on real Windows CI.
+
+**Original RC1 baseline (kept for reference, still accurate as a pre-RC2 comparison point):**
 ```
-.venv/bin/python -m pytest -q          (full suite, including tests/gui)
-=> Segmentation fault after 25 tests passed (dots), inside pytest-qt/offscreen Qt teardown machinery
-   (PySide6.QtCore/QtGui/QtWidgets/QtTest extension modules listed in the crash's loaded-extensions
-   dump). This happened with ZERO source changes present — it is a pre-existing sandbox/environment
-   quirk (Qt offscreen platform + this container), not a regression caused by this session. Worth
-   knowing about when re-running the full suite here, but not something to chase/fix as part of this
-   task. The last confirmed-clean run of the full suite (124 tests: 83 engine + 41 GUI) was on real
-   Windows CI in run 29435314643 (see git log around commit 4478695) — GUI tests are known-good on
-   real Windows; the segfault is specific to this Linux sandbox's offscreen Qt setup.
+.venv/bin/python -m pytest -q          (full suite, including tests/gui, BEFORE any RC2 change)
+=> Segmentation fault after 25 tests passed (dots), inside pytest-qt/offscreen Qt teardown machinery.
+   Pre-existing sandbox/environment quirk (Qt offscreen platform + this container), not a regression.
+   Last confirmed-clean full suite (124 tests: 83 engine + 41 GUI) was on real Windows CI in run
+   29435314643 (commit 4478695) — GUI tests are known-good on real Windows.
 ```
 
 ## 4. Files changed
 
-**None.** This entire session (for the RC2 dedup task) was research and planning. `git log` head is
-still `4478695` (the prior task's Windows-CI `$LASTEXITCODE` fix, already committed/pushed before this
-task began). Current branch: `claude/lender-package-builder-stage-1-h9sa3n`.
+**Already committed** (5 commits on `claude/lender-package-builder-stage-1-h9sa3n`, all pushed):
+- `6d7f6a0` — `models.py`, `pdf_content.py` (NEW), `tests/test_content_fingerprinting.py` (NEW),
+  `tests/fixtures/builders.py`, `pyproject.toml`, `requirements.txt`, `requirements-windows-lock.txt`,
+  `LenderPackageBuilder.spec`, `packaging/collect_licenses.py`, `THIRD_PARTY_NOTICES.txt`.
+- `aa6c9e6` — `pdf_render.py` (NEW), `content_dedup.py` (NEW), `tests/test_pdf_render.py` (NEW),
+  `tests/test_content_dedup.py` (NEW), `pdf_content.py` (name-hint fix), `tests/fixtures/builders.py`.
+- `e73f81f` — `pdf_portfolio.py` (NEW), `inventory.py` (one-line wire-in), `tests/test_pdf_portfolio.py`
+  (NEW).
+- `edca9a5` — `overlap_detection.py` (NEW), `tests/test_merged_document_overlap.py` (NEW),
+  `content_dedup.py` (escalation-logic bug fix #2 above), `tests/test_content_dedup.py` (regression test).
+- `b94d792` — `version_classification.py` (NEW), `tests/test_version_classification.py` (NEW).
+
+**NOT yet committed as of this checkpoint** (staged/working-tree only, but fully tested — 150/150
+passing with these changes included):
+```
+ M config.toml
+ M src/lender_package_builder/cli.py
+ M src/lender_package_builder/config.py
+ M src/lender_package_builder/content_dedup.py       (bug fixes #3, #4 above)
+ M src/lender_package_builder/gui/widgets/progress_view.py
+ M src/lender_package_builder/models.py               (content_dedup_notes field)
+ M src/lender_package_builder/pdf_content.py           (average_color, bug fix #4 above)
+ M src/lender_package_builder/progress.py
+ M src/lender_package_builder/validation.py            (full generalization)
+ M tests/test_content_dedup.py                         (3 new regression tests)
+ M tests/test_content_fingerprinting.py                (1 new regression test)
+ M tests/test_hashing_and_deduplication.py             (TEST 4 rewrite)
+ M tests/test_progress.py                              (stage order + disabled-toggle test)
+```
+**This checkpoint commits these now** (see §9) — by the time you read this, they should be a 6th commit
+on the branch; check `git log` to confirm before assuming anything is still uncommitted.
 
 ---
 
@@ -557,39 +705,55 @@ file from §7's draft.
 
 ## 9. Exact next step to resume this task
 
-This task was interrupted **during plan mode**, before a plan was ever presented to the user for
-approval — but the architecture research AND its independent validation pass are both now complete
-(§5, §7b). The next session should:
+Architecture research, validation, AND a substantial, fully-tested chunk of implementation are all done
+(§1). The two decision points from the old §7b are resolved (user approved both). Resume by:
 
-1. Re-read this `CHECKPOINT.md` in full, especially **§7b (the validated, authoritative design)** — it
-   substitutes for both the expensive research phase and the architecture-validation phase. Do not
-   re-run the 3 Explore agents or the Plan-validation agent from scratch unless something here seems
-   stale or wrong.
-2. Resolve the two flagged decision points in §7b before writing code: (a) how to handle
-   `TEST 4`'s unavoidable conflict with "all existing tests pass" once Level 2 ships, (b) whether to
-   build both the uncertain-review dialog and the advanced-settings toggle, or just one.
-3. Re-enter plan mode, write the formal plan file to `/root/.claude/plans/` using §7b as the
-   authoritative content (light editing/restructuring only — the substance is already validated), and
-   call `ExitPlanMode` for the user's approval before writing any code. Do not skip the approval step
-   even though research is done — no plan has been shown to the user yet.
-4. Once approved, implement in this order (per §7b's module dependency chain):
-   `models.py` data-model additions → `pdf_content.py` (foundational toolkit) → `pdf_portfolio.py` →
-   `content_dedup.py` → `overlap_detection.py` → `version_classification.py` → `pdf_render.py` →
-   `cli.py`/`progress.py` pipeline wiring → `validation.py` generalization → `reporting.py` new
-   report writers → GUI wiring → dependency/packaging updates → tests (written alongside each module,
-   not deferred to the end) → full local test run → Windows CI build+package → final deliverable report.
-5. The original full task spec (all 26 required tests verbatim, all 5 detection levels, all
-   reporting/GUI/performance requirements) was provided by the user in the message that started this
-   task. §5–§7b condense the architecturally-relevant parts and preserve the safety rules, 5 detection
-   levels, merged/Portfolio handling rules, and reporting/GUI/performance requirements in enough detail
-   to implement correctly — but **re-confirm the exact wording of the 26 required tests against the
-   original spec** before finalizing test names/assertions, since it is not fully re-quoted here.
+1. Re-read this `CHECKPOINT.md` §1–§4 for exactly what's done and what's not; re-read **§7b** for the
+   authoritative design of everything still to build (reporting report formats, the GUI plan, the
+   canonical-selection/confidence-band reasoning) — it remains accurate for the remaining work.
+2. Confirm via `git log --oneline -8` and `git status` that the commit referenced at the end of this
+   checkpoint (see the session's final message / commit hash) is present and the working tree is clean;
+   if not, something unexpected happened between sessions — investigate before continuing.
+3. Continue implementation in this order (everything before this point is done):
+   a. `reporting.py` — expand `Duplicate_Removal_Log.txt`, add `write_document_version_report()` and
+      `write_merged_overlap_report()`, wire both into `write_all_reports()`. Write
+      `tests/test_reporting_v2.py` alongside it, including a test proving the manifest JSON picks up
+      the new RC2 fields automatically.
+   b. `tests/test_validation.py` + `tests/test_merging.py` (new files) — the dedicated OG-invariance
+      safety test and focused tests for the 5 new validation checks, per §7b's test plan. (The checks
+      themselves are done and passing via end-to-end tests; this is dedicated, focused coverage that
+      was planned but not yet written.)
+   c. GUI work: `gui/widgets/uncertain_review_dialog.py` (new), `gui/widgets/advanced_settings.py` +
+      `gui/state.py` (new checkbox), `gui/widgets/result_view.py` (new stat rows), `main_window.py`
+      (wire the new config field through the existing `dataclasses.replace(...)` call). New/extended
+      GUI tests. Remember the GUI-test sandbox segfault (§3) — GUI tests may need running individually
+      or their correctness confirmed via careful review + eventual Windows CI, not assumed clean from a
+      full local `pytest` run in this environment.
+   d. `tests/test_robert_package_regression.py` (new file) — 14-exact-dup-groups-still-correct +
+      synthetic 619-vs-1099-page recreation.
+   e. Run the FULL local test suite (engine + GUI, working around the sandbox segfault if needed) and
+      fix anything that breaks.
+   f. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
+      `workflow_dispatch` (see commit `4478695` for how this branch's CI was last made green), watch it
+      through to a successful artifact upload. `pypdfium2`'s native binary bundling via
+      `pyinstaller-hooks-contrib`'s `hook-pypdfium2.py` is unverified on real Windows — this is the one
+      genuinely new packaging risk in this whole RC2 change and needs real confirmation, not just local
+      reasoning.
+   g. Write the final RC2 deliverable report per the task's own required format (root-cause summary,
+      files changed, detection design implemented, tests added, complete test results, known
+      limitations, exact manual Robert-package testing instructions, path to the new portable RC2
+      artifact).
+4. The original full task spec (all 26 required tests verbatim, all 5 detection levels, all reporting/
+   GUI/performance requirements) was provided by the user earlier in this task's conversation. §5–§7b
+   condense the architecturally-relevant parts in enough detail to implement correctly, but
+   **re-confirm exact wording/expectations against the original spec** if anything here seems
+   ambiguous — it is not fully re-quoted in this file.
 
 **Suggested exact resume prompt for the user to give**:
 
-> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md. The architecture is researched
-> and validated (§7b) — resolve the two flagged decision points, re-enter plan mode, write the formal
-> plan file from §7b, and get my approval before writing any code.
+> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md §1–§4. Continue with reporting.py
+> expansion, the two new dedicated test files, GUI work, the Robert-package acceptance test, then run
+> the full test suite, validate the Windows CI build, and produce the final RC2 deliverable report.
 
 ---
 

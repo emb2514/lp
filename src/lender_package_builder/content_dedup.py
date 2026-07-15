@@ -161,9 +161,30 @@ def _bucket_key(fp: DocumentFingerprint) -> tuple:
 
 
 def _text_similarity(text_a: str, text_b: str) -> float:
+    """Word-level (token-level), not character-level, similarity.
+
+    Deliberately NOT `difflib.SequenceMatcher(None, text_a, text_b)` on
+    the raw strings -- found via direct testing to be unsafe for exactly
+    the case this whole comparator exists to protect against. A single
+    meaningfully different WORD (a page label, a borrower's initial, a
+    changed reference number -- anything not already caught by the
+    dates/dollar-amounts/name-hints structured-token vetoes above)
+    becomes a proportionally SMALLER fraction of the string as the
+    surrounding shared text gets longer, so character-level similarity
+    trends toward 1.0 for realistic-length lender-document paragraphs
+    even when exactly one meaningful word changed -- e.g. "version with
+    some content A" vs "...content B" scored 0.963 character-level
+    (crossing the 0.95 auto-remove threshold) but only 0.80 word-level.
+    Tokenizing into whole words first means one differing word is always
+    counted as one non-matching token among N, proportional to the
+    document's actual word count rather than its character count, which
+    is the more stable and appropriate measure of "how much of the
+    content changed" for prose/form text.
+    """
+
     if not text_a and not text_b:
         return 1.0
-    return difflib.SequenceMatcher(None, text_a, text_b).ratio()
+    return difflib.SequenceMatcher(None, text_a.split(), text_b.split()).ratio()
 
 
 def _image_similarity(pa: PageFingerprint, pb: PageFingerprint) -> float | None:
@@ -177,12 +198,32 @@ def _image_similarity(pa: PageFingerprint, pb: PageFingerprint) -> float | None:
     for img_a, img_b in zip(pa.images, pb.images):
         if img_a.byte_sha256 == img_b.byte_sha256:
             similarities.append(1.0)
-        elif img_a.perceptual_hash is not None and img_b.perceptual_hash is not None:
+            continue
+        components = []
+        if img_a.perceptual_hash is not None and img_b.perceptual_hash is not None:
             distance = hamming_distance(img_a.perceptual_hash, img_b.perceptual_hash)
-            similarities.append(1.0 - distance / 64)
-        else:
-            similarities.append(0.5)
+            components.append(1.0 - distance / 64)
+        if img_a.average_color is not None and img_b.average_color is not None:
+            # A difference-hash alone is blind to absolute color -- two
+            # solid, uniform-color images of ANY two different colors
+            # produce the identical (all-zero) dHash, since dHash only
+            # measures local gradients between adjacent pixels and a
+            # solid color has none. Found via direct testing (a solid
+            # red swatch and a solid blue swatch hashed identically and
+            # were falsely matched). Average-color distance closes this
+            # gap; combined via min() with the dHash score, same
+            # weakest-link principle as everywhere else in this module.
+            components.append(_color_similarity(img_a.average_color, img_b.average_color))
+        similarities.append(min(components) if components else 0.5)
     return min(similarities) if similarities else None
+
+
+def _color_similarity(color_a: tuple[float, float, float], color_b: tuple[float, float, float]) -> float:
+    # Euclidean distance in RGB space, normalized by the maximum
+    # possible distance (black to white, sqrt(3 * 255^2)).
+    max_distance = (3 * 255**2) ** 0.5
+    distance = sum((a - b) ** 2 for a, b in zip(color_a, color_b)) ** 0.5
+    return 1.0 - (distance / max_distance)
 
 
 def compare_page(pa: PageFingerprint, pb: PageFingerprint, pdf_path_a: Path, pdf_path_b: Path) -> PageComparisonResult:

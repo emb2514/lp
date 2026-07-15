@@ -23,6 +23,13 @@ class ProgressStage(str, enum.Enum):
     DETECTING_DUPLICATES = "detecting_duplicates"
     CONVERTING_DOCUMENTS = "converting_documents"
     BUILDING_OG = "building_og"
+    # RC2: content-aware duplicate detection (Levels 2-4), merged-
+    # document overlap detection, and version classification (Level 5)
+    # -- all run over already-converted documents, between OG and Final.
+    FINGERPRINTING_CONTENT = "fingerprinting_content"
+    DETECTING_CONTENT_DUPLICATES = "detecting_content_duplicates"
+    ANALYZING_MERGED_PACKAGES = "analyzing_merged_packages"
+    CLASSIFYING_VERSIONS = "classifying_versions"
     BUILDING_FINAL = "building_final"
     RUNNING_INTEGRITY_CHECKS = "running_integrity_checks"
     WRITING_REPORTS = "writing_reports"

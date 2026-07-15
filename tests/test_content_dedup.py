@@ -345,6 +345,61 @@ def test_short_label_single_word_difference_not_silently_merged(tmp_path: Path):
     assert occ_b.is_content_duplicate is False
 
 
+# TEST 22c - the same one-word-difference risk in a LONGER, more
+# realistic sentence: character-level similarity trends toward 1.0 as
+# shared text gets longer, so a single differing word can cross the
+# auto-remove threshold on character similarity alone even though word-
+# level similarity correctly stays well below it. Found via the full
+# test suite (test_full_end_to_end_reconciliation's version_a.txt/
+# version_b.txt fixtures, 0.963 character-level vs 0.80 word-level).
+def test_single_word_difference_in_longer_sentence_not_merged(tmp_path: Path):
+    a = builders.make_pdf(tmp_path / "a.pdf", pages=1, text_prefix="Version with some content A")
+    b = builders.make_pdf(tmp_path / "b.pdf", pages=1, text_prefix="Version with some content B")
+    occ_a, occ_b = _occ("D1", 1, a), _occ("D2", 2, b)
+    _run([occ_a, occ_b])
+    assert occ_a.is_content_duplicate is False
+    assert occ_b.is_content_duplicate is False
+
+
+# TEST 22d - two pages embedding solid-but-DIFFERENT-colored images must
+# never be treated as the same content. Found via the full test suite
+# (test_basic_conversions_across_formats: a solid red JPEG and a solid
+# blue-ish TIFF frame hashed identically under a pure difference-hash,
+# since dHash only measures local gradients and a solid color has none
+# -- average-color comparison closes this gap).
+def test_different_solid_color_images_not_merged(tmp_path: Path):
+    from PIL import Image
+
+    red_path = tmp_path / "red.jpg"
+    blue_path = tmp_path / "blue.png"
+    Image.new("RGB", (300, 200), color=(200, 30, 30)).save(red_path, format="JPEG")
+    Image.new("RGB", (200, 150), color=(0, 100, 200)).save(blue_path, format="PNG")
+
+    from lender_package_builder.conversion import images as images_conv
+    from lender_package_builder.config import AppConfig
+
+    red_pdf = tmp_path / "red.pdf"
+    blue_pdf = tmp_path / "blue.pdf"
+    from lender_package_builder.models import SourceOccurrence, ProcessingStatus as PS
+
+    def to_pdf(src_path, dest_path):
+        occ = SourceOccurrence(
+            document_id="X", traversal_index=1, original_filename=src_path.name,
+            original_relative_path=src_path.name, original_extension=src_path.suffix.lower(),
+            original_size_bytes=src_path.stat().st_size, extracted_path=src_path,
+        )
+        images_conv.convert(occ, dest_path, AppConfig(), workspace=None)
+        return dest_path
+
+    to_pdf(red_path, red_pdf)
+    to_pdf(blue_path, blue_pdf)
+
+    occ_a, occ_b = _occ("D1", 1, red_pdf), _occ("D2", 2, blue_pdf)
+    _run([occ_a, occ_b])
+    assert occ_a.is_content_duplicate is False
+    assert occ_b.is_content_duplicate is False
+
+
 # TEST 22 - oversized buckets fall back to hash-only grouping and are noted
 def test_oversized_bucket_falls_back_to_hash_only(tmp_path: Path):
     occs = []

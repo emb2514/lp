@@ -25,6 +25,16 @@ def test_progress_callback_receives_structured_events_in_stage_order(tmp_path, r
         ProgressStage.DETECTING_DUPLICATES,
         ProgressStage.CONVERTING_DOCUMENTS,
         ProgressStage.BUILDING_OG,
+        # RC2: content-aware duplicate detection (Levels 2-4), merged-
+        # document overlap detection, and version classification (Level
+        # 5), all run between Building OG and Building Final. Always
+        # emitted -- even with content-aware dedup disabled via config,
+        # each stage still emits one "skipped" event, so this sequence
+        # is stable regardless of that setting.
+        ProgressStage.FINGERPRINTING_CONTENT,
+        ProgressStage.DETECTING_CONTENT_DUPLICATES,
+        ProgressStage.ANALYZING_MERGED_PACKAGES,
+        ProgressStage.CLASSIFYING_VERSIONS,
         ProgressStage.BUILDING_FINAL,
         ProgressStage.RUNNING_INTEGRITY_CHECKS,
         ProgressStage.WRITING_REPORTS,
@@ -39,6 +49,28 @@ def test_progress_callback_receives_structured_events_in_stage_order(tmp_path, r
     last_event = events[-1]
     assert last_event.stage == ProgressStage.COMPLETE
     assert last_event.severity == ProgressSeverity.INFO
+
+
+def test_progress_stage_order_stable_with_content_aware_dedup_disabled(tmp_path, run_build, config):
+    import dataclasses
+
+    folder = tmp_path / "input"
+    make_pdf(folder / "a.pdf", pages=3)
+    make_pdf(folder / "b.pdf", pages=2)
+
+    disabled_config = dataclasses.replace(config, enable_content_aware_dedup=False)
+    events: list[ProgressEvent] = []
+    run = run_build(folder, config=disabled_config, progress_callback=events.append)
+
+    assert run.success is True
+    stages_seen = [e.stage for e in events]
+    assert ProgressStage.FINGERPRINTING_CONTENT in stages_seen
+    assert ProgressStage.DETECTING_CONTENT_DUPLICATES in stages_seen
+    assert ProgressStage.ANALYZING_MERGED_PACKAGES in stages_seen
+    assert ProgressStage.CLASSIFYING_VERSIONS in stages_seen
+    assert run.content_duplicate_groups == []
+    assert run.document_families == []
+    assert run.overlap_findings == []
 
 
 def test_progress_events_carry_current_total_and_item_during_conversion(tmp_path, run_build):

@@ -17,7 +17,18 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, archives, deduplication, merging, reporting, runtime_paths, validation
+from . import (
+    __version__,
+    archives,
+    content_dedup,
+    deduplication,
+    merging,
+    overlap_detection,
+    reporting,
+    runtime_paths,
+    validation,
+    version_classification,
+)
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
 from .conversion.base import make_placeholder_pdf
@@ -69,6 +80,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Bypass ZIP-bomb-style safety thresholds for a known, intentional large package.",
     )
     build.add_argument(
+        "--disable-content-aware-dedup",
+        action="store_true",
+        help="Fall back to exact-SHA-256-only duplicate detection (RC1 behavior); "
+        "skips content-aware/Portfolio/merged-package analysis entirely.",
+    )
+    build.add_argument(
         "--keep-temp", action="store_true", help="Do not delete the temporary workspace after the run."
     )
     build.add_argument("--verbose", action="store_true", help="Enable debug-level logging.")
@@ -104,6 +121,8 @@ def _run_build_command(args: argparse.Namespace) -> int:
         config.max_pages_per_part = args.max_pages_per_part
     if args.max_size_mb_per_part is not None:
         config.max_size_mb_per_part = args.max_size_mb_per_part
+    if args.disable_content_aware_dedup:
+        config.enable_content_aware_dedup = False
 
     try:
         run = build_package(
@@ -390,14 +409,14 @@ def _execute_pipeline(
     progress: bool,
     reporter: _ProgressReporter,
 ) -> RunResult:
-    reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/6] Discovering source files in: {input_path}")
+    reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/10] Discovering source files in: {input_path}")
     inventory_builder = InventoryBuilder(config, workspace, allow_large_input)
     occurrences = inventory_builder.build(input_path)
     reporter.emit(
         ProgressStage.DISCOVERING_FILES, f"      Found {len(occurrences)} source occurrence(s)."
     )
 
-    reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/6] Detecting exact duplicates (whole-file SHA-256)...")
+    reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/10] Detecting exact duplicates (whole-file SHA-256)...")
     duplicate_groups = deduplication.find_duplicates(occurrences)
     dup_count = sum(len(g.duplicate_document_ids) for g in duplicate_groups)
     reporter.emit(
@@ -411,7 +430,7 @@ def _execute_pipeline(
     non_ignored = [o for o in occurrences if not o.is_ignored_artifact]
     reporter.emit(
         ProgressStage.CONVERTING_DOCUMENTS,
-        f"[3/6] Converting {len(non_ignored)} document(s) to PDF...",
+        f"[3/10] Converting {len(non_ignored)} document(s) to PDF...",
         total=len(non_ignored),
     )
 
@@ -487,7 +506,7 @@ def _execute_pipeline(
             backend_usage.get(occ.conversion_backend or "unknown", 0) + 1
         )
 
-    reporter.emit(ProgressStage.BUILDING_OG, "[4/6] Merging OG package...")
+    reporter.emit(ProgressStage.BUILDING_OG, "[4/10] Merging OG package...")
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
         og_docs,
@@ -502,7 +521,11 @@ def _execute_pipeline(
             occ_by_id[doc_id].og_part_index = part.index
     reporter.emit(ProgressStage.BUILDING_OG, f"      OG: {len(og_parts)} part(s) written.")
 
-    reporter.emit(ProgressStage.BUILDING_FINAL, "[5/6] Merging Final package...")
+    content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes = (
+        _run_content_aware_analysis(occurrences, config, reporter)
+    )
+
+    reporter.emit(ProgressStage.BUILDING_FINAL, "[9/10] Merging Final package...")
     final_docs = [o for o in occurrences if o.included_in_final]
     final_parts = merging.write_package(
         final_docs,
@@ -523,13 +546,17 @@ def _execute_pipeline(
         start_time="",
         occurrences=occurrences,
         duplicate_groups=duplicate_groups,
+        content_duplicate_groups=content_duplicate_groups,
+        document_families=document_families,
+        overlap_findings=overlap_findings,
         og_parts=og_parts,
         final_parts=final_parts,
         conversion_backend_usage=backend_usage,
         unsafe_archive_incidents=inventory_builder.unsafe_incidents,
+        content_dedup_notes=oversized_bucket_notes,
     )
 
-    reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[6/6] Running integrity checks...")
+    reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[10/10] Running integrity checks...")
     run.integrity_checks = validation.run_integrity_checks(
         run, config.max_pages_per_part, config.max_size_bytes_per_part
     )
@@ -541,6 +568,69 @@ def _execute_pipeline(
     )
 
     return run
+
+
+def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _ProgressReporter):
+    """Levels 2-4 content-aware duplicate detection, merged-document
+    overlap detection, and Level 5 version classification -- all run
+    over already-converted documents, between Building OG and Building
+    Final. Guarded by `config.enable_content_aware_dedup`: when
+    disabled, every stage still emits a progress event (for a stable,
+    predictable event sequence) but does no work and mutates nothing,
+    which is exactly RC1's original exact-hash-only behavior.
+
+    Returns (content_duplicate_groups, document_families,
+    overlap_findings, oversized_bucket_notes).
+    """
+
+    if not config.enable_content_aware_dedup:
+        for stage, label in (
+            (ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Content-aware analysis disabled; skipping."),
+            (ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Content-aware analysis disabled; skipping."),
+            (ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/10] Content-aware analysis disabled; skipping."),
+            (ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Content-aware analysis disabled; skipping."),
+        ):
+            reporter.emit(stage, label)
+        return [], [], [], []
+
+    reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Analyzing document content...")
+    fingerprints = content_dedup.build_fingerprints(occurrences)
+    reporter.emit(
+        ProgressStage.FINGERPRINTING_CONTENT,
+        f"      Fingerprinted {len(fingerprints)} document(s) for content-aware comparison.",
+    )
+
+    reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Detecting content-aware duplicates...")
+    content_duplicate_groups, oversized_bucket_notes = content_dedup.detect_content_duplicates(
+        occurrences, fingerprints
+    )
+    content_dup_count = sum(len(g.document_ids) - 1 for g in content_duplicate_groups)
+    reporter.emit(
+        ProgressStage.DETECTING_CONTENT_DUPLICATES,
+        f"      {content_dup_count} content-aware duplicate occurrence(s) in "
+        f"{len(content_duplicate_groups)} group(s).",
+    )
+    for note in oversized_bucket_notes:
+        reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, f"      {note}", severity=ProgressSeverity.WARNING)
+
+    reporter.emit(ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/10] Analyzing merged-package overlaps...")
+    overlap_findings = overlap_detection.detect_overlaps(occurrences, fingerprints)
+    contained_count = sum(1 for f in overlap_findings if f.excluded)
+    reporter.emit(
+        ProgressStage.ANALYZING_MERGED_PACKAGES,
+        f"      {len(overlap_findings)} overlap finding(s); {contained_count} document(s) "
+        "safely proven contained in a merged package.",
+    )
+
+    reporter.emit(ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Classifying document versions...")
+    document_families = version_classification.build_document_families(
+        occurrences, fingerprints, content_duplicate_groups, overlap_findings
+    )
+    reporter.emit(
+        ProgressStage.CLASSIFYING_VERSIONS, f"      {len(document_families)} document family/families identified."
+    )
+
+    return content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes
 
 
 def _copy_conversion_result(retained, duplicate) -> None:

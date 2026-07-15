@@ -89,6 +89,20 @@ def test_documents_with_different_dates_both_kept(tmp_path, run_build):
 
 
 # TEST 4 - IDENTICAL VISIBLE PAGES BUT DIFFERENT SOURCE BYTES
+#
+# RC2 CHANGE: this pair (identical visible text/pages, differing only in
+# a PDF metadata tag) is the textbook definition of RC2's Level 2
+# ("normalized PDF duplicate") -- content-aware detection layered ON TOP
+# OF the original exact-SHA-256 pass, not a replacement for it (see
+# content_dedup.py). Before RC2, exact-hash-only detection correctly
+# left both files alone (their bytes genuinely differ) and this test
+# asserted BOTH remained in Final. Since Level 2 now exists specifically
+# to catch exactly this case, one copy is correctly excluded from Final
+# now -- `is_duplicate` (exact-hash) stays False for both, as it always
+# has (this is deliberately NOT an exact-hash duplicate), but exactly
+# one is now `is_content_duplicate=True` via the "normalized_pdf"
+# method, fully explained in Duplicate_Removal_Log.txt. Both copies
+# remain fully present in OG, untouched, as always.
 def test_identical_visible_content_different_source_bytes(tmp_path, run_build):
     folder = tmp_path / "input"
     make_pdf(folder / "version_x.pdf", pages=2, text_prefix="Shared Text",
@@ -104,11 +118,26 @@ def test_identical_visible_content_different_source_bytes(tmp_path, run_build):
     dx = _doc(run, "version_x.pdf")
     dy = _doc(run, "version_y.pdf")
 
+    # Neither is an EXACT-hash duplicate -- their original bytes genuinely differ.
     assert dx.is_duplicate is False
     assert dy.is_duplicate is False
+
+    # Both remain fully present in OG, untouched, regardless of any
+    # content-aware exclusion from Final.
+    og_ids = {doc_id for part in run.og_parts for doc_id in part.document_ids}
+    assert dx.document_id in og_ids
+    assert dy.document_id in og_ids
+
+    # Exactly one is excluded from Final via Level 2 content-aware
+    # detection -- explained, auditable, and never silent.
     final_ids = {doc_id for part in run.final_parts for doc_id in part.document_ids}
-    assert dx.document_id in final_ids
-    assert dy.document_id in final_ids
+    in_final = [d for d in (dx, dy) if d.document_id in final_ids]
+    excluded = [d for d in (dx, dy) if d.document_id not in final_ids]
+    assert len(in_final) == 1
+    assert len(excluded) == 1
+    assert excluded[0].is_content_duplicate is True
+    assert excluded[0].duplicate_detection_method == "normalized_pdf"
+    assert excluded[0].content_duplicate_of_document_id == in_final[0].document_id
 
 
 # TEST 5 - EXACT DUPLICATES IN DIFFERENT FOLDERS

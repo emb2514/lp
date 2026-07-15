@@ -192,8 +192,27 @@ def test_dhash_similarity_behavior(tmp_path: Path):
 
     assert pdf_content.hamming_distance(h1, h2) == 0
     # A uniform-color image has no internal gradient, so a plain
-    # difference-hash can legitimately collide across different flat
-    # colors -- this test only asserts the identical-image case is
-    # exactly 0, which is the property content_dedup.py actually relies
-    # on (a real page always has some texture/edges).
+    # difference-hash literally cannot distinguish it from another solid
+    # image of a DIFFERENT color -- h3 (blue) legitimately collides with
+    # h1/h2 (red) here. This is not a bug in this assertion; it's exactly
+    # why content_dedup.py never trusts dHash alone (see TEST 15 below
+    # and average_color's docstring) -- this test only documents the
+    # limitation, TEST 15 proves the mitigation.
     assert isinstance(h3, int)
+
+
+# TEST 15 - average_color distinguishes solid images of different colors
+# that a difference-hash alone cannot (see TEST 14's dHash collision)
+def test_average_color_distinguishes_solid_colors():
+    from PIL import Image
+
+    red = Image.new("RGB", (300, 200), color=(200, 30, 30))
+    blue = Image.new("RGB", (200, 150), color=(0, 100, 200))
+    red_again = Image.new("RGB", (50, 50), color=(200, 30, 30))
+
+    c_red = pdf_content._average_color(red)
+    c_blue = pdf_content._average_color(blue)
+    c_red_again = pdf_content._average_color(red_again)
+
+    assert c_red == c_red_again  # same color, different size -- must match exactly
+    assert c_red != c_blue
