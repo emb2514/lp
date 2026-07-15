@@ -46,7 +46,14 @@ def _make_pdf_bytes(lines: list[str], pages: int = 3) -> bytes:
     return buf.getvalue()
 
 
-def generate_sample_package() -> Path:
+def generate_sample_package(zip_path: Path | None = None) -> Path:
+    """Writes the sample ZIP to `zip_path`, defaulting to the tracked
+    `samples/Sample_Test_Package.zip`. Tests pass an explicit temp
+    path so running the test suite never mutates tracked repo files.
+    """
+
+    zip_path = zip_path if zip_path is not None else ZIP_PATH
+
     loan_disclosure_pdf = _make_pdf_bytes(
         ["Sample Loan Disclosure", "This is synthetic sample content -- not a real document."]
     )
@@ -67,14 +74,14 @@ def generate_sample_package() -> Path:
         ),
     ]
 
-    ZIP_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(ZIP_PATH, "w", zipfile.ZIP_DEFLATED) as zf:
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in entries:
             info = zipfile.ZipInfo(name, date_time=_FIXED_DATE_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             zf.writestr(info, data)
 
-    return ZIP_PATH
+    return zip_path
 
 
 def write_expected_results() -> Path:

@@ -375,7 +375,9 @@ def test_sample_package_matches_documented_expected_results(tmp_path):
     finally:
         sys.path.remove(str(samples_dir))
 
-    zip_path = generate_sample_package()
+    # Written to a temp path, not the tracked samples/Sample_Test_Package.zip
+    # -- the test suite must never mutate tracked repo files as a side effect.
+    zip_path = generate_sample_package(tmp_path / "Sample_Test_Package.zip")
 
     run = build_package(
         input_path=zip_path,
