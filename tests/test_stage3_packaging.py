@@ -396,3 +396,56 @@ def test_sample_package_matches_documented_expected_results(tmp_path):
     final_count = sum(len(p.document_ids) for p in run.final_parts)
     assert og_count == 4
     assert final_count == 3
+
+
+# STAGE 3 TEST 29 - THE WINDOWS APPLICATION MANIFEST IS WELL-FORMED XML
+def test_windows_manifest_is_well_formed_xml():
+    """PyInstaller parses this file with `xml.dom.minidom` at build
+    time (see LenderPackageBuilder.spec's EXE(manifest=...)) -- an XML
+    error here (e.g. a bare "--" inside a comment, which is illegal in
+    XML regardless of content) doesn't surface until deep into a real
+    Windows PyInstaller build, which is expensive to catch that way.
+    """
+    import xml.dom.minidom
+
+    manifest_path = runtime_paths.app_root() / "packaging" / "app.manifest"
+    contents = manifest_path.read_bytes()
+
+    xml.dom.minidom.parseString(contents)  # raises ExpatError if malformed
+
+    # The specific mistake that motivated this test: XML comments may
+    # never contain "--" anywhere in their text, not just at the ends.
+    text = contents.decode("utf-8")
+    for comment in re.findall(r"<!--(.*?)-->", text, re.DOTALL):
+        assert "--" not in comment, f"XML comment illegally contains '--': {comment!r}"
+
+
+# STAGE 3 TEST 30 - PYINSTALLER SPEC HIDDEN IMPORTS FOR extract-msg's DEPENDENCIES ARE REAL, IMPORTABLE MODULES
+def test_spec_extract_msg_hidden_imports_are_real_modules():
+    """Catches exactly the class of bug that motivated this test: a
+    hidden-import name that does not match any real importable module
+    (e.g. listing a PyPI distribution's own name instead of the module
+    it actually exposes) silently fails as a PyInstaller warning rather
+    than a build error, so it needs its own explicit check.
+    """
+    import ast
+    import importlib
+
+    spec_path = runtime_paths.app_root() / "LenderPackageBuilder.spec"
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
+
+    deps: list[str] | None = None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "_extract_msg_deps"
+        ):
+            deps = ast.literal_eval(node.value)
+            break
+
+    assert deps, "could not find _extract_msg_deps in LenderPackageBuilder.spec"
+
+    for module_name in deps:
+        importlib.import_module(module_name)  # raises ImportError if the name is wrong

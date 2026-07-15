@@ -9,7 +9,7 @@
 
   <!--
     No elevation, ever. "asInvoker" runs with exactly the current
-    user's permissions -- the same as any other unprivileged desktop
+    user's permissions, the same as any other unprivileged desktop
     app. This tool never needs, and must never request, administrator
     rights.
   -->

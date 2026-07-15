@@ -127,7 +127,11 @@ _extract_msg_deps = [
     "compressed_rtf",
     "ebcdic",
     "olefile",
-    "red_black_tree_mod",
+    # The "red-black-tree-mod" distribution's importable modules are
+    # red_black_dict_mod / red_black_set_mod, not a module matching
+    # the distribution's own name.
+    "red_black_dict_mod",
+    "red_black_set_mod",
     "RTFDE",
     "tzlocal",
 ]
