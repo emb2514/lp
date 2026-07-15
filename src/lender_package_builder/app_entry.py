@@ -72,23 +72,28 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     parsed = parse_args(args)
 
-    if parsed.mode != "gui":
-        from . import windows_console
+    if parsed.mode == "gui":
+        return _run_gui(parsed)
 
-        windows_console.attach_parent_console()
+    from . import windows_console
 
-    if parsed.mode == "help":
-        print(_help_text())
-        return 0
-    if parsed.mode == "version":
-        return _run_version()
-    if parsed.mode == "self_test":
-        return _run_self_test()
-    if parsed.mode == "diagnostics":
-        return _run_diagnostics()
-    if parsed.mode == "gui_smoke_test":
+    windows_console.attach_parent_console()
+    try:
+        if parsed.mode == "help":
+            print(_help_text())
+            return 0
+        if parsed.mode == "version":
+            return _run_version()
+        if parsed.mode == "self_test":
+            return _run_self_test()
+        if parsed.mode == "diagnostics":
+            return _run_diagnostics()
         return _run_gui_smoke_test()
-    return _run_gui(parsed)
+    finally:
+        # Detach from any console-backed stream before the interpreter
+        # starts shutting down -- see release_console_streams()'s own
+        # docstring for why this specifically matters here.
+        windows_console.release_console_streams()
 
 
 def _help_text() -> str:

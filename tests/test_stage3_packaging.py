@@ -392,6 +392,41 @@ def test_windows_console_attach_falls_back_to_null_writer(monkeypatch, tmp_path)
     print("this must not raise", file=sys.stdout)
 
 
+# STAGE 3 TEST 25D - RELEASING CONSOLE STREAMS DETACHES FROM A STREAM THAT FAILS TO FLUSH/CLOSE
+def test_windows_console_release_survives_broken_stream(monkeypatch):
+    """CPython reports a non-zero process exit status if flushing
+    sys.stdout/sys.stderr fails during interpreter shutdown (since
+    Python 3.6) -- even after sys.exit(0) already ran successfully.
+    This is the leading explanation for a real Windows CI failure
+    where --version printed its output correctly but the process still
+    exited nonzero immediately afterward with no visible error at all,
+    in two different console-handling implementations.
+
+    release_console_streams() must replace whatever sys.stdout/stderr
+    currently are with a plain, always-safe stream before the CLI mode
+    returns, even if flushing/closing the original ones raises.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class _BrokenStream:
+        def flush(self):
+            raise OSError("simulated: this console handle cannot be flushed")
+
+        def close(self):
+            raise OSError("simulated: this console handle cannot be closed")
+
+    monkeypatch.setattr(sys, "stdout", _BrokenStream())
+    monkeypatch.setattr(sys, "stderr", _BrokenStream())
+    monkeypatch.setattr(sys, "stdin", _BrokenStream())
+
+    windows_console.release_console_streams()  # must not raise
+
+    assert not isinstance(sys.stdout, _BrokenStream)
+    assert not isinstance(sys.stderr, _BrokenStream)
+    print("this must not raise", file=sys.stdout)
+    sys.stdout.flush()  # must not raise -- this is exactly what interpreter shutdown does
+
+
 # STAGE 3 TEST 26 - CRASH LOG SETUP WRITES STARTUP INFO TO A READABLE FILE
 def test_crash_log_setup_writes_startup_info(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime_paths, "default_log_root", lambda: tmp_path / "Logs")

@@ -85,3 +85,53 @@ def attach_parent_console() -> None:
             sys.stdin = open(os.devnull, "r", encoding="utf-8")
         except OSError:
             pass
+
+
+def release_console_streams() -> None:
+    """Call this once a CLI mode is completely done printing, before
+    returning from `main()` and letting the interpreter shut down.
+
+    CPython has flushed `sys.stdout`/`sys.stderr` during interpreter
+    finalization and reported a non-zero process exit status if that
+    flush fails since Python 3.6 -- even after `sys.exit(0)` was
+    already called with a successful result. A real Win32 console
+    handle reopened via `attach_parent_console()` is an unusual object
+    for the interpreter to flush/close a second time during shutdown;
+    detaching from it explicitly here, and replacing it with a plain
+    `os.devnull`-backed file (which can never fail to flush/close),
+    means whatever the interpreter does next can't corrupt the exit
+    code this CLI mode already decided.
+
+    A no-op on non-Windows platforms.
+    """
+
+    if sys.platform != "win32":
+        return
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.flush()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+        try:
+            setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
+        except OSError:
+            setattr(sys, stream_name, None)
+
+    stdin = getattr(sys, "stdin", None)
+    if stdin is not None:
+        try:
+            stdin.close()
+        except Exception:
+            pass
+        try:
+            sys.stdin = open(os.devnull, "r", encoding="utf-8")
+        except OSError:
+            sys.stdin = None
