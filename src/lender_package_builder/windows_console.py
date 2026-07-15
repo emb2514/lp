@@ -9,17 +9,24 @@ nowhere to even print the traceback), rather than just being silently
 invisible.
 
 This function guarantees `sys.stdout`/`sys.stderr`/`sys.stdin` are
-real, writable streams by the time it returns, using the same
-technique tools like `git.exe` use to support both double-click GUI
-use and command-line flags from one executable:
+real, writable objects by the time it returns -- `print()` must never
+crash the process regardless of what console (if any) is available:
 
 1. Attach to an already-open console the process was launched from
-   (a real terminal window), if one exists in the process's ancestry.
-2. Otherwise, allocate a brand-new console. This covers automation
-   contexts (e.g. a CI runner) that have no console anywhere in the
-   process tree at all -- relying on AttachConsole alone silently
-   no-ops there, leaving stdout/stderr as None and crashing the very
-   next print().
+   (a real terminal window), if one exists in the process's ancestry
+   -- the same technique tools like `git.exe` use to support both
+   double-click GUI use and command-line flags from one executable.
+2. Otherwise, fall back to a null writer/reader (like redirecting to
+   `os.devnull`). This deliberately does NOT call `AllocConsole()` to
+   create a brand-new console window: that additionally proved to
+   cause an unrelated failure when exercised on a real Windows
+   GitHub Actions runner (a non-interactive automation context with
+   no window station) -- creating a whole new console there is both
+   unnecessary (nothing is present to read it) and, empirically,
+   risky. A null fallback fixes the actual bug (a crash from writing
+   to `None`) with no such risk; the only cost is that CLI mode output
+   is invisible in that one narrow case (no console anywhere in the
+   process's ancestry), which does not affect exit codes.
 
 A no-op (and always safe) on non-Windows platforms, and effectively a
 no-op when stdout/stderr are already valid streams (running from
@@ -28,6 +35,7 @@ source via `python.exe`, or already attached).
 
 from __future__ import annotations
 
+import os
 import sys
 
 _ATTACH_PARENT_PROCESS = -1
@@ -41,20 +49,16 @@ def attach_parent_console() -> None:
         # python.exe, or already attached) -- nothing to fix.
         return
 
+    attached = False
     try:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         attached = bool(kernel32.AttachConsole(_ATTACH_PARENT_PROCESS))
-        if not attached:
-            # No existing console anywhere in the process's ancestry
-            # (e.g. double-clicked with no terminal, or a
-            # non-interactive automation context) -- create one so
-            # stdout/stderr are never left as None.
-            attached = bool(kernel32.AllocConsole())
-        if not attached:
-            return
+    except Exception:
+        attached = False
 
+    if attached:
         for stream_name, device, mode in (
             ("stdout", "CONOUT$", "w"),
             ("stderr", "CONOUT$", "w"),
@@ -66,7 +70,18 @@ def attach_parent_console() -> None:
                 # One stream failing to (re)open must not prevent the
                 # others from working.
                 continue
-    except Exception:
-        # Console attachment is a convenience only -- a failure here
-        # must never prevent the requested CLI mode from running.
-        pass
+
+    # Whatever attaching did or didn't accomplish above, guarantee
+    # stdout/stderr/stdin are never left as None -- a bare print() or
+    # input() must never crash the process.
+    for stream_name in ("stdout", "stderr"):
+        if getattr(sys, stream_name, None) is None:
+            try:
+                setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
+            except OSError:
+                pass
+    if getattr(sys, "stdin", None) is None:
+        try:
+            sys.stdin = open(os.devnull, "r", encoding="utf-8")
+        except OSError:
+            pass

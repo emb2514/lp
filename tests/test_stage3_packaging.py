@@ -348,28 +348,31 @@ def test_windows_console_attach_short_circuits_when_streams_already_valid(monkey
     windows_console.attach_parent_console()  # must not raise
 
 
-# STAGE 3 TEST 25C - CONSOLE ATTACHMENT FALLS BACK TO AllocConsole WHEN AttachConsole FAILS
-def test_windows_console_attach_falls_back_to_allocconsole(monkeypatch, tmp_path):
+# STAGE 3 TEST 25C - CONSOLE ATTACHMENT FALLS BACK TO A NULL WRITER WHEN AttachConsole FAILS
+def test_windows_console_attach_falls_back_to_null_writer(monkeypatch, tmp_path):
     """This is exactly the bug that broke the packaged CLI modes on a
     real Windows CI runner: AttachConsole(ATTACH_PARENT_PROCESS) fails
     when there is no console anywhere in the process's ancestry (a
     non-interactive automation context), and relying on that alone
     left sys.stdout/stderr as None -- crashing the very next print()
-    with no visible output anywhere. AllocConsole() must be tried as a
-    fallback so streams are never left broken.
+    with no visible output anywhere.
+
+    An earlier version of this fix called AllocConsole() as a
+    fallback; that created a real new console window and, empirically
+    on a real Windows CI runner, broke something else (the process
+    exited nonzero afterwards, with the failure itself invisible in
+    that same uncaptured new console). The fix instead falls back to a
+    null writer -- print() must never crash, but nothing here should
+    depend on Win32 window/console creation actually working.
     """
     import ctypes
     import types
 
-    # On non-Windows, "CONOUT$"/"CONIN$" are not special device names --
-    # open() just creates ordinary files with those literal names. Run
-    # from a throwaway directory so this test can never leave stray
-    # files in the repo if the mocked attach "succeeds" this far.
     monkeypatch.chdir(tmp_path)
-
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(sys, "stdin", None)
 
     calls = []
 
@@ -378,16 +381,15 @@ def test_windows_console_attach_falls_back_to_allocconsole(monkeypatch, tmp_path
             calls.append("AttachConsole")
             return 0  # fails, as it does with no console in the ancestry
 
-        def AllocConsole(self):
-            calls.append("AllocConsole")
-            return 1  # succeeds
-
     fake_windll = types.SimpleNamespace(kernel32=_FakeKernel32())
     monkeypatch.setattr(ctypes, "windll", fake_windll, raising=False)
 
     windows_console.attach_parent_console()  # must not raise
 
-    assert calls == ["AttachConsole", "AllocConsole"]
+    assert calls == ["AttachConsole"]
+    assert sys.stdout is not None
+    assert sys.stderr is not None
+    print("this must not raise", file=sys.stdout)
 
 
 # STAGE 3 TEST 26 - CRASH LOG SETUP WRITES STARTUP INFO TO A READABLE FILE
