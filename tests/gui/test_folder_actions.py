@@ -41,10 +41,15 @@ def test_result_view_folder_buttons_open_correct_paths(window, tmp_path, monkeyp
     window.result_view.open_final_button.click()
     window.result_view.open_reports_button.click()
 
-    assert opened_urls == [
-        str(run.output_path),
-        str(run.output_path / "Final"),
-        str(run.output_path / "Reports"),
+    # Compared as Path objects, not raw strings: Qt's QUrl always
+    # normalizes local-file paths to forward slashes internally (RFC
+    # 3986), even on Windows, so `toLocalFile()` can legitimately
+    # differ from `str(path)`'s OS-native separators while still
+    # pointing at the exact same location.
+    assert [Path(u) for u in opened_urls] == [
+        run.output_path,
+        run.output_path / "Final",
+        run.output_path / "Reports",
     ]
 
 
@@ -63,7 +68,7 @@ def test_failure_view_open_logs_button_opens_log_dir(window, tmp_path, monkeypat
 
     window.failure_view.open_logs_button.click()
 
-    assert opened_urls == [str(log_dir)]
+    assert [Path(u) for u in opened_urls] == [log_dir]
 
 
 def test_failure_view_open_logs_disabled_when_no_log_dir(window):
