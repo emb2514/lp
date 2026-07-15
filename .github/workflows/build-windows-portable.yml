@@ -82,6 +82,77 @@ jobs:
             throw "PyInstaller build did not produce LenderPackageBuilder.exe"
           }
 
+      # TEMPORARY diagnostic step -- captures evidence for a --version
+      # exit-code bug (prints correctly, then the process exits non-zero
+      # with no further diagnostics) that has now recurred across
+      # multiple different fixes to the console-attachment code. Does
+      # NOT gate the build; the real (non-diagnostic) proof below still
+      # runs and still fails the job the same way it always has if the
+      # bug is still present. Remove once the root cause is found.
+      - name: Diagnose --version exit-code behavior (temporary)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = (Resolve-Path "dist\LenderPackageBuilder\LenderPackageBuilder.exe").Path
+
+          function Invoke-Diagnostic([string]$Label) {
+            Write-Host "=== $Label ==="
+            $sinceTime = Get-Date
+            # Start-Process's -RedirectStandardOutput/-Error fail if the
+            # target file already exists, so build paths that don't
+            # exist yet rather than using New-TemporaryFile.
+            $stdoutFile = Join-Path $env:TEMP ("diag_stdout_" + [Guid]::NewGuid().ToString() + ".txt")
+            $stderrFile = Join-Path $env:TEMP ("diag_stderr_" + [Guid]::NewGuid().ToString() + ".txt")
+            try {
+              $proc = Start-Process -FilePath $exe -ArgumentList @("--version") -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+              Write-Host "Process.ExitCode (authoritative, via .NET) : $($proc.ExitCode)"
+            } catch {
+              Write-Host "Start-Process itself threw: $_"
+            }
+            Write-Host "--- captured stdout ---"
+            Get-Content $stdoutFile -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            Write-Host "--- captured stderr ---"
+            Get-Content $stderrFile -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            Remove-Item $stdoutFile, $stderrFile -ErrorAction SilentlyContinue
+
+            Write-Host "--- also via '&' call operator (matches the real failing step) ---"
+            & $exe --version
+            Write-Host "LASTEXITCODE via '&' : $LASTEXITCODE"
+
+            Write-Host "--- Application event log entries since $sinceTime ---"
+            try {
+              Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $sinceTime } -ErrorAction Stop |
+                Where-Object {
+                  $_.Message -match 'LenderPackageBuilder' -or
+                  $_.ProviderName -match 'Windows Error Reporting|Application Error|\.NET Runtime'
+                } |
+                Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message |
+                Format-List
+            } catch {
+              Write-Host "(no matching event log entries, or Get-WinEvent unavailable: $_)"
+            }
+            Write-Host ""
+          }
+
+          Write-Host ">>> Full (unmodified) build environment <<<"
+          Invoke-Diagnostic "version, full env, run 1"
+
+          Write-Host ""
+          Write-Host ">>> Minimized environment (PYTHONHOME/PYTHONPATH cleared, PATH reduced) <<<"
+          $env:PYTHONHOME = ""
+          $env:PYTHONPATH = ""
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          Invoke-Diagnostic "version, minimized env, run 1"
+          Invoke-Diagnostic "version, minimized env, run 2"
+
+          # Purely diagnostic -- never let this step's own outcome (which
+          # reflects the last diagnosed exit code, not a real failure)
+          # affect the job. continue-on-error above is belt-and-suspenders
+          # for the same reason.
+          $global:LASTEXITCODE = 0
+          exit 0
+
       - name: Prove no external Python is required (minimized environment)
         shell: pwsh
         run: |
