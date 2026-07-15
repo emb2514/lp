@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QFrame,
@@ -24,9 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import archives
+from .. import archives, runtime_paths
+from .._version import USER_VERSION
 from ..cli import _default_config_path
-from ..config import AppConfig, load_config
+from ..config import AppConfig, load_config_safe
 from ..progress import ProgressEvent, ProgressStage
 from . import dialogs
 from .formatting import format_bytes
@@ -37,13 +38,28 @@ from .widgets.progress_view import ProgressView
 from .widgets.result_view import FailureView, ResultView
 from .worker import CallableWorker, make_build_callable, make_estimate_callable, start_worker
 
-_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+_ASSETS_DIR = runtime_paths.bundled_assets_root() / "gui" / "assets"
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config: AppConfig | None = None, parent: QWidget | None = None):
+    def __init__(
+        self,
+        config: AppConfig | None = None,
+        parent: QWidget | None = None,
+        preselect_path: Path | None = None,
+        startup_multiple_items_message: str | None = None,
+    ):
         super().__init__(parent)
-        self.config = config or load_config(_default_config_path())
+        self._preselect_path = preselect_path
+        self._startup_multiple_items_message = startup_multiple_items_message
+        self._config_warning: str | None = None
+        if config is not None:
+            self.config = config
+        else:
+            result = load_config_safe(_default_config_path())
+            self.config = result.config
+            if result.used_defaults_due_to_error:
+                self._config_warning = result.warning
 
         self.current_selection: InputSelection | None = None
         self.is_processing = False
@@ -53,7 +69,7 @@ class MainWindow(QMainWindow):
         self._build_thread = None
         self._build_worker = None
 
-        self.setWindowTitle("Lender Package Builder")
+        self.setWindowTitle(f"Lender Package Builder - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -62,6 +78,26 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._center_on_screen()
+
+        if self._config_warning:
+            QTimer.singleShot(0, self._show_config_warning)
+        if self._startup_multiple_items_message:
+            QTimer.singleShot(0, self._show_startup_multiple_items_message)
+        elif self._preselect_path is not None:
+            QTimer.singleShot(0, self._apply_preselect_path)
+
+    def _show_config_warning(self) -> None:
+        dialogs.show_config_warning(self, self._config_warning or "")
+
+    def _show_startup_multiple_items_message(self) -> None:
+        dialogs.show_multiple_items_message(self, self._startup_multiple_items_message or "")
+
+    def _apply_preselect_path(self) -> None:
+        # Preselects the dragged-onto-the-.exe input, exactly like a
+        # drag onto the in-app drop zone -- it never starts processing
+        # on its own; the user still clicks "Build Lender Packages".
+        if self._preselect_path is not None and self._preselect_path.exists():
+            self._on_input_selected(self._preselect_path)
 
     # -- construction ----------------------------------------------
 
@@ -102,7 +138,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Lender Package Builder")
         title.setObjectName("AppTitle")
         text_col.addWidget(title)
-        subtitle = QLabel("Build complete and deduplicated lender PDF packages")
+        subtitle = QLabel(f"Build complete and deduplicated lender PDF packages  ·  v{USER_VERSION}")
         subtitle.setObjectName("AppSubtitle")
         text_col.addWidget(subtitle)
         layout.addLayout(text_col)

@@ -1,4 +1,4 @@
-# Lender Package Builder (Stage 1 + Stage 2)
+# Lender Package Builder (1.0.0 RC1)
 
 A local, offline tool that turns a lender ZIP, nested ZIP, folder, or
 loose document collection into two organized PDF packages:
@@ -17,14 +17,22 @@ report is ever uploaded anywhere. There is no telemetry.
 
 **Stage 1** is the command-line processing engine. **Stage 2** adds a
 polished PySide6 desktop window around that same engine -- no command
-line required. There is no standalone, Python-free `.exe` package yet
-(that is Stage 3). See "Roadmap" below.
+line required. **Stage 3** packages both into a portable Windows
+`.exe` that needs no Python install, no admin rights, and no
+installer -- see **STAGE3_BUILD_AND_RELEASE.md** and
+**README_PORTABLE.txt**. This is currently release candidate
+`1.0.0 RC1`, pending manual Windows acceptance testing -- see
+**WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md**.
 
 ---
 
-## Quick start (Windows, non-technical)
+## Quick start
 
-**Desktop application (recommended):** see
+**Portable Windows application (no Python required):** download the
+release ZIP, extract it, and double-click `LenderPackageBuilder.exe`.
+See **README_PORTABLE.txt** for the full walkthrough.
+
+**Desktop application from source (Windows, non-technical):** see
 **STAGE2_WINDOWS_TEST_INSTRUCTIONS.md** for a full plain-English
 walkthrough. The short version:
 
@@ -337,47 +345,59 @@ src/lender_package_builder/
 .venv/bin/python -m pytest tests -v              (macOS/Linux)
 ```
 
-83 automated tests: 49 engine tests (`tests/*.py`) covering all 22
-Stage 1 scenarios plus extra coverage (ignored system artifacts,
-non-overwriting duplicate ZIP filenames, report reconciliation, the
+119 automated tests: 78 engine tests (`tests/*.py`, including
+`tests/test_stage3_packaging.py`) covering all 22 Stage 1 scenarios,
+28 Stage 3 packaging/versioning/self-test/diagnostics/entry-point
+scenarios, and extra coverage (ignored system artifacts, non-
+overwriting duplicate ZIP filenames, report reconciliation, the
 pure-Python DOCX/XLSX fallback renderer, LibreOffice conversion when
 available, the structured progress API, and the maximum-constraint
-splitting behavior), and 34 GUI tests (`tests/gui/*.py`, using
+splitting behavior); and 41 GUI tests (`tests/gui/*.py`, using
 `pytest-qt` with the Qt `offscreen` platform) covering all 20 Stage 2
-scenarios: initial state, drag-and-drop and Browse fallbacks, the
-multiple-items rejection message, Advanced Settings defaults/
-validation, structured progress rendering, the real background
-worker's threading and cleanup, success/warning/failure result views,
-large-input confirmation, folder-opening actions, "Process Another
-Package", close-while-processing, and a full synthetic package run
-through the real GUI worker end to end.
+scenarios plus 7 Stage 3 GUI scenarios (versioned window title, frozen-
+aware asset resolution, drag-onto-.exe preselection without
+auto-processing, the reused multiple-items dialog, the config-warning
+dialog, and the `--gui-smoke-test` entry point).
 
 **Environment note:** on the headless Linux container this project was
 built and tested in, `QT_QPA_PLATFORM=offscreen` is required (no real
 display); on real Windows the native Qt platform plugin is used
 automatically instead. In that headless container, running the full
-83-test suite in one process occasionally (roughly 1 run in 4-6)
-segfaults strictly at Python/Qt interpreter *shutdown*, after every
-test has already passed -- a known category of PySide6/Shiboken
-fragility specific to the `offscreen` platform under heavy repeated
-widget construction/destruction in one long-lived process, not a defect
-in any individual test or in the application. Every individual test
-passes reliably and repeatedly; no crash has ever occurred with
-application code on the stack. This has not been observed running the
-GUI normally (one window, one process lifetime) and is not expected on
-real Windows with the native window system.
+GUI test suite in one process occasionally segfaults strictly at
+Python/Qt interpreter *shutdown*, after every test has already
+passed -- a known category of PySide6/Shiboken fragility specific to
+the `offscreen` platform under heavy repeated widget construction/
+destruction in one long-lived process, not a defect in any individual
+test or in the application. Every individual test passes reliably and
+repeatedly; no crash has ever occurred with application code on the
+stack. This has not been observed running the GUI normally (one
+window, one process lifetime) and is not expected on real Windows with
+the native window system.
+
+**Packaged-build verification:** the Windows portable `.exe` is built
+and additionally verified by a real Windows GitHub Actions runner (see
+`.github/workflows/build-windows-portable.yml`), including running its
+`--self-test` with `PYTHONHOME`/`PYTHONPATH` cleared and a minimized
+`PATH` to prove it needs no external Python. See
+`STAGE3_BUILD_AND_RELEASE.md` for exactly what is and is not covered
+by that CI run versus what still needs your own manual test on a
+physical Windows 11 computer.
 
 ## Roadmap
 
 - **Stage 1:** local processing engine, CLI, automated tests, setup
   scripts, conversion, deduplication, PDF merging/splitting, reports.
   Complete.
-- **Stage 2 (this delivery):** PySide6 desktop window around the same
-  engine, structured progress API, background worker, drag-and-drop,
-  advanced settings, success/warning/failure states, GUI automated
-  tests. Complete.
-- **Stage 3 (not started):** a portable Windows package needing no
-  Python install, no admin rights, and no installer.
+- **Stage 2:** PySide6 desktop window around the same engine,
+  structured progress API, background worker, drag-and-drop, advanced
+  settings, success/warning/failure states, GUI automated tests.
+  Complete.
+- **Stage 3 (this delivery):** a portable Windows package needing no
+  Python install, no admin rights, and no installer. CI-verified on a
+  real Windows GitHub Actions runner; pending your own manual
+  acceptance test on a physical Windows 11 computer before being
+  called a finished, final `v1.0.0`. See `STAGE3_BUILD_AND_RELEASE.md`
+  and `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md`.
 
 ## Known limitations
 
@@ -409,3 +429,25 @@ describes conversion-fidelity and environment edge cases.
   is skipped in that edge case.
 - No cancellation button exists, by design (see Stage 2 spec) -- closing
   the window is blocked with a warning while a job is running instead.
+
+**Stage 3 additions:**
+
+- The portable `.exe` has been built and verified on a real Windows
+  GitHub Actions runner (full test suite, `--self-test`,
+  `--diagnostics`, `--gui-smoke-test`, with `PYTHONHOME`/`PYTHONPATH`
+  cleared and a minimized `PATH`, and from a space-containing path) --
+  it has **not yet** been manually tested on a physical Windows 11
+  computer. See `STAGE3_BUILD_AND_RELEASE.md` section 2 for the exact
+  CI-tested-vs-manual-test boundary, and
+  `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` for that manual test.
+- The executable is unsigned (no commercial code-signing certificate
+  yet) -- expect a first-run Windows SmartScreen/antivirus warning; see
+  `README_PORTABLE.txt` and `PACKAGING_TROUBLESHOOTING.md`.
+- `extract-msg` (`.msg` conversion) is GPLv3-licensed and used
+  in-process, which is a genuine, unresolved tension with this
+  project's "Proprietary" license for anything beyond local/internal
+  use -- flagged prominently at the top of `THIRD_PARTY_NOTICES.txt`
+  rather than silently resolved. Does not affect local use.
+- Microsoft Office COM automation (via `pywin32`, Windows-only) is
+  implemented and bundled but has not been exercised against a real,
+  licensed Office installation as part of this build.

@@ -43,3 +43,12 @@ class ConversionError(LenderPackageBuilderError):
 
 class IntegrityCheckFailedError(LenderPackageBuilderError):
     """Raised when the CLI must stop because a required integrity check failed."""
+
+
+class InvalidConfigError(LenderPackageBuilderError):
+    """Raised when an external `config.toml` exists but cannot be parsed.
+
+    Carries a friendly, user-facing message; callers (CLI and GUI) catch
+    this specifically to fall back to built-in defaults rather than
+    crashing outright or silently using unexpected settings.
+    """

@@ -17,13 +17,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, archives, deduplication, merging, reporting, validation
+from . import __version__, archives, deduplication, merging, reporting, runtime_paths, validation
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
 from .conversion.base import make_placeholder_pdf
 from .exceptions import (
     ArchiveTooLargeError,
     InsufficientDiskSpaceError,
+    InvalidConfigError,
     InvalidInputError,
     LenderPackageBuilderError,
     OutputAlreadyExistsError,
@@ -92,7 +93,12 @@ def main(argv: list[str] | None = None) -> int:
 def _run_build_command(args: argparse.Namespace) -> int:
     input_path = Path(args.input_path).expanduser().resolve()
     config_path = args.config or _default_config_path()
-    config = load_config(config_path)
+
+    try:
+        config = load_config(config_path)
+    except InvalidConfigError as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
 
     if args.max_pages_per_part is not None:
         config.max_pages_per_part = args.max_pages_per_part
@@ -122,11 +128,20 @@ def _run_build_command(args: argparse.Namespace) -> int:
 
 
 def _default_config_path() -> Path:
+    """Where to look for `config.toml` when none is given explicitly.
+
+    Prefers the current working directory (developer convenience: `cd`
+    into the project and run `config.toml` edits without a full path),
+    then falls back to the portable application root -- the project
+    root when running from source, or the folder containing the .exe
+    when frozen (see `runtime_paths.py`). A missing file at either
+    location is not an error; `load_config` falls back to defaults.
+    """
+
     cwd_candidate = Path.cwd() / "config.toml"
     if cwd_candidate.exists():
         return cwd_candidate
-    package_root_candidate = Path(__file__).resolve().parent.parent.parent / "config.toml"
-    return package_root_candidate
+    return runtime_paths.external_config_path()
 
 
 def _print_summary(run: RunResult) -> None:

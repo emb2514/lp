@@ -1,0 +1,142 @@
+LENDER PACKAGE BUILDER - THIRD-PARTY NOTICES
+==============================================
+Release: 1.0.0 RC1
+Generated for the PyInstaller --onedir portable Windows build.
+
+This portable application is built with Python and bundles the
+open-source libraries listed below. License terms are reproduced from
+what each project actually ships (its own LICENSE file / package
+metadata) -- nothing here invents or alters those terms. Full license
+text for each package is included in the release's `licenses\` folder
+(one file per package).
+
+This application is itself proprietary, closed-source software (see
+`pyproject.toml`). It is NOT itself released under any of the licenses
+below; only the third-party components listed are.
+
+==============================================
+FLAGGED FOR LEGAL REVIEW BEFORE PUBLIC DISTRIBUTION
+==============================================
+
+  extract-msg (Outlook .msg email parsing, used by
+  `conversion/email.py`) is licensed under the GNU General Public
+  License, version 3 (GPLv3) -- a strong copyleft license, not a
+  permissive one like the others below.
+
+  extract-msg is imported and called directly, in-process, as a
+  Python library (not run as a separate subprocess). Under the
+  Free Software Foundation's own interpretation of the GPL, this
+  kind of direct linkage typically makes the GPLv3's copyleft
+  obligations apply to the resulting combined/distributed work --
+  i.e., distributing this application with extract-msg bundled in
+  may create an obligation to also license the combined work under
+  GPLv3 (or a compatible license) and make corresponding source
+  available, notwithstanding this project's own "Proprietary"
+  license declaration.
+
+  This is a genuine, UNRESOLVED tension that has not been reviewed
+  by a lawyer as part of this build. It was deliberately not
+  "solved" by an automated process -- resolving it (relicensing,
+  obtaining a different license grant, replacing the dependency, or
+  isolating it behind a separate process/service boundary) is a
+  legal and product decision, not a packaging decision.
+
+  Do not treat this release candidate as cleared for public,
+  commercial, or wide-scale distribution until this has been
+  reviewed by qualified counsel. It is fine for internal use,
+  evaluation, and the Windows acceptance test described in
+  WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md.
+
+  PySide6/Qt (below) is also LGPL/GPL-licensed but is used in the
+  standard way countless proprietary desktop applications use
+  Qt for Python: as separate, dynamically-loaded library files
+  (not statically linked or modified) inside a `--onedir` build,
+  which keeps them independently replaceable -- this is the
+  widely-accepted compliant pattern for LGPL and does not carry
+  the same GPLv3 concern as extract-msg's direct GPL license.
+
+==============================================
+BUNDLED THIRD-PARTY COMPONENTS
+==============================================
+
+Python 3
+  https://www.python.org/
+  PSF License (Python Software Foundation License)
+  The interpreter and standard library are bundled by PyInstaller
+  inside the `_internal` folder.
+
+PyInstaller
+  https://pyinstaller.org
+  GPLv2-or-later, WITH a special "bootloader exception" that
+  explicitly permits using PyInstaller to build and distribute
+  non-free/commercial programs. This exception is what makes it
+  possible to distribute this proprietary application's compiled
+  form at all; it does not extend to other GPL-licensed dependencies
+  (see extract-msg above, which has no such exception).
+
+PySide6 / Qt for Python (and its shiboken6 binding generator)
+  https://pyside.org / https://www.qt.io
+  LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (used here under the
+  LGPL-3.0 terms). Qt's shared libraries ship as separate files in
+  the `_internal` folder of the `--onedir` build (never statically
+  linked, never modified), satisfying LGPL's requirement that a user
+  be able to replace the library with a compatible version of their
+  own. No Qt/PySide6 source code was modified for this project.
+
+pypdf
+  https://github.com/py-pdf/pypdf
+  BSD-3-Clause
+
+reportlab (open-source core)
+  https://www.reportlab.com/
+  BSD-style license (see the package's own license.txt)
+
+Pillow
+  https://python-pillow.github.io
+  MIT-CMU (the "Historical Permission Notice and Disclaimer", HPND)
+
+python-docx
+  https://github.com/python-openxml/python-docx
+  MIT
+
+openpyxl
+  https://openpyxl.readthedocs.io
+  MIT
+
+Beautiful Soup 4 (beautifulsoup4)
+  https://www.crummy.com/software/BeautifulSoup/bs4/
+  MIT
+
+extract-msg
+  https://github.com/TeamMsgExtractor/msg-extractor
+  GPL-3.0 -- see the "FLAGGED FOR LEGAL REVIEW" section above.
+
+  extract-msg's own dependencies, also bundled:
+    compressed-rtf   https://github.com/delimitry/compressed_rtf   MIT
+    ebcdic           https://pypi.org/project/ebcdic/              BSD
+    olefile          https://www.decalage.info/python/olefileio    BSD
+    red-black-tree-mod  (red_black_tree_mod on PyPI)               MIT
+    RTFDE            https://github.com/seamustuohy/RTFDE          LGPL-3.0
+                       (used the same way as PySide6/Qt above --
+                       dynamically loaded, unmodified)
+    tzlocal          https://pypi.org/project/tzlocal/             MIT
+
+pywin32 (Windows only; Microsoft Office COM automation)
+  https://github.com/mhammond/pywin32
+  PSF-style license (dual PSF/Python license as shipped by the
+  project) -- only present in the Windows build, only used when
+  Microsoft Office is already installed on the user's machine.
+
+==============================================
+WHAT THIS MEANS FOR YOU
+==============================================
+
+- You may use this application locally without any obligation beyond
+  what your own organization's policies require.
+- If you intend to redistribute this application (to customers, the
+  public, or outside your organization), have the "FLAGGED FOR LEGAL
+  REVIEW" item above reviewed first.
+- No license terms have been invented or paraphrased away here --
+  each package's own license file is included in this release's
+  `licenses\` folder for you to read directly.
+- This document does not constitute legal advice.

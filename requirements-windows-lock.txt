@@ -1,0 +1,29 @@
+# Exact-pinned reference lock file for the Windows portable build.
+#
+# This file records the exact package versions this repository was
+# last verified against. It is a reference starting point, not the
+# final word for any specific release: `build-windows-portable.yml`
+# regenerates the *authoritative* lock for each release by running
+# `pip freeze` on the actual Windows GitHub Actions runner right after
+# installing, and includes that generated file in the release folder's
+# BUILD_MANIFEST.txt -- because a version string alone does not
+# guarantee an identical wheel was used on Windows vs. this reference.
+#
+# To refresh this reference file locally after a deliberate dependency
+# upgrade:
+#   pip install -r requirements-windows-build.txt --upgrade
+#   pip freeze > requirements-windows-lock.txt
+# (then remove any local-only/editable line for this project itself.)
+
+beautifulsoup4==4.13.5
+extract-msg==0.55.0
+lxml==6.1.1
+openpyxl==3.1.5
+Pillow==11.3.0
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+pypdf==5.9.0
+PySide6==6.11.1
+python-docx==1.2.0
+pywin32==306; sys_platform == "win32"
+reportlab==4.5.1

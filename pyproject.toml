@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lender-package-builder"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Local-only tool that assembles organized PDF lender packages from ZIPs, folders, and documents."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -20,6 +20,7 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "extract-msg>=0.54,<0.56",
     "PySide6>=6.7,<7.0",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -30,10 +31,15 @@ dev = [
 
 [project.scripts]
 lender-package-builder = "lender_package_builder.cli:main"
-lender-package-builder-gui = "lender_package_builder.gui.app:run"
+
+[project.gui-scripts]
+lender-package-builder-gui = "lender_package_builder.app_entry:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "lender_package_builder._version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

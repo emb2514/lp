@@ -1,0 +1,218 @@
+name: Build Windows Portable Release
+
+# Builds and verifies the portable Windows release candidate on a real
+# Windows runner -- this is the only genuine proof that the packaged
+# .exe actually works on Windows, since PyInstaller cannot cross-build
+# a Windows executable from Linux/macOS.
+#
+# This workflow ONLY builds, tests, and uploads an artifact. It never
+# creates a git tag or a GitHub Release automatically -- publishing a
+# release candidate or a final v1.0.0 requires explicit human approval
+# after this workflow succeeds AND after manual acceptance testing on
+# a real Windows 11 machine (see WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md).
+# Passing CI proves the .exe runs correctly in an automated, scripted
+# environment; it does not replace looking at the real user interface.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    tags: ["v*-rc*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "packaging/**"
+      - "LenderPackageBuilder.spec"
+      - "BUILD_WINDOWS_PORTABLE.bat"
+      - "CLEAN_WINDOWS_BUILD.bat"
+      - "TEST_PORTABLE_APP.bat"
+      - "RUN_DIAGNOSTICS.bat"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "config.toml"
+      - "samples/**"
+      - ".github/workflows/build-windows-portable.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-portable:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # Forces Qt's offscreen platform plugin for every automated step
+      # below, including inside the packaged .exe's --gui-smoke-test.
+      # GitHub Actions Windows runners execute without an interactive
+      # desktop session, so this keeps every step deterministic. It is
+      # NOT a substitute for actually looking at the on-screen window --
+      # that only happens in the manual Windows acceptance test.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-windows-build.txt
+          pip install -e .
+
+      - name: Run the full automated test suite on Windows
+        run: python -m pytest tests -v
+
+      - name: Generate the multi-resolution application icon
+        run: python packaging/generate_icon.py
+
+      - name: Build the portable executable with PyInstaller
+        run: python -m PyInstaller LenderPackageBuilder.spec --noconfirm --clean
+
+      - name: Verify the build produced LenderPackageBuilder.exe
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist\LenderPackageBuilder\LenderPackageBuilder.exe")) {
+            throw "PyInstaller build did not produce LenderPackageBuilder.exe"
+          }
+
+      - name: Prove no external Python is required (minimized environment)
+        shell: pwsh
+        run: |
+          # Clears PYTHONHOME/PYTHONPATH and reduces PATH to only the
+          # Windows system directories -- if the packaged app secretly
+          # depended on the Python install this workflow just used to
+          # build it, these calls would fail.
+          $exe = (Resolve-Path "dist\LenderPackageBuilder\LenderPackageBuilder.exe").Path
+          $env:PYTHONHOME = ""
+          $env:PYTHONPATH = ""
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+
+          Write-Host "--- --version ---"
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "--version failed with PYTHONHOME/PYTHONPATH cleared and a minimized PATH" }
+
+          Write-Host "--- --self-test ---"
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "--self-test failed with PYTHONHOME/PYTHONPATH cleared and a minimized PATH" }
+
+          Write-Host "--- --diagnostics ---"
+          & $exe --diagnostics
+          if ($LASTEXITCODE -ne 0) { throw "--diagnostics failed with PYTHONHOME/PYTHONPATH cleared and a minimized PATH" }
+
+          Write-Host "--- --gui-smoke-test ---"
+          & $exe --gui-smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "--gui-smoke-test failed with PYTHONHOME/PYTHONPATH cleared and a minimized PATH" }
+
+      - name: Prove the app runs from a space-containing path
+        shell: pwsh
+        run: |
+          $spacedDir = "C:\Lender Package Builder Test Copy"
+          New-Item -ItemType Directory -Force -Path $spacedDir | Out-Null
+          Copy-Item -Recurse -Force "dist\LenderPackageBuilder\*" $spacedDir
+          $exe = Join-Path $spacedDir "LenderPackageBuilder.exe"
+
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "--version failed from a space-containing path" }
+
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "--self-test failed from a space-containing path" }
+
+      - name: Read the single-source release version
+        shell: pwsh
+        run: |
+          $releaseLabel = (python -c "from lender_package_builder._version import RELEASE_LABEL; print(RELEASE_LABEL)").Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseLabel)) {
+            throw "Could not read RELEASE_LABEL from lender_package_builder._version"
+          }
+          "RELEASE_LABEL=$releaseLabel" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_NAME=Lender_Package_Builder_${releaseLabel}_Windows_x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Assemble the release folder
+        shell: pwsh
+        run: |
+          $releaseDir = "release\$env:RELEASE_NAME"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          Copy-Item -Recurse -Force "dist\LenderPackageBuilder\*" $releaseDir
+
+          Copy-Item "config.toml" $releaseDir
+          Copy-Item "RUN_DIAGNOSTICS.bat" $releaseDir
+          foreach ($doc in @(
+            "README_PORTABLE.txt",
+            "RELEASE_NOTES_1.0.0_RC1.md",
+            "THIRD_PARTY_NOTICES.txt",
+            "WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md",
+            "PACKAGING_TROUBLESHOOTING.md"
+          )) {
+            if (Test-Path $doc) { Copy-Item $doc $releaseDir }
+          }
+          foreach ($sample in @(
+            "samples\Sample_Test_Package.zip",
+            "samples\Sample_Test_Package_Expected_Results.txt"
+          )) {
+            if (Test-Path $sample) { Copy-Item $sample $releaseDir }
+          }
+
+      - name: Collect third-party license files
+        run: python packaging/collect_licenses.py "release/${{ env.RELEASE_NAME }}"
+
+      - name: Write the build manifest and authoritative Windows dependency lock
+        shell: pwsh
+        run: |
+          $releaseDir = "release\$env:RELEASE_NAME"
+          $manifest = Join-Path $releaseDir "BUILD_MANIFEST.txt"
+
+          "Lender Package Builder - Build Manifest" | Out-File $manifest -Encoding utf8
+          "========================================" | Out-File $manifest -Append -Encoding utf8
+          "Release: $env:RELEASE_LABEL" | Out-File $manifest -Append -Encoding utf8
+          "Built by GitHub Actions run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Out-File $manifest -Append -Encoding utf8
+          "Git commit: $env:GITHUB_SHA" | Out-File $manifest -Append -Encoding utf8
+          "Runner OS: $env:RUNNER_OS  ($env:ImageOS)" | Out-File $manifest -Append -Encoding utf8
+          "" | Out-File $manifest -Append -Encoding utf8
+          "-- Python --" | Out-File $manifest -Append -Encoding utf8
+          (python --version) | Out-File $manifest -Append -Encoding utf8
+          "" | Out-File $manifest -Append -Encoding utf8
+          "-- Installed packages (pip freeze) -- authoritative lock for THIS build --" | Out-File $manifest -Append -Encoding utf8
+          (pip freeze) | Out-File $manifest -Append -Encoding utf8
+
+          # The authoritative lock for this specific release, captured
+          # from the real Windows build environment -- distinct from
+          # requirements-windows-lock.txt in the repo, which is only a
+          # reference starting point (see the comment at its top).
+          (pip freeze) | Out-File (Join-Path $releaseDir "requirements-windows-lock.txt") -Encoding utf8
+
+      - name: Zip the release and compute its SHA-256 checksum
+        shell: pwsh
+        run: |
+          $releaseDir = "release\$env:RELEASE_NAME"
+          $zipPath = "release\${env:RELEASE_NAME}_Portable.zip"
+          $sha256Path = "release\${env:RELEASE_NAME}_Portable_SHA256.txt"
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+
+          $hash = Get-FileHash -Path $zipPath -Algorithm SHA256
+          "$($hash.Hash)  $(Split-Path $zipPath -Leaf)" | Out-File $sha256Path -Encoding ascii
+
+          # Verify the checksum immediately, the same way a user would.
+          $recomputed = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash
+          if ($recomputed -ne $hash.Hash) {
+            throw "Checksum verification failed immediately after computing it"
+          }
+
+          Write-Host "Release ZIP:   $zipPath"
+          Write-Host "SHA-256:       $($hash.Hash)"
+
+      - name: Upload the portable release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_NAME }}-Portable
+          path: |
+            release/*_Portable.zip
+            release/*_Portable_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30

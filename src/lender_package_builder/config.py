@@ -12,6 +12,8 @@ import dataclasses
 import tomllib
 from pathlib import Path
 
+from .exceptions import InvalidConfigError
+
 
 @dataclasses.dataclass
 class AppConfig:
@@ -50,40 +52,83 @@ def load_config(config_path: Path | None) -> AppConfig:
     """Load configuration from a TOML file, falling back to defaults.
 
     A missing file is not an error -- built-in defaults are used. A
-    present-but-invalid file raises so the user finds out immediately
-    rather than silently running with unexpected values.
+    present-but-invalid file raises `InvalidConfigError` (a friendly,
+    user-facing message) rather than a raw parser traceback, and never
+    silently falls back to unexpected values without telling the
+    caller. This function never writes to `config_path` -- a
+    user-edited config is only ever read, never overwritten.
     """
 
     cfg = AppConfig()
     if config_path is None or not config_path.exists():
         return cfg
 
-    with config_path.open("rb") as fh:
-        raw = tomllib.load(fh)
+    try:
+        with config_path.open("rb") as fh:
+            raw = tomllib.load(fh)
 
-    splitting = raw.get("splitting", {})
-    safety = raw.get("safety", {})
-    conversion = raw.get("conversion", {})
-    logging_cfg = raw.get("logging", {})
+        splitting = raw.get("splitting", {}) or {}
+        safety = raw.get("safety", {}) or {}
+        conversion = raw.get("conversion", {}) or {}
+        logging_cfg = raw.get("logging", {}) or {}
 
-    if "max_pages_per_part" in splitting:
-        cfg.max_pages_per_part = int(splitting["max_pages_per_part"])
-    if "max_size_mb_per_part" in splitting:
-        cfg.max_size_mb_per_part = float(splitting["max_size_mb_per_part"])
+        if "max_pages_per_part" in splitting:
+            cfg.max_pages_per_part = int(splitting["max_pages_per_part"])
+        if "max_size_mb_per_part" in splitting:
+            cfg.max_size_mb_per_part = float(splitting["max_size_mb_per_part"])
 
-    if "large_input_warning_mb" in safety:
-        cfg.large_input_warning_mb = float(safety["large_input_warning_mb"])
-    if "max_expanded_size_mb" in safety:
-        cfg.max_expanded_size_mb = float(safety["max_expanded_size_mb"])
-    if "max_archive_entries" in safety:
-        cfg.max_archive_entries = int(safety["max_archive_entries"])
-    if "required_free_space_multiplier" in safety:
-        cfg.required_free_space_multiplier = float(safety["required_free_space_multiplier"])
+        if "large_input_warning_mb" in safety:
+            cfg.large_input_warning_mb = float(safety["large_input_warning_mb"])
+        if "max_expanded_size_mb" in safety:
+            cfg.max_expanded_size_mb = float(safety["max_expanded_size_mb"])
+        if "max_archive_entries" in safety:
+            cfg.max_archive_entries = int(safety["max_archive_entries"])
+        if "required_free_space_multiplier" in safety:
+            cfg.required_free_space_multiplier = float(safety["required_free_space_multiplier"])
 
-    if "office_backend_order" in conversion:
-        cfg.office_backend_order = tuple(conversion["office_backend_order"])
+        if "office_backend_order" in conversion:
+            cfg.office_backend_order = tuple(conversion["office_backend_order"])
 
-    if "level" in logging_cfg:
-        cfg.log_level = str(logging_cfg["level"])
+        if "level" in logging_cfg:
+            cfg.log_level = str(logging_cfg["level"])
+    except tomllib.TOMLDecodeError as exc:
+        raise InvalidConfigError(
+            f"The configuration file at {config_path} could not be parsed as valid TOML: {exc}. "
+            "Built-in defaults were used instead for this run. Fix or remove the file and try again."
+        ) from exc
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise InvalidConfigError(
+            f"The configuration file at {config_path} contains an invalid value: {exc}. "
+            "Built-in defaults were used instead for this run. Fix or remove the file and try again."
+        ) from exc
 
     return cfg
+
+
+@dataclasses.dataclass
+class ConfigLoadResult:
+    """Result of a non-raising config load, for callers (the GUI) that
+    must never crash outright on a bad config file."""
+
+    config: AppConfig
+    source_path: Path | None
+    used_defaults_due_to_error: bool
+    warning: str | None = None
+
+
+def load_config_safe(config_path: Path | None) -> ConfigLoadResult:
+    """Like `load_config`, but never raises: an invalid file falls back
+    to built-in defaults and the problem is returned as a warning
+    string for the caller to display, instead of crashing startup.
+    """
+
+    try:
+        cfg = load_config(config_path)
+    except InvalidConfigError as exc:
+        return ConfigLoadResult(
+            config=AppConfig(),
+            source_path=config_path,
+            used_defaults_due_to_error=True,
+            warning=str(exc),
+        )
+    return ConfigLoadResult(config=cfg, source_path=config_path, used_defaults_due_to_error=False)

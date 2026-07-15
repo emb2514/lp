@@ -1,0 +1,10 @@
+# Extra, build-only dependencies for producing the portable Windows
+# .exe with PyInstaller. Not needed to just run or test the app from
+# source -- see requirements.txt for that.
+#
+# Installed on top of requirements.txt by BUILD_WINDOWS_PORTABLE.bat
+# and by the build-windows-portable.yml GitHub Actions workflow.
+
+-r requirements.txt
+
+pyinstaller>=6.10,<7.0

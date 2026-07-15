@@ -65,3 +65,18 @@ def show_insufficient_disk_space(parent: QWidget | None, message: str) -> None:
     box.setText("Processing cannot begin.")
     box.setInformativeText(message)
     box.exec()
+
+
+def show_config_warning(parent: QWidget | None, message: str) -> None:
+    """Shown once, after the window is already up, when config.toml
+    exists but could not be parsed. Built-in defaults are already in
+    effect by the time this appears -- the app is never blocked from
+    starting because of a bad config file.
+    """
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Configuration file problem")
+    box.setText("Your config.toml could not be used, so built-in defaults were used instead.")
+    box.setInformativeText(message)
+    box.exec()

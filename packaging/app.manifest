@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+    type="win32"
+    name="LenderPackageBuilder.App"
+    version="1.0.0.0"
+    processorArchitecture="*"
+  />
+
+  <!--
+    No elevation, ever. "asInvoker" runs with exactly the current
+    user's permissions -- the same as any other unprivileged desktop
+    app. This tool never needs, and must never request, administrator
+    rights.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!-- Declares Windows 8.1/10/11 compatibility so Windows does not
+       apply legacy compatibility shims to the process. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /> <!-- Windows 10 / 11 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" /> <!-- Windows 8.1 -->
+    </application>
+  </compatibility>
+
+  <!-- Per-monitor DPI awareness so the UI stays crisp on high-DPI
+       Windows 11 displays instead of being upscaled and blurry. -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

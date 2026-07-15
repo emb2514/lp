@@ -13,6 +13,13 @@ extract-msg>=0.54,<0.56
 # Stage 2 desktop GUI (PySide6 / Qt for Python)
 PySide6>=6.7,<7.0
 
+# Windows-only: Microsoft Office COM automation, used opportunistically
+# when Office is installed (see conversion/office.py). Never installed
+# or imported on Linux/macOS -- the marker below is skipped by pip
+# there, and office.py already guards the `import win32com.client`
+# call so its absence never breaks anything off Windows.
+pywin32>=306; sys_platform == "win32"
+
 # Testing (engine + GUI)
 pytest>=8.0,<9.0
 pytest-qt>=4.4,<5.0
