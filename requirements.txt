@@ -10,6 +10,18 @@ openpyxl>=3.1,<4.0
 beautifulsoup4>=4.12,<5.0
 extract-msg>=0.54,<0.56
 
+# RC2: page rasterization used ONLY as the last, most-expensive tier of the
+# content-aware duplicate-detection pipeline (see pdf_render.py), for pages
+# where cheaper structural/text signals leave genuine ambiguity. Chosen over
+# PyMuPDF/pikepdf/pdf2image: Apache-2.0/BSD-3 licensed, ships a self-contained
+# prebuilt PDFium binary (no external poppler/system dependency), and pulls
+# in no other heavy transitive dependencies. Perceptual-hash comparison of
+# rendered pages is implemented directly on top of Pillow (already a
+# dependency) rather than adding the `imagehash` package, which would have
+# pulled in numpy/scipy/PyWavelets (~55MB) purely for its DCT/wavelet-based
+# hash variants -- a plain difference-hash needs none of that.
+pypdfium2>=5.0,<6.0
+
 # Stage 2 desktop GUI (PySide6 / Qt for Python)
 PySide6>=6.7,<7.0
 

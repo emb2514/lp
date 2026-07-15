@@ -87,6 +87,14 @@ pypdf
   https://github.com/py-pdf/pypdf
   BSD-3-Clause
 
+pypdfium2
+  https://github.com/pypdfium2-team/pypdfium2
+  Apache-2.0 (bindings) / BSD-3-Clause (bundled PDFium library). Used only
+  to render specific PDF pages to images for the last, most-expensive tier
+  of RC2's content-aware duplicate-detection comparison (see
+  pdf_render.py) -- entirely offline, no network access, same as every
+  other bundled dependency.
+
 reportlab (open-source core)
   https://www.reportlab.com/
   BSD-style license (see the package's own license.txt)

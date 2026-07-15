@@ -95,9 +95,57 @@ class SourceOccurrence:
 
     unconverted_copy_path: Path | None = None
 
+    # --- RC2: content-aware duplicate detection (Levels 2-4) ---
+    # Deliberately separate from is_duplicate/duplicate_of_document_id
+    # above, which stay exact-SHA-256-only so validation.py's strict
+    # exact-hash invariant checks never need to reason about anything
+    # but byte-for-byte identity. needs_review=True is a hard guarantee
+    # that this occurrence is NOT excluded from Final (see
+    # included_in_final below) -- "when confidence is uncertain, keep
+    # both and report the uncertainty" is enforced structurally here,
+    # not just by convention.
+    needs_review: bool = False
+    review_reason: str | None = None
+
+    is_content_duplicate: bool = False
+    content_duplicate_of_document_id: str | None = None
+    # "exact_sha256" | "normalized_pdf" | "content_equivalent" | "blank_page_tolerant"
+    duplicate_detection_method: str | None = None
+    duplicate_confidence: float | None = None
+    blank_pages_ignored_count: int = 0
+
+    # --- RC2: PDF Portfolio support ---
+    # True only when this occurrence's own PDF catalog has a /Collection
+    # entry (a real Portfolio, not just a PDF that happens to carry a
+    # loose file attachment) -- its own pages (the Adobe "open this in
+    # Acrobat" cover/UI page) are excluded from Final, but it still
+    # appears in OG untouched like any other original file.
+    is_portfolio_container: bool = False
+    # Set only on occurrences synthesized from a parent PDF's embedded
+    # files (document_id suffix "-PF-NNN"); None for everything else.
+    portfolio_parent_document_id: str | None = None
+
+    # --- RC2: merged-document overlap / containment ---
+    is_contained_in_merged_document: bool = False
+    contained_in_document_id: str | None = None
+    # Inclusive, 0-based page range within the container's page list.
+    contained_page_range: tuple[int, int] | None = None
+
+    # --- RC2: document version classification (Level 5, descriptive only) ---
+    document_family_id: str | None = None
+    # "unsigned" | "e_signed" | "wet_signed" | "scanned" | "dated_version" |
+    # "annotated" | "original_digital" | None (unclassified)
+    version_classification: str | None = None
+
     @property
     def included_in_final(self) -> bool:
-        return not self.is_ignored_artifact and not self.is_duplicate
+        return (
+            not self.is_ignored_artifact
+            and not self.is_duplicate
+            and not (self.is_content_duplicate and not self.needs_review)
+            and not self.is_portfolio_container
+            and not (self.is_contained_in_merged_document and not self.needs_review)
+        )
 
     @property
     def included_in_og(self) -> bool:
@@ -141,6 +189,52 @@ class DuplicateGroup:
 
 
 @dataclasses.dataclass
+class ContentDuplicateGroup:
+    """A group of occurrences found to be the same document version via
+    content-aware comparison (Levels 2-4), as opposed to `DuplicateGroup`
+    which is exact-SHA-256 only. Kept as a separate dataclass so the
+    exact-hash grouping's shape (and validation.py's checks built on it)
+    never has to account for a confidence score or detection method.
+    """
+
+    # "normalized_pdf" | "content_equivalent" | "blank_page_tolerant"
+    method: str
+    document_ids: list[str] = dataclasses.field(default_factory=list)
+    retained_document_id: str = ""
+    confidence: float = 0.0
+    blank_pages_ignored_count: int = 0
+
+
+@dataclasses.dataclass
+class DocumentFamily:
+    """A cluster of occurrences judged similar enough to be versions of
+    the same underlying document (Level 5). Purely descriptive -- no
+    keep/remove decision is ever derived from family membership alone.
+    """
+
+    family_id: str
+    document_ids: list[str] = dataclasses.field(default_factory=list)
+    # document_id -> version_classification
+    versions: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class OverlapFinding:
+    """Result of comparing one standalone/Portfolio-attachment document
+    against one candidate merged-PDF container.
+    """
+
+    standalone_document_id: str
+    container_document_id: str
+    # "exact_contained" | "equivalent_contained" | "different_version" |
+    # "partial_overlap" | "uncertain_overlap" | "no_overlap"
+    classification: str
+    contained_page_range: tuple[int, int] | None = None
+    confidence: float = 0.0
+    excluded: bool = False
+
+
+@dataclasses.dataclass
 class IntegrityCheckResult:
     name: str
     passed: bool
@@ -159,6 +253,9 @@ class RunResult:
 
     occurrences: list[SourceOccurrence] = dataclasses.field(default_factory=list)
     duplicate_groups: list[DuplicateGroup] = dataclasses.field(default_factory=list)
+    content_duplicate_groups: list[ContentDuplicateGroup] = dataclasses.field(default_factory=list)
+    document_families: list[DocumentFamily] = dataclasses.field(default_factory=list)
+    overlap_findings: list[OverlapFinding] = dataclasses.field(default_factory=list)
     og_parts: list[OutputPart] = dataclasses.field(default_factory=list)
     final_parts: list[OutputPart] = dataclasses.field(default_factory=list)
     integrity_checks: list[IntegrityCheckResult] = dataclasses.field(default_factory=list)

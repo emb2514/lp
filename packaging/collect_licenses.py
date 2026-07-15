@@ -20,6 +20,7 @@ _DISTRIBUTIONS = [
     "PySide6",
     "shiboken6",
     "pypdf",
+    "pypdfium2",
     "reportlab",
     "Pillow",
     "python-docx",

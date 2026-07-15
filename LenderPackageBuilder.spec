@@ -113,6 +113,7 @@ for _dist_name in (
     "beautifulsoup4",
     "extract-msg",
     "PySide6",
+    "pypdfium2",
 ):
     _metadata_datas += copy_metadata(_dist_name)
 
@@ -146,6 +147,11 @@ _hiddenimports = [
     "openpyxl",
     "bs4",
     "extract_msg",
+    # RC2 content-aware duplicate detection's last-tier page rasterizer
+    # (pdf_render.py). pyinstaller-hooks-contrib ships hook-pypdfium2.py,
+    # which bundles the native PDFium binary automatically -- this entry
+    # is belt-and-suspenders for the pure-Python import itself.
+    "pypdfium2",
     *_extract_msg_deps,
 ]
 
