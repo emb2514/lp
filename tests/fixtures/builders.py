@@ -66,7 +66,10 @@ def make_pdf_with_blank_pages(
 ) -> Path:
     """Like `make_pdf`, but pages at `blank_positions` (0-indexed) are
     left genuinely blank instead of getting text -- used for RC2's
-    blank-page-tolerant duplicate detection tests.
+    blank-page-tolerant duplicate detection tests. Note: page text
+    includes "of {pages}", so this is NOT suitable for building two
+    documents meant to compare equal after blank-page stripping (the
+    denominator shifts) -- use `make_pdf_with_pages` for that instead.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +78,27 @@ def make_pdf_with_blank_pages(
         if i not in blank_positions:
             c.setFont("Helvetica", 12)
             c.drawString(72, 700, f"{text_prefix} {i + 1} of {pages}")
+        c.showPage()
+    c.save()
+    return path
+
+
+def make_pdf_with_pages(path: Path, page_texts: list[str | None]) -> Path:
+    """Explicit per-page content: a string draws that exact fixed text
+    (independent of total page count or position, unlike `make_pdf`'s
+    "Page N of TOTAL" numbering, which shifts when pages are
+    inserted/removed), `None` leaves the page genuinely blank. Use this
+    to build two documents whose non-blank pages should compare equal
+    after blank-page stripping regardless of how many blank pages
+    either side has or where they are.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c = canvas.Canvas(str(path), pagesize=LETTER)
+    for text in page_texts:
+        if text is not None:
+            c.setFont("Helvetica", 12)
+            c.drawString(72, 700, text)
         c.showPage()
     c.save()
     return path

@@ -68,6 +68,19 @@ _DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DOLLAR_PATTERN = re.compile(r"\$\s?[\d,]+(?:\.\d{2})?")
+# Two-or-more consecutive Capitalized Words -- a crude proper-noun/name
+# heuristic (borrower names, addresses). Deliberately case-SENSITIVE, so
+# this must run against un-casefolded text (see extract_page_fingerprint,
+# which passes the whitespace-collapsed-but-not-casefolded text here,
+# not the fully normalized/casefolded text used for hashing/comparison).
+# Noisy by nature -- it will also catch ordinary capitalized phrases like
+# "Truth In Lending" or "New York" that aren't names at all. That's an
+# acceptable cost here: a false-positive hit only makes the hard-veto
+# system slightly more conservative (two pages that are actually
+# identical content-wise might occasionally need a human glance instead
+# of auto-merging), which is the safe direction -- never the dangerous
+# one of silently merging two pages that differ in a real borrower name.
+_NAME_HINT_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
 
 
 @dataclasses.dataclass
@@ -84,12 +97,18 @@ class StructuredTokens:
 
     dates: tuple[str, ...] = ()
     dollar_amounts: tuple[str, ...] = ()
+    name_hints: tuple[str, ...] = ()
 
 
 def extract_structured_tokens(text: str) -> StructuredTokens:
+    """`text` should be whitespace-collapsed but NOT casefolded -- the
+    name-hint heuristic depends on capitalization.
+    """
+
     dates = tuple(sorted({m.group(0) for m in _DATE_PATTERN.finditer(text)}))
     amounts = tuple(sorted({m.group(0) for m in _DOLLAR_PATTERN.finditer(text)}))
-    return StructuredTokens(dates=dates, dollar_amounts=amounts)
+    names = tuple(sorted({m.group(0) for m in _NAME_HINT_PATTERN.finditer(text)}))
+    return StructuredTokens(dates=dates, dollar_amounts=amounts, name_hints=names)
 
 
 @dataclasses.dataclass
@@ -155,17 +174,26 @@ class DocumentFingerprint:
         return sum(1 for p in self.pages if not p.blank.is_blank)
 
 
-def _normalize_text(raw: str) -> str:
-    """Whitespace-collapsed, case-folded -- but never stripped of digits,
-    punctuation, or words. Normalization must never erase the exact
-    tokens `extract_structured_tokens` needs to catch a meaningful date
-    or dollar-amount difference; it only removes incidental whitespace
-    and rendering-order differences.
+def _collapse_whitespace(raw: str) -> str:
+    """NFKC-normalize and collapse whitespace, but preserve case and
+    every character -- this is the text `extract_structured_tokens`
+    scans, since its name-hint heuristic depends on capitalization
+    (see _NAME_HINT_PATTERN's docstring above).
     """
 
     normalized = unicodedata.normalize("NFKC", raw)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return normalized.casefold()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _normalize_text(raw: str) -> str:
+    """Whitespace-collapsed, case-folded -- but never stripped of digits,
+    punctuation, or words. Normalization must never erase the exact
+    tokens comparison relies on to catch a meaningful difference; it
+    only removes incidental whitespace, case, and rendering-order
+    differences.
+    """
+
+    return _collapse_whitespace(raw).casefold()
 
 
 def _sha256_text(text: str) -> str:
@@ -382,7 +410,8 @@ def extract_page_fingerprint(reader: PdfReader, page_index: int) -> PageFingerpr
         raw_text = page.extract_text() or ""
     except Exception:
         raw_text = ""
-    normalized_text = _normalize_text(raw_text)
+    case_preserved_text = _collapse_whitespace(raw_text)
+    normalized_text = case_preserved_text.casefold()
 
     try:
         width = float(page.mediabox.width)
@@ -393,7 +422,9 @@ def extract_page_fingerprint(reader: PdfReader, page_index: int) -> PageFingerpr
 
     form_fields, annotations, has_sig_field, has_signed_sig = _extract_page_annotations(page)
     images = _extract_embedded_images(page)
-    structured = extract_structured_tokens(normalized_text)
+    # Case-preserved text, not the casefolded copy -- the name-hint
+    # heuristic depends on capitalization.
+    structured = extract_structured_tokens(case_preserved_text)
     blank = classify_blank_page(normalized_text, form_fields, annotations, images)
 
     return PageFingerprint(
