@@ -137,6 +137,18 @@ class SourceOccurrence:
     # "annotated" | "original_digital" | None (unclassified)
     version_classification: str | None = None
 
+    # --- RC2: GUI-driven manual review decisions ---
+    # Set ONLY by review_decisions.apply_review_decision(), in response
+    # to an explicit, confirmed human choice in the "Review Uncertain
+    # Matches" dialog -- never by any automated detection pass. This is
+    # the ONLY mechanism by which a needs_review=True occurrence can
+    # ever be excluded from Final; see included_in_final below and
+    # UncertainMatch, which holds the full auditable decision record
+    # (timestamp, reason, which document was chosen) this field points
+    # back to.
+    manually_excluded: bool = False
+    manually_excluded_match_id: str | None = None
+
     @property
     def included_in_final(self) -> bool:
         return (
@@ -145,6 +157,7 @@ class SourceOccurrence:
             and not (self.is_content_duplicate and not self.needs_review)
             and not self.is_portfolio_container
             and not (self.is_contained_in_merged_document and not self.needs_review)
+            and not self.manually_excluded
         )
 
     @property
@@ -242,6 +255,45 @@ class IntegrityCheckResult:
 
 
 @dataclasses.dataclass
+class UncertainMatch:
+    """One human-reviewable uncertain comparison, surfaced by the GUI's
+    "Review Uncertain Matches" dialog. Creating this record never
+    changes any output by itself -- both `document_id_a` and
+    `document_id_b` are guaranteed present in Final until and unless a
+    human explicitly records an "excluded" decision through
+    `review_decisions.apply_review_decision()`.
+
+    `excludable_ids` lists which of the two documents a human is
+    permitted to choose to exclude: both, for an uncertain
+    content-duplicate pair (either could reasonably be treated as the
+    canonical copy); only the standalone side, for an uncertain
+    merged-package containment match (the merged container itself is
+    never a valid exclusion target, per the same structural-safety rule
+    that governs automated containment decisions).
+    """
+
+    match_id: str
+    # "content_duplicate" | "merged_containment"
+    kind: str
+    document_id_a: str
+    document_id_b: str
+    confidence: float
+    # Human-readable explanation of why this pair/relationship is
+    # uncertain (method, confidence, threshold) -- shown verbatim in
+    # the GUI and in Uncertain_Match_Review_Log.txt.
+    detail: str
+    excludable_ids: tuple[str, ...] = ()
+
+    # "undecided" | "keep_both" | "excluded" -- set only by
+    # review_decisions.apply_review_decision(); a decision, once made,
+    # is never silently overwritten (re-deciding raises an error).
+    decision: str = "undecided"
+    decided_document_id: str | None = None
+    decided_at: str | None = None
+    decided_reason: str | None = None
+
+
+@dataclasses.dataclass
 class RunResult:
     """Aggregate result of a full build run, used to drive reporting."""
 
@@ -266,6 +318,9 @@ class RunResult:
     # only grouping (see content_dedup.py). Never affects correctness,
     # only which comparison tier ran for a given candidate set.
     content_dedup_notes: list[str] = dataclasses.field(default_factory=list)
+    # RC2: every uncertain comparison surfaced for human review, and its
+    # decision (if any) -- see UncertainMatch and review_decisions.py.
+    uncertain_matches: list[UncertainMatch] = dataclasses.field(default_factory=list)
 
     @property
     def success(self) -> bool:

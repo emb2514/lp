@@ -137,16 +137,22 @@ def test_result_view_shows_rc2_stat_rows(window, tmp_path):
     assert rows["Uncertain matches retained for review"] == "1"
 
 
-def test_result_view_review_button_reflects_needs_review_count(window, tmp_path):
+def test_result_view_stores_config_for_review_dialog(window, tmp_path):
+    # ResultView needs the run's config (and allow_large_input flag) to
+    # rebuild Final if the user later excludes a document in the review
+    # dialog -- see test_uncertain_review_dialog.py for the full
+    # interactive-dialog coverage this wiring enables. _start_build()
+    # (bypassed here, as in the other tests in this file, which call
+    # _on_build_finished directly) is what normally sets
+    # _last_run_config before a real build runs.
+    from lender_package_builder.config import AppConfig
+
+    window._last_run_config = AppConfig()
     run = _make_run_with_rc2_fields(tmp_path)
     window._on_build_finished(run)
 
-    from lender_package_builder.gui.widgets.uncertain_review_dialog import UncertainReviewDialog
-
-    dialog = UncertainReviewDialog(window.result_view._run, window.result_view)
-    assert dialog.table.rowCount() == 1
-    assert dialog.table.item(0, 0).text() == "DOC-000005.pdf"
-    dialog.close()
+    assert window.result_view._config is window._last_run_config
+    assert window.result_view._config is not None
 
 
 def _make_integrity_failure_run(tmp_path: Path) -> RunResult:

@@ -521,7 +521,7 @@ def _execute_pipeline(
             occ_by_id[doc_id].og_part_index = part.index
     reporter.emit(ProgressStage.BUILDING_OG, f"      OG: {len(og_parts)} part(s) written.")
 
-    content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes = (
+    content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches = (
         _run_content_aware_analysis(occurrences, config, reporter)
     )
 
@@ -554,6 +554,7 @@ def _execute_pipeline(
         conversion_backend_usage=backend_usage,
         unsafe_archive_incidents=inventory_builder.unsafe_incidents,
         content_dedup_notes=oversized_bucket_notes,
+        uncertain_matches=uncertain_matches,
     )
 
     reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[10/10] Running integrity checks...")
@@ -580,7 +581,7 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
     which is exactly RC1's original exact-hash-only behavior.
 
     Returns (content_duplicate_groups, document_families,
-    overlap_findings, oversized_bucket_notes).
+    overlap_findings, oversized_bucket_notes, uncertain_matches).
     """
 
     if not config.enable_content_aware_dedup:
@@ -591,7 +592,7 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
             (ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Content-aware analysis disabled; skipping."),
         ):
             reporter.emit(stage, label)
-        return [], [], [], []
+        return [], [], [], [], []
 
     reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Analyzing document content...")
     fingerprints = content_dedup.build_fingerprints(occurrences)
@@ -601,7 +602,7 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
     )
 
     reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Detecting content-aware duplicates...")
-    content_duplicate_groups, oversized_bucket_notes = content_dedup.detect_content_duplicates(
+    content_duplicate_groups, oversized_bucket_notes, uncertain_content_pairs = content_dedup.detect_content_duplicates(
         occurrences, fingerprints
     )
     content_dup_count = sum(len(g.document_ids) - 1 for g in content_duplicate_groups)
@@ -630,7 +631,69 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
         ProgressStage.CLASSIFYING_VERSIONS, f"      {len(document_families)} document family/families identified."
     )
 
-    return content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes
+    uncertain_matches = _build_uncertain_matches(uncertain_content_pairs, overlap_findings)
+
+    return content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches
+
+
+def _build_uncertain_matches(
+    uncertain_content_pairs: list[tuple[str, str, float]],
+    overlap_findings: list,
+) -> list:
+    """Turns the two structural sources of "the engine could not decide
+    automatically" -- content_dedup.py's uncertain content-duplicate
+    pairs, and overlap_detection.py's uncertain_overlap findings -- into
+    one unified, GUI-facing list of `UncertainMatch` records. Creating
+    these records never changes anything by itself; see
+    `review_decisions.apply_review_decision()` for the only mechanism
+    that can ever record an exclusion.
+    """
+
+    from .models import UncertainMatch
+
+    matches: list[UncertainMatch] = []
+    seq = 1
+
+    for id_a, id_b, confidence in uncertain_content_pairs:
+        matches.append(
+            UncertainMatch(
+                match_id=f"UM-{seq:04d}",
+                kind="content_duplicate",
+                document_id_a=id_a,
+                document_id_b=id_b,
+                confidence=confidence,
+                detail=(
+                    f"Uncertain content match (confidence {confidence:.2f}, below the "
+                    f"{content_dedup.AUTO_REMOVE_THRESHOLD:.2f} safe auto-removal threshold). Either "
+                    "document may reasonably be treated as the canonical copy."
+                ),
+                excludable_ids=(id_a, id_b),
+            )
+        )
+        seq += 1
+
+    for finding in overlap_findings:
+        if finding.classification != "uncertain_overlap":
+            continue
+        matches.append(
+            UncertainMatch(
+                match_id=f"UM-{seq:04d}",
+                kind="merged_containment",
+                document_id_a=finding.standalone_document_id,
+                document_id_b=finding.container_document_id,
+                confidence=finding.confidence,
+                detail=(
+                    f"Uncertain merged-package containment match (confidence {finding.confidence:.2f}, "
+                    f"below the {content_dedup.AUTO_REMOVE_THRESHOLD:.2f} safe auto-exclusion threshold). "
+                    "Only the standalone copy may be excluded -- the merged package is never a valid "
+                    "exclusion target."
+                ),
+                excludable_ids=(finding.standalone_document_id,),
+            )
+        )
+        seq += 1
+
+    return matches
 
 
 def _copy_conversion_result(retained, duplicate) -> None:

@@ -39,7 +39,7 @@ def test_same_pdf_different_filenames_one_retained(tmp_path: Path):
     a = builders.make_pdf(tmp_path / "report_final.pdf", pages=2, text_prefix="Shared Content")
     b = builders.make_pdf(tmp_path / "report_FINAL_v2_renamed.pdf", pages=2, text_prefix="Shared Content")
     occ_a, occ_b = _occ("D1", 1, a), _occ("D2", 2, b)
-    groups, _ = _run([occ_a, occ_b])
+    groups, _, _ = _run([occ_a, occ_b])
     assert sum(o.is_content_duplicate for o in (occ_a, occ_b)) == 1
     assert len(groups) == 1
     assert groups[0].method == "normalized_pdf"
@@ -239,7 +239,7 @@ def test_three_way_grouping_one_retained(tmp_path: Path):
         for i in range(3)
     ]
     occs = [_occ(f"D{i}", i, p) for i, p in enumerate(paths)]
-    groups, _ = _run(occs)
+    groups, _, _ = _run(occs)
     assert len(groups) == 1
     assert set(groups[0].document_ids) == {o.document_id for o in occs}
     assert sum(not o.is_content_duplicate for o in occs) == 1
@@ -263,7 +263,7 @@ def test_ambiguous_match_both_retained_and_flagged_uncertain(tmp_path: Path, mon
     fingerprints = content_dedup.build_fingerprints([occ_a, occ_b])
     # Force the image-similarity/text-similarity blend into the ambiguous
     # band too, so the render-tier escalation actually triggers.
-    groups, _ = content_dedup.detect_content_duplicates([occ_a, occ_b], fingerprints)
+    groups, _, _ = content_dedup.detect_content_duplicates([occ_a, occ_b], fingerprints)
 
     assert occ_a.is_content_duplicate is False
     assert occ_b.is_content_duplicate is False
@@ -302,7 +302,7 @@ def test_unreadable_converted_pdf_excluded_gracefully(tmp_path: Path):
     )
     fingerprints = content_dedup.build_fingerprints([occ])
     assert "D1" not in fingerprints
-    groups, notes = content_dedup.detect_content_duplicates([occ], fingerprints)
+    groups, notes, _ = content_dedup.detect_content_duplicates([occ], fingerprints)
     assert groups == []
     assert occ.is_content_duplicate is False
 
@@ -406,7 +406,7 @@ def test_oversized_bucket_falls_back_to_hash_only(tmp_path: Path):
     for i in range(6):
         p = builders.make_pdf(tmp_path / f"doc{i}.pdf", pages=1, text_prefix="Shared")
         occs.append(_occ(f"D{i}", i, p))
-    groups, notes = content_dedup.detect_content_duplicates(
+    groups, notes, _ = content_dedup.detect_content_duplicates(
         occs, content_dedup.build_fingerprints(occs), max_bucket_size=2
     )
     assert len(notes) == 1

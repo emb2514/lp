@@ -205,8 +205,12 @@ def test_run_integrity_checks_includes_all_five_new_checks(tmp_path, run_build):
     check_names = {c.name for c in run.integrity_checks}
     assert "Final contains every occurrence not excluded for a recorded reason" in check_names
     assert "Every Final exclusion has an auditable reason" in check_names
-    assert "Occurrences flagged needs_review are never excluded from Final" in check_names
+    assert (
+        "Occurrences flagged needs_review are never excluded from Final without an explicit human decision"
+        in check_names
+    )
     assert "Content-duplicate references resolve to a retained Final document" in check_names
     assert "Containment references resolve to a retained Final container" in check_names
+    assert "Manual exclusions trace back to a valid, auditable review decision" in check_names
     for check in run.integrity_checks:
         assert check.passed, f"{check.name}: {check.detail}"

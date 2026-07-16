@@ -35,6 +35,8 @@ class ResultView(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._run: RunResult | None = None
+        self._config = None
+        self._allow_large_input = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -91,8 +93,10 @@ class ResultView(QWidget):
         layout.addLayout(button_row)
         layout.addStretch(1)
 
-    def set_result(self, run: RunResult, is_warning: bool) -> None:
+    def set_result(self, run: RunResult, is_warning: bool, config=None, allow_large_input: bool = False) -> None:
         self._run = run
+        self._config = config
+        self._allow_large_input = allow_large_input
         status = "warning" if is_warning else "success"
         self.banner.setProperty("status", status)
         self.banner_title.setProperty("status", status)
@@ -173,9 +177,15 @@ class ResultView(QWidget):
             os_actions.open_folder(self._run.output_path / "Reports")
 
     def _open_uncertain_review_dialog(self) -> None:
+        if self._run is None or self._config is None:
+            return
+        dialog = UncertainReviewDialog(self._run, self._config, self._allow_large_input, self)
+        dialog.decisions_applied.connect(self._on_review_decisions_applied)
+        dialog.exec()
+
+    def _on_review_decisions_applied(self) -> None:
         if self._run is not None:
-            dialog = UncertainReviewDialog(self._run, self)
-            dialog.exec()
+            self._populate_stats(self._run)
 
 
 class FailureView(QWidget):

@@ -454,7 +454,7 @@ def _pairwise_grouping(
     doc_ids: list[str],
     fingerprints: dict[str, DocumentFingerprint],
     occurrences_by_id: dict[str, SourceOccurrence],
-) -> list[ContentDuplicateGroup]:
+) -> tuple[list[ContentDuplicateGroup], list[tuple[str, str, float]]]:
     uf_same = _UnionFind()
     best_by_pair: dict[frozenset, PairComparison] = {}
     uncertain_pairs: list[tuple[str, str, float]] = []
@@ -527,14 +527,14 @@ def _pairwise_grouping(
                     f"below the {AUTO_REMOVE_THRESHOLD:.2f} safe auto-removal threshold)"
                 )
 
-    return groups
+    return groups, uncertain_pairs
 
 
 def detect_content_duplicates(
     occurrences: list[SourceOccurrence],
     fingerprints: dict[str, DocumentFingerprint],
     max_bucket_size: int = DEFAULT_MAX_BUCKET_SIZE,
-) -> tuple[list[ContentDuplicateGroup], list[str]]:
+) -> tuple[list[ContentDuplicateGroup], list[str], list[tuple[str, str, float]]]:
     """Runs Levels 2/3/4 over every fingerprinted occurrence and mutates
     matching `SourceOccurrence`s in place (is_content_duplicate,
     content_duplicate_of_document_id, duplicate_detection_method,
@@ -544,9 +544,15 @@ def detect_content_duplicates(
     occurrence is guaranteed retained in Final regardless of anything
     else, see SourceOccurrence.included_in_final).
 
-    Returns (groups, oversized_bucket_notes) -- the notes list records
-    any structural bucket that exceeded `max_bucket_size` and fell back
-    to the cheaper exact-hash-only grouping, for the processing report.
+    Returns (groups, oversized_bucket_notes, uncertain_pairs) -- the
+    notes list records any structural bucket that exceeded
+    `max_bucket_size` and fell back to the cheaper exact-hash-only
+    grouping, for the processing report. `uncertain_pairs` is
+    (document_id_a, document_id_b, confidence) for every pair that
+    could not be confirmed automatically -- the same pairs `needs_review`
+    was set for above, exposed structurally so the GUI's review dialog
+    can build `UncertainMatch` records without parsing free-text
+    `review_reason` strings.
     """
 
     occurrences_by_id = {o.document_id: o for o in occurrences}
@@ -559,6 +565,7 @@ def detect_content_duplicates(
 
     groups: list[ContentDuplicateGroup] = []
     oversized_notes: list[str] = []
+    uncertain_pairs: list[tuple[str, str, float]] = []
 
     for doc_ids in buckets.values():
         if len(doc_ids) < 2:
@@ -571,6 +578,8 @@ def detect_content_duplicates(
             )
             groups.extend(_hash_only_grouping(doc_ids, fingerprints, occurrences_by_id))
             continue
-        groups.extend(_pairwise_grouping(doc_ids, fingerprints, occurrences_by_id))
+        bucket_groups, bucket_uncertain_pairs = _pairwise_grouping(doc_ids, fingerprints, occurrences_by_id)
+        groups.extend(bucket_groups)
+        uncertain_pairs.extend(bucket_uncertain_pairs)
 
-    return groups, oversized_notes
+    return groups, oversized_notes, uncertain_pairs

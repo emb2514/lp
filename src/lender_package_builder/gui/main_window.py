@@ -68,6 +68,8 @@ class MainWindow(QMainWindow):
         self._estimate_worker = None
         self._build_thread = None
         self._build_worker = None
+        self._last_run_config: AppConfig | None = None
+        self._last_allow_large_input = False
 
         self.setWindowTitle(f"Lender Package Builder - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
@@ -293,6 +295,8 @@ class MainWindow(QMainWindow):
         self._start_build(run_config, allow_large_input)
 
     def _start_build(self, run_config: AppConfig, allow_large_input: bool) -> None:
+        self._last_run_config = run_config
+        self._last_allow_large_input = allow_large_input
         self.is_processing = True
         self._set_input_controls_enabled(False)
         self.progress_view.start()
@@ -337,7 +341,7 @@ class MainWindow(QMainWindow):
             return
 
         is_warning = _has_warnings(run)
-        self.result_view.set_result(run, is_warning)
+        self.result_view.set_result(run, is_warning, self._last_run_config, self._last_allow_large_input)
         self.stack.setCurrentWidget(self.result_view)
 
     def _on_build_failed(self, user_message: str, technical_details: str) -> None:

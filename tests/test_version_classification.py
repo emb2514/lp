@@ -30,7 +30,7 @@ def _occ(doc_id: str, traversal_index: int, pdf_path: Path) -> SourceOccurrence:
 
 def _run(occurrences: list[SourceOccurrence]):
     fingerprints = content_dedup.build_fingerprints(occurrences)
-    groups, _ = content_dedup.detect_content_duplicates(occurrences, fingerprints)
+    groups, _, _ = content_dedup.detect_content_duplicates(occurrences, fingerprints)
     findings = overlap_detection.detect_overlaps(occurrences, fingerprints)
     return version_classification.build_document_families(occurrences, fingerprints, groups, findings)
 

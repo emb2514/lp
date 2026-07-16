@@ -62,6 +62,7 @@ def run_integrity_checks(
     checks.append(_check_needs_review_never_excluded(non_ignored))
     checks.append(_check_content_duplicate_retained_exists(non_ignored, occ_by_id))
     checks.append(_check_contained_in_document_retained_exists(non_ignored, occ_by_id))
+    checks.append(_check_manual_exclusions_have_valid_decision_record(non_ignored, run))
     checks.append(_check_order_preserved(run.og_parts, occ_by_id, "OG"))
     checks.append(_check_order_preserved(run.final_parts, occ_by_id, "Final"))
     checks.append(_check_no_document_split_across_parts(run.og_parts, "OG"))
@@ -291,6 +292,7 @@ def _check_no_unexplained_removal(og_included: list[SourceOccurrence]) -> Integr
             or bool(occ.is_content_duplicate and occ.content_duplicate_of_document_id and occ.duplicate_detection_method)
             or occ.is_portfolio_container
             or bool(occ.is_contained_in_merged_document and occ.contained_in_document_id)
+            or bool(occ.manually_excluded and occ.manually_excluded_match_id)
         )
         if not explained:
             unexplained.append(occ.document_id)
@@ -307,16 +309,34 @@ def _check_needs_review_never_excluded(occurrences: list[SourceOccurrence]) -> I
     """Direct, independent re-verification of the "when uncertain, keep
     both" safety rule: re-checks it from each occurrence's raw field
     values rather than trusting `included_in_final`'s own guard logic.
+
+    Automated code must NEVER exclude a `needs_review=True` occurrence
+    -- the only exception is `manually_excluded`, which can only ever be
+    set by `review_decisions.apply_review_decision()` in response to an
+    explicit, confirmed human choice (see
+    `_check_manual_exclusions_have_valid_decision_record`, which
+    independently proves any such exclusion traces back to a real
+    decision record, not just a stray flag).
     """
 
-    violations = [o.document_id for o in occurrences if o.needs_review and not o.included_in_final]
+    violations = [
+        o.document_id
+        for o in occurrences
+        if o.needs_review and not o.included_in_final and not o.manually_excluded
+    ]
     passed = not violations
     detail = (
-        "Every occurrence flagged needs_review is retained in Final."
+        "Every occurrence flagged needs_review is retained in Final, or was explicitly, "
+        "auditably excluded by a human review decision."
         if passed
-        else f"{len(violations)} needs_review occurrence(s) were EXCLUDED from Final: {violations[:10]}"
+        else f"{len(violations)} needs_review occurrence(s) were EXCLUDED from Final with no human "
+        f"review decision on record: {violations[:10]}"
     )
-    return IntegrityCheckResult("Occurrences flagged needs_review are never excluded from Final", passed, detail)
+    return IntegrityCheckResult(
+        "Occurrences flagged needs_review are never excluded from Final without an explicit human decision",
+        passed,
+        detail,
+    )
 
 
 def _check_content_duplicate_retained_exists(
@@ -355,6 +375,45 @@ def _check_contained_in_document_retained_exists(
         else f"{len(broken)} contained document(s) reference a container missing from Final: {broken[:10]}"
     )
     return IntegrityCheckResult("Containment references resolve to a retained Final container", passed, detail)
+
+
+def _check_manual_exclusions_have_valid_decision_record(
+    non_ignored: list[SourceOccurrence], run: RunResult
+) -> IntegrityCheckResult:
+    """A `manually_excluded=True` occurrence must be the ONLY way a
+    `needs_review=True` occurrence is ever removed from Final -- and it
+    must always trace back to a real, explicit "excluded" decision on a
+    real `UncertainMatch` naming exactly this document as the chosen
+    exclusion. This is independently re-derived from `run.uncertain_matches`
+    rather than trusting the occurrence's own flags, so a bug that set
+    `manually_excluded` without ever going through
+    `review_decisions.apply_review_decision()` would be caught here.
+    """
+
+    matches_by_id = {m.match_id: m for m in run.uncertain_matches}
+    broken = []
+    for occ in non_ignored:
+        if not occ.manually_excluded:
+            continue
+        match = matches_by_id.get(occ.manually_excluded_match_id or "")
+        valid = (
+            match is not None
+            and match.decision == "excluded"
+            and match.decided_document_id == occ.document_id
+            and occ.document_id in match.excludable_ids
+            and bool(match.decided_at)
+        )
+        if not valid:
+            broken.append(occ.document_id)
+    passed = not broken
+    detail = (
+        "Every manually-excluded occurrence traces back to a real, explicit, recorded review decision."
+        if passed
+        else f"{len(broken)} manually-excluded document(s) lack a valid decision record: {broken[:10]}"
+    )
+    return IntegrityCheckResult(
+        "Manual exclusions trace back to a valid, auditable review decision", passed, detail
+    )
 
 
 def _check_order_preserved(

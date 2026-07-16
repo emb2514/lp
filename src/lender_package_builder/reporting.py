@@ -1,12 +1,14 @@
 """Plain-text and JSON report generation.
 
-Five files are produced per run: `Processing_Report.txt` (the main
+Six files are produced per run: `Processing_Report.txt` (the main
 human-readable summary), `Duplicate_Removal_Log.txt` (full detail on
 every duplicate excluded from Final, exact-byte AND content-aware),
 `Document_Version_Report.txt` (RC2: per-family version breakdown),
 `Merged_Document_Overlap_Report.txt` (RC2: merged-package containment
-findings), and `Processing_Manifest.json` (a complete machine-readable
-record).
+findings), `Uncertain_Match_Review_Log.txt` (RC2: the full audit trail
+of every uncertain comparison surfaced for human review and its
+decision, if any -- see `review_decisions.py`), and
+`Processing_Manifest.json` (a complete machine-readable record).
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
     write_duplicate_removal_log(run, reports_dir / "Duplicate_Removal_Log.txt")
     write_document_version_report(run, reports_dir / "Document_Version_Report.txt")
     write_merged_overlap_report(run, reports_dir / "Merged_Document_Overlap_Report.txt")
+    write_uncertain_match_review_log(run, reports_dir / "Uncertain_Match_Review_Log.txt")
     write_processing_report(run, config, meta, reports_dir / "Processing_Report.txt")
     write_processing_manifest(run, meta, reports_dir / "Processing_Manifest.json")
 
@@ -147,6 +150,7 @@ def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
 
 def write_document_version_report(run: RunResult, path: Path) -> None:
     occ_by_id = {o.document_id: o for o in run.occurrences}
+    match_by_id = {m.match_id: m for m in run.uncertain_matches}
 
     lines: list[str] = []
     lines.append("DOCUMENT VERSION REPORT")
@@ -184,7 +188,7 @@ def write_document_version_report(run: RunResult, path: Path) -> None:
                 status = "RETAINED in Final" if occ.included_in_final else "EXCLUDED from Final"
                 lines.append(f"    - [{status}] {occ.original_filename} ({occ.document_id})")
                 if not occ.included_in_final:
-                    reason = _final_exclusion_reason(occ, occ_by_id)
+                    reason = _final_exclusion_reason(occ, occ_by_id, match_by_id)
                     lines.append(f"        Reason: {reason}")
                 if occ.needs_review:
                     lines.append(f"        Uncertain: {occ.review_reason}")
@@ -202,7 +206,25 @@ def write_document_version_report(run: RunResult, path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _final_exclusion_reason(occ: SourceOccurrence, occ_by_id: dict[str, SourceOccurrence]) -> str:
+def _final_exclusion_reason(
+    occ: SourceOccurrence, occ_by_id: dict[str, SourceOccurrence], match_by_id: dict[str, object] | None = None
+) -> str:
+    # Checked first: a manual review decision is the actual causal reason
+    # for this exclusion whenever present -- content_duplicate/
+    # contained_in_merged_document alone would NOT have excluded this
+    # occurrence (both are guarded by needs_review), so reporting either
+    # of those instead would misattribute the real reason.
+    if occ.manually_excluded:
+        match = (match_by_id or {}).get(occ.manually_excluded_match_id or "")
+        if match is not None:
+            other_id = match.document_id_b if match.document_id_a == occ.document_id else match.document_id_a
+            other = occ_by_id.get(other_id)
+            other_name = other.original_filename if other else other_id
+            return (
+                f"manually excluded during human review (match {match.match_id}, vs. {other_name}): "
+                f"{match.decided_reason or 'no reason recorded'} (decided {match.decided_at or 'unknown time'})"
+            )
+        return f"manually excluded during human review (match {occ.manually_excluded_match_id})"
     if occ.is_duplicate:
         retained = occ_by_id.get(occ.duplicate_of_document_id or "")
         name = retained.original_filename if retained else occ.duplicate_of_document_id
@@ -311,6 +333,86 @@ def write_merged_overlap_report(run: RunResult, path: Path) -> None:
                         "not classified as a full duplicate; BOTH retained (no unsafe removal)."
                     )
                 lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+_MATCH_KIND_LABELS = {
+    "content_duplicate": "Content-duplicate comparison",
+    "merged_containment": "Merged-package containment comparison",
+}
+
+
+def write_uncertain_match_review_log(run: RunResult, path: Path) -> None:
+    """The complete audit trail of every uncertain comparison the engine
+    could not decide automatically, and its decision, if any. This is
+    the durable, on-disk record of every "Review Uncertain Matches"
+    decision made in the GUI (see review_decisions.py) -- rewritten in
+    full every time a decision is applied, so it always reflects the
+    complete, current state.
+    """
+
+    occ_by_id = {o.document_id: o for o in run.occurrences}
+
+    lines: list[str] = []
+    lines.append("UNCERTAIN MATCH REVIEW LOG")
+    lines.append("=" * 70)
+    lines.append(
+        "Lists every comparison the engine could not confirm automatically with high enough "
+        "confidence to remove anything -- both documents in every pair below were kept in Final "
+        "by default (\"when uncertain, keep both\") unless a human explicitly, and separately, "
+        "recorded a decision to exclude one specific document. No automated process in this "
+        "application can ever exclude anything listed here."
+    )
+    lines.append(f"Total uncertain matches: {len(run.uncertain_matches)}")
+    decided = sum(1 for m in run.uncertain_matches if m.decision != "undecided")
+    lines.append(f"Reviewed and decided: {decided}")
+    lines.append(f"Awaiting review: {len(run.uncertain_matches) - decided}")
+    lines.append("")
+
+    if not run.uncertain_matches:
+        lines.append("No uncertain matches were found in this run.")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return
+
+    for match in run.uncertain_matches:
+        occ_a = occ_by_id.get(match.document_id_a)
+        occ_b = occ_by_id.get(match.document_id_b)
+        lines.append("=" * 70)
+        lines.append(f"MATCH {match.match_id}: {_MATCH_KIND_LABELS.get(match.kind, match.kind)}")
+        lines.append("=" * 70)
+        lines.append(f"    Document A: {occ_a.original_relative_path if occ_a else match.document_id_a} "
+                     f"({match.document_id_a})")
+        if occ_a:
+            lines.append(f"        Page count: {occ_a.converted_page_count}")
+        lines.append(f"    Document B: {occ_b.original_relative_path if occ_b else match.document_id_b} "
+                     f"({match.document_id_b})")
+        if occ_b:
+            lines.append(f"        Page count: {occ_b.converted_page_count}")
+        lines.append(f"    Confidence: {match.confidence:.2f}")
+        lines.append(f"    Detail: {match.detail}")
+        excludable_names = [
+            (occ_by_id[d].original_filename if d in occ_by_id else d) for d in match.excludable_ids
+        ]
+        lines.append(f"    Documents eligible for exclusion if a human chooses to: {', '.join(excludable_names)}")
+
+        if match.decision == "undecided":
+            lines.append("    Decision: AWAITING REVIEW -- both documents remain in Final by default.")
+        elif match.decision == "keep_both":
+            lines.append("    Decision: KEEP BOTH (explicitly reviewed and confirmed by a human)")
+            lines.append(f"        Decided at: {match.decided_at}")
+            lines.append(f"        Reason: {match.decided_reason}")
+        elif match.decision == "excluded":
+            excluded_occ = occ_by_id.get(match.decided_document_id or "")
+            excluded_name = excluded_occ.original_filename if excluded_occ else match.decided_document_id
+            lines.append(f"    Decision: EXCLUDED -- {excluded_name} was removed from Final by explicit human review.")
+            lines.append(f"        Decided at: {match.decided_at}")
+            lines.append(f"        Reason: {match.decided_reason}")
+            lines.append(
+                "        Both documents remain fully present in OG regardless of this decision, and "
+                "the original source files were never modified."
+            )
+        lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -491,6 +593,7 @@ def write_processing_manifest(run: RunResult, meta: dict, path: Path) -> None:
         "conversion_backend_usage": run.conversion_backend_usage,
         "unsafe_archive_incidents": run.unsafe_archive_incidents,
         "content_dedup_notes": run.content_dedup_notes,
+        "uncertain_matches": [dataclasses.asdict(m) for m in run.uncertain_matches],
         "overall_success": run.success,
     }
 
