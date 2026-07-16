@@ -351,7 +351,7 @@ done.
   upgrade) — this was the previous checkpoint's commit.
 
 **This session's chunk** (interactive uncertain-match review/decision workflow, see §1 items 18-25) —
-committed at the end of this chunk (see §9 for the exact commit hash once pushed):
+committed as `318ff50` and pushed to `claude/lender-package-builder-stage-1-h9sa3n`:
 ```
  M src/lender_package_builder/cli.py
  M src/lender_package_builder/content_dedup.py
