@@ -167,7 +167,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.selected_card)
 
         self.advanced_settings = AdvancedSettingsWidget(
-            self.config.max_pages_per_part, self.config.max_size_mb_per_part
+            self.config.max_pages_per_part,
+            self.config.max_size_mb_per_part,
+            self.config.enable_content_aware_dedup,
         )
         self.advanced_settings.hide()
         layout.addWidget(self.advanced_settings)
@@ -265,6 +267,7 @@ class MainWindow(QMainWindow):
             self.config,
             max_pages_per_part=values.max_pages_per_part,
             max_size_mb_per_part=values.max_size_mb_per_part,
+            enable_content_aware_dedup=values.enable_content_aware_dedup,
         )
 
         allow_large_input = False

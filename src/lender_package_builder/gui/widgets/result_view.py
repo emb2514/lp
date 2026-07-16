@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from .. import os_actions
 from ..formatting import format_elapsed
 from ...models import ProcessingStatus, RunResult
+from .uncertain_review_dialog import UncertainReviewDialog
 
 
 class ResultView(QWidget):
@@ -76,6 +77,10 @@ class ResultView(QWidget):
         self.open_reports_button.clicked.connect(self._open_reports_folder)
         button_row.addWidget(self.open_reports_button)
 
+        self.review_uncertain_button = QPushButton("Review Uncertain Matches")
+        self.review_uncertain_button.clicked.connect(self._open_uncertain_review_dialog)
+        button_row.addWidget(self.review_uncertain_button)
+
         button_row.addStretch(1)
 
         self.process_another_button = QPushButton("Process Another Package")
@@ -125,9 +130,19 @@ class ResultView(QWidget):
         final_pages = sum(p.page_count for p in run.final_parts)
         checks_passed = sum(1 for c in run.integrity_checks if c.passed)
 
+        content_duplicate_count = sum(1 for o in non_ignored if o.is_content_duplicate)
+        merged_overlap_count = sum(1 for o in non_ignored if o.is_contained_in_merged_document)
+        portfolio_count = sum(1 for o in non_ignored if o.is_portfolio_container)
+        needs_review_count = sum(1 for o in non_ignored if o.needs_review)
+
         rows = [
             ("Source documents discovered", str(len(run.occurrences))),
             ("Exact duplicates excluded from Final", str(duplicate_count)),
+            ("Content-aware duplicates excluded from Final", str(content_duplicate_count)),
+            ("Merged-package duplicates excluded from Final", str(merged_overlap_count)),
+            ("PDF Portfolio containers detected", str(portfolio_count)),
+            ("Document families identified", str(len(run.document_families))),
+            ("Uncertain matches retained for review", str(needs_review_count)),
             ("Unique documents in Final", str(final_doc_count)),
             ("Unconverted placeholders", str(placeholder_count)),
             ("OG output parts", str(len(run.og_parts))),
@@ -156,6 +171,11 @@ class ResultView(QWidget):
     def _open_reports_folder(self) -> None:
         if self._run is not None:
             os_actions.open_folder(self._run.output_path / "Reports")
+
+    def _open_uncertain_review_dialog(self) -> None:
+        if self._run is not None:
+            dialog = UncertainReviewDialog(self._run, self)
+            dialog.exec()
 
 
 class FailureView(QWidget):

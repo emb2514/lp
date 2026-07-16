@@ -4,12 +4,13 @@
 The user approved both flagged decision points from §7b (TEST 4 gets updated with a documented reason;
 build BOTH the review dialog and the advanced-settings toggle) and said to implement. All 6 new
 detection modules, full pipeline wiring, validation.py generalization, reporting.py expansion (2 new
-report files + expanded duplicate log), and the 3 new dedicated test files (`test_reporting_v2.py`,
-`test_validation.py`, `test_merging.py`) are done and passing (176/176 locally, engine suite). GUI
-work, the Robert-package acceptance test, and Windows CI packaging validation have **not** started yet.
-This checkpoint exists to record a safe, fully-tested boundary — reporting.py expansion and its three
-test files are the last completed chunk; `git status` at time of writing has these changes staged but
-not yet committed (see §4).
+report files + expanded duplicate log), the 3 new dedicated test files (`test_reporting_v2.py`,
+`test_validation.py`, `test_merging.py`), and all planned GUI work (the review dialog, the
+advanced-settings toggle, and the 5 new result-view stat rows, plus 10 new GUI tests) are done and
+passing (176/176 engine tests; GUI tests pass file-by-file, see §3). The Robert-package acceptance test
+and Windows CI packaging validation have **not** started yet. This checkpoint exists to record a safe,
+fully-tested boundary — the GUI work is the last completed chunk; `git status` at time of writing has
+these changes staged but not yet committed (see §4).
 
 **§5, §6, §7b below are unchanged and still the authoritative research/design reference — read them
 before touching anything.** §1–§4 below replace the old (now-stale) planning-phase status entirely.
@@ -117,6 +118,36 @@ All of these are implemented, individually unit-tested, AND verified working tog
     package) and asserts every single non-ignored occurrence is present in OG regardless, OG's total page
     count equals the sum of every non-ignored document's own page count, and every Final exclusion has an
     auditable reason.
+18. **GUI: `gui/widgets/uncertain_review_dialog.py`** (NEW) — read-only `QDialog` (never an approval
+    workflow) listing every `needs_review=True` occurrence in a 3-column read-only `QTableWidget`
+    (File / Document ID / Why it needs review, populated from `occ.review_reason`), with a heading that
+    explains both copies were already safely kept and no action is required, and a clean "no uncertain
+    matches" empty state when nothing is flagged. Opened from a new "Review Uncertain Matches" button on
+    `ResultView` (`_open_uncertain_review_dialog`, follows the exact same self-contained-button pattern
+    as the existing Open Output/Final/Reports Folder buttons — no round-trip through `MainWindow`).
+19. **GUI: advanced-settings toggle** — new `AdvancedSettingsValues.enable_content_aware_dedup: bool`
+    (`gui/state.py`); `AdvancedSettingsWidget` gained a `default_enable_content_aware_dedup` constructor
+    param, a `QCheckBox` ("Enable content-aware duplicate detection", tooltip explains the fallback
+    behavior when off), included in `get_values()`/`reset_to_defaults()`. `main_window.py` passes
+    `self.config.enable_content_aware_dedup` into the widget at construction and threads
+    `values.enable_content_aware_dedup` through the existing `dataclasses.replace(self.config, ...)` call
+    in `_on_build_clicked()` — this is the only production code change in `main_window.py`, no other
+    orchestration logic touched.
+20. **GUI: `result_view.py` new stat rows** — `_populate_stats` gained 5 new rows derived directly from
+    real `SourceOccurrence`/`RunResult` RC2 fields (not the checkpoint's earlier placeholder wording,
+    which was written before the exact field names existed): "Content-aware duplicates excluded from
+    Final" (`is_content_duplicate` count), "Merged-package duplicates excluded from Final"
+    (`is_contained_in_merged_document` count), "PDF Portfolio containers detected"
+    (`is_portfolio_container` count), "Document families identified" (`len(run.document_families)`),
+    "Uncertain matches retained for review" (`needs_review` count).
+21. **GUI tests** (10 new, all passing individually) — `tests/gui/test_uncertain_review_dialog.py` (NEW,
+    4 tests: lists flagged occurrences with reasons, clean empty state, table is genuinely read-only/no
+    edit triggers, `ResultView`'s button opens the dialog with the correct `run` via a monkeypatched fake
+    dialog class); `tests/gui/test_advanced_settings.py` (+4: checkbox defaults from config,
+    `get_values()` round-trip, `reset_to_defaults()` restores it, unchecking it actually flows through
+    into the `run_config` passed to `_start_build`); `tests/gui/test_results.py` (+2: all 5 new stat rows
+    show correct counts against a hand-built RC2-field-populated `RunResult`, and the dialog opened from
+    `ResultView._run` reflects the real `needs_review` count). GUI suite now 51 tests total (was 41).
 
 ### Four real safety bugs found via direct testing during this work, all fixed and regression-tested
 
@@ -157,14 +188,6 @@ Each bug has a dedicated regression test (see file list in §4) proving it stays
 
 Per §7b's module dependency chain and the task's own required deliverable list, still remaining:
 
-- **GUI work** (none started): `gui/widgets/uncertain_review_dialog.py` (new, read-only `QDialog`
-  listing `needs_review=True` groups, inspection only, no approval workflow — triggered by a button in
-  `ResultView`); `gui/widgets/advanced_settings.py`/`gui/state.py` (new `enable_content_aware_dedup`
-  `QCheckBox`, wired into `main_window.py`'s existing `dataclasses.replace(...)` call);
-  `gui/widgets/result_view.py` (`_populate_stats` new rows: content-equivalent duplicates removed,
-  blank-page-variant duplicates removed, merged-package overlaps resolved, distinct signed/dated
-  versions preserved, uncertain comparisons retained for safety). New GUI tests extending
-  `tests/gui/test_advanced_settings.py`/`tests/gui/test_results.py`.
 - **`tests/test_robert_package_regression.py`** (new file) — existing 14 SHA-256 groups still correct;
   synthetic 619-vs-1099-page recreation of the reported bug (Final = one copy of each unique logical
   document version, explicitly NO fixed-page-total assertion).
@@ -190,10 +213,20 @@ an inline smoke test (a hand-built `RunResult` populated with every new RC2 fiel
 `write_all_reports()`, all 5 output files inspected) to catch field-name mismatches before running the
 full suite — none found.
 
-GUI tests (`tests/gui/`) were not re-run this session beyond what already passed in earlier milestones —
-the pre-existing sandbox Qt-offscreen segfault (documented in the original §3, preserved below) is
-unrelated to RC2 and still applies; GUI correctness for anything RC2 touches (none yet — no GUI code
-written) will need confirming once GUI work starts, and ultimately on real Windows CI.
+**GUI tests, this chunk**: all RC2 GUI work is done (§1 items 18-21) and its tests pass. `pytest
+tests/gui/` as one process still hits the same pre-existing sandbox Qt-offscreen segfault documented
+below (this time inside `test_progress_worker.py`, a file this session did not touch at all -- confirmed
+via `git status` showing zero changes to `worker.py`/`test_progress_worker.py` -- so this is the same
+known environment quirk, not a regression). Running each `tests/gui/*.py` file individually (the
+documented workaround) gives a clean, complete picture instead:
+```
+for f in tests/gui/test_*.py; do QT_QPA_PLATFORM=offscreen python -m pytest "$f" -q; done
+=> every file passes except test_progress_worker.py, which segfaults in isolation too (pre-existing,
+   confirmed unrelated to any change in this session).
+```
+51 GUI tests collected total (was 41; +10 new: 4 in the new `test_uncertain_review_dialog.py`, +4 in
+`test_advanced_settings.py`, +2 in `test_results.py`). GUI correctness will additionally be confirmed on
+real Windows CI per the remaining §9 steps, as always required before RC2 is declared done.
 
 **Original RC1 baseline (kept for reference, still accurate as a pre-RC2 comparison point):**
 ```
@@ -224,14 +257,20 @@ written) will need confirming once GUI work starts, and ultimately on real Windo
   test updates in `test_content_dedup.py`/`test_content_fingerprinting.py`/
   `test_hashing_and_deduplication.py`/`test_progress.py`) — this was the previous checkpoint's commit.
 
-**This session's chunk** (reporting.py expansion + 3 new test files, see §1 items 14-17) — committed as
-`fac0ae1` and pushed to `claude/lender-package-builder-stage-1-h9sa3n`:
+- `fac0ae1` (+ follow-up `3e85c00`) — reporting.py expansion + 3 new test files (§1 items 14-17).
+
+**This session's chunk** (GUI: review dialog + advanced-settings toggle + result-view stat rows + 10 new
+GUI tests, see §1 items 18-21) — to be committed at the end of this chunk (see §9 for the exact commit
+hash once pushed):
 ```
- M CHECKPOINT.md
- M src/lender_package_builder/reporting.py
-A  tests/test_merging.py
-A  tests/test_reporting_v2.py
-A  tests/test_validation.py
+ M src/lender_package_builder/gui/main_window.py
+ M src/lender_package_builder/gui/state.py
+ M src/lender_package_builder/gui/widgets/advanced_settings.py
+ M src/lender_package_builder/gui/widgets/result_view.py
+ M tests/gui/test_advanced_settings.py
+ M tests/gui/test_results.py
+?? src/lender_package_builder/gui/widgets/uncertain_review_dialog.py
+?? tests/gui/test_uncertain_review_dialog.py
 ```
 
 ---
@@ -733,35 +772,29 @@ file from §7's draft.
 ## 9. Exact next step to resume this task
 
 Architecture research, validation, AND a substantial, fully-tested chunk of implementation are all done
-(§1, items 1-17). The two decision points from the old §7b are resolved (user approved both).
-`reporting.py`'s expansion and all 3 planned dedicated test files (`test_reporting_v2.py`,
-`test_validation.py`, `test_merging.py`) are now done, tested (176/176 passing), and committed as part of
-this checkpoint. Resume by:
+(§1, items 1-21). The two decision points from the old §7b are resolved (user approved both).
+`reporting.py`'s expansion, all 3 planned dedicated test files, and all planned GUI work (review dialog,
+advanced-settings toggle, result-view stat rows, 10 new GUI tests) are now done and tested. Resume by:
 
 1. Re-read this `CHECKPOINT.md` §1–§4 for exactly what's done and what's not; re-read **§7b** for the
-   authoritative design of everything still to build (the GUI plan, canonical-selection/confidence-band
-   reasoning) — it remains accurate for the remaining work.
+   authoritative design of everything still to build (canonical-selection/confidence-band reasoning,
+   the Robert-package test plan) — it remains accurate for the remaining work.
 2. Confirm via `git log --oneline -8` and `git status` that the commit referenced at the end of this
    checkpoint (see the session's final message / commit hash) is present and the working tree is clean;
    if not, something unexpected happened between sessions — investigate before continuing.
 3. Continue implementation in this order (everything before this point is done):
-   a. GUI work: `gui/widgets/uncertain_review_dialog.py` (new), `gui/widgets/advanced_settings.py` +
-      `gui/state.py` (new checkbox), `gui/widgets/result_view.py` (new stat rows), `main_window.py`
-      (wire the new config field through the existing `dataclasses.replace(...)` call). New/extended
-      GUI tests. Remember the GUI-test sandbox segfault (§3) — GUI tests may need running individually
-      or their correctness confirmed via careful review + eventual Windows CI, not assumed clean from a
-      full local `pytest` run in this environment.
-   b. `tests/test_robert_package_regression.py` (new file) — 14-exact-dup-groups-still-correct +
+   a. `tests/test_robert_package_regression.py` (new file) — 14-exact-dup-groups-still-correct +
       synthetic 619-vs-1099-page recreation.
-   c. Run the FULL local test suite (engine + GUI, working around the sandbox segfault if needed) and
-      fix anything that breaks.
-   d. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
+   b. Run the FULL local test suite (engine + GUI, working around the sandbox segfault if needed — see
+      §3 for the per-file-invocation workaround that gets a clean full picture) and fix anything that
+      breaks.
+   c. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
       `workflow_dispatch` (see commit `4478695` for how this branch's CI was last made green), watch it
       through to a successful artifact upload. `pypdfium2`'s native binary bundling via
       `pyinstaller-hooks-contrib`'s `hook-pypdfium2.py` is unverified on real Windows — this is the one
       genuinely new packaging risk in this whole RC2 change and needs real confirmation, not just local
       reasoning.
-   e. Write the final RC2 deliverable report per the task's own required format (root-cause summary,
+   d. Write the final RC2 deliverable report per the task's own required format (root-cause summary,
       files changed, detection design implemented, tests added, complete test results, known
       limitations, exact manual Robert-package testing instructions, path to the new portable RC2
       artifact).
@@ -773,9 +806,9 @@ this checkpoint. Resume by:
 
 **Suggested exact resume prompt for the user to give**:
 
-> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md §1–§4. Continue with GUI work
-> (review dialog + advanced-settings toggle), the Robert-package acceptance test, then run the full test
-> suite, validate the Windows CI build, and produce the final RC2 deliverable report.
+> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md §1–§4. Continue with the
+> Robert-package acceptance test, then run the full test suite, validate the Windows CI build, and
+> produce the final RC2 deliverable report.
 
 ---
 

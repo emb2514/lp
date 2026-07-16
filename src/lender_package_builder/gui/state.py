@@ -84,3 +84,4 @@ def _safe_size(path: Path) -> int | None:
 class AdvancedSettingsValues:
     max_pages_per_part: int
     max_size_mb_per_part: float
+    enable_content_aware_dedup: bool = True

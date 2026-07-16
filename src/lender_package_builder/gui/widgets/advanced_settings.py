@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
@@ -32,14 +33,27 @@ EXPLANATION_TEXT = (
     "A package totaling 3,000+ pages is valid and will simply create as many parts as needed."
 )
 
+CONTENT_AWARE_DEDUP_TOOLTIP = (
+    "When enabled (recommended), the app also looks for duplicates that are not byte-for-byte "
+    "identical -- e.g. the same document re-saved, or the same PDF with different metadata -- "
+    "using content comparison, never filename or file size. Uncertain matches are always kept, "
+    "never silently removed. Turning this off falls back to exact-byte-hash duplicate detection "
+    "only, exactly like earlier versions of this app."
+)
+
 
 class AdvancedSettingsWidget(QWidget):
     def __init__(
-        self, default_max_pages: int, default_max_size_mb: float, parent: QWidget | None = None
+        self,
+        default_max_pages: int,
+        default_max_size_mb: float,
+        default_enable_content_aware_dedup: bool = True,
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self._default_max_pages = default_max_pages
         self._default_max_size_mb = default_max_size_mb
+        self._default_enable_content_aware_dedup = default_enable_content_aware_dedup
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -91,6 +105,18 @@ class AdvancedSettingsWidget(QWidget):
 
         content_layout.addLayout(form)
 
+        self.content_aware_dedup_checkbox = QCheckBox("Enable content-aware duplicate detection")
+        self.content_aware_dedup_checkbox.setChecked(default_enable_content_aware_dedup)
+        self.content_aware_dedup_checkbox.setToolTip(CONTENT_AWARE_DEDUP_TOOLTIP)
+        content_layout.addWidget(self.content_aware_dedup_checkbox)
+
+        content_aware_dedup_hint = QLabel(
+            "Recommended: on. Turning this off falls back to exact-byte-hash duplicate detection only."
+        )
+        content_aware_dedup_hint.setObjectName("MutedLabel")
+        content_aware_dedup_hint.setWordWrap(True)
+        content_layout.addWidget(content_aware_dedup_hint)
+
         reset_row = QHBoxLayout()
         reset_row.addStretch(1)
         self.reset_button = QPushButton("Reset to recommended defaults")
@@ -116,12 +142,14 @@ class AdvancedSettingsWidget(QWidget):
     def reset_to_defaults(self) -> None:
         self.max_pages_spin.setValue(self._default_max_pages)
         self.max_size_spin.setValue(self._default_max_size_mb)
+        self.content_aware_dedup_checkbox.setChecked(self._default_enable_content_aware_dedup)
         self.validation_label.hide()
 
     def get_values(self) -> AdvancedSettingsValues:
         return AdvancedSettingsValues(
             max_pages_per_part=self.max_pages_spin.value(),
             max_size_mb_per_part=self.max_size_spin.value(),
+            enable_content_aware_dedup=self.content_aware_dedup_checkbox.isChecked(),
         )
 
     def validate(self) -> tuple[bool, str]:

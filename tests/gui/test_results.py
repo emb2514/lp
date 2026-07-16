@@ -62,6 +62,93 @@ def _make_successful_run(tmp_path: Path, with_warnings: bool = False) -> RunResu
     )
 
 
+def _make_run_with_rc2_fields(tmp_path: Path) -> RunResult:
+    from lender_package_builder.models import ContentDuplicateGroup, DocumentFamily
+
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    occ1 = _make_occurrence("DOC-000001")
+    occ2 = _make_occurrence("DOC-000002")
+    occ2.is_content_duplicate = True
+    occ2.content_duplicate_of_document_id = "DOC-000001"
+    occ2.duplicate_detection_method = "normalized_pdf"
+    occ2.document_family_id = "FAMILY-0001"
+
+    occ3 = _make_occurrence("DOC-000003")
+    occ3.is_contained_in_merged_document = True
+    occ3.contained_in_document_id = "DOC-000001"
+
+    occ4 = _make_occurrence("DOC-000004")
+    occ4.is_portfolio_container = True
+
+    occ5 = _make_occurrence("DOC-000005")
+    occ5.needs_review = True
+    occ5.review_reason = "uncertain match"
+
+    occurrences = [occ1, occ2, occ3, occ4, occ5]
+    og_part = OutputPart(
+        package="OG", index=1, file_path=output_path / "OG" / "part1.pdf",
+        document_ids=[o.document_id for o in occurrences], page_count=15, file_size_bytes=10000,
+    )
+    final_part = OutputPart(
+        package="Final", index=1, file_path=output_path / "Final" / "part1.pdf",
+        document_ids=["DOC-000001", "DOC-000005"], page_count=6, file_size_bytes=10000,
+    )
+    checks = [IntegrityCheckResult(name="check", passed=True, detail="ok")]
+
+    return RunResult(
+        input_path=tmp_path / "input.zip",
+        output_path=output_path,
+        start_time="2026-01-01T00:00:00",
+        end_time="2026-01-01T00:01:00",
+        elapsed_seconds=60.0,
+        occurrences=occurrences,
+        og_parts=[og_part],
+        final_parts=[final_part],
+        integrity_checks=checks,
+        content_duplicate_groups=[
+            ContentDuplicateGroup(method="normalized_pdf", document_ids=["DOC-000001", "DOC-000002"],
+                                   retained_document_id="DOC-000001", confidence=0.98)
+        ],
+        document_families=[
+            DocumentFamily(family_id="FAMILY-0001", document_ids=["DOC-000001", "DOC-000002"],
+                            versions={"DOC-000001": "unsigned", "DOC-000002": "e_signed"})
+        ],
+    )
+
+
+# RC2 - result view shows the new content-aware detection stat rows
+def test_result_view_shows_rc2_stat_rows(window, tmp_path):
+    run = _make_run_with_rc2_fields(tmp_path)
+
+    window._on_build_finished(run)
+
+    assert window.stack.currentWidget() is window.result_view
+    rows = {
+        window.result_view._stats_layout.itemAtPosition(row, 0).widget().text():
+            window.result_view._stats_layout.itemAtPosition(row, 1).widget().text()
+        for row in range(window.result_view._stats_layout.rowCount())
+    }
+    assert rows["Content-aware duplicates excluded from Final"] == "1"
+    assert rows["Merged-package duplicates excluded from Final"] == "1"
+    assert rows["PDF Portfolio containers detected"] == "1"
+    assert rows["Document families identified"] == "1"
+    assert rows["Uncertain matches retained for review"] == "1"
+
+
+def test_result_view_review_button_reflects_needs_review_count(window, tmp_path):
+    run = _make_run_with_rc2_fields(tmp_path)
+    window._on_build_finished(run)
+
+    from lender_package_builder.gui.widgets.uncertain_review_dialog import UncertainReviewDialog
+
+    dialog = UncertainReviewDialog(window.result_view._run, window.result_view)
+    assert dialog.table.rowCount() == 1
+    assert dialog.table.item(0, 0).text() == "DOC-000005.pdf"
+    dialog.close()
+
+
 def _make_integrity_failure_run(tmp_path: Path) -> RunResult:
     run = _make_successful_run(tmp_path)
     run.integrity_checks.append(
