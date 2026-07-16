@@ -1,4 +1,4 @@
-# Windows Acceptance Test Checklist -- Lender Package Builder 1.0.0 RC1
+# Windows Acceptance Test Checklist -- Lender Package Builder RC2
 
 This checklist is for testing the portable Windows build on a real
 Windows 11 computer. You do not need any programming experience to
@@ -128,10 +128,39 @@ what's expected.
     - [ ] Spot-check that no source document appears partially in one
           output part and partially in another.
 
-23. **Confirm only exact whole-file duplicates were removed from Final**
-    - [ ] Compare `Duplicate_Removal_Log.txt` against what you know
-          about the input -- only byte-for-byte identical files should
-          be listed as removed from Final.
+23. **Confirm every removal in `Duplicate_Removal_Log.txt` is explained**
+    - [ ] RC2 adds content-aware duplicate detection on top of exact
+          byte-for-byte matching -- `Duplicate_Removal_Log.txt` now has
+          separate sections for exact-byte duplicates AND content-aware
+          duplicates (same visible content despite different file
+          bytes). Confirm every entry, in every section, has a clear
+          reason and a Retained/Removed filename pair that makes sense
+          for your input. A document should never be listed as removed
+          without an explanation.
+    - [ ] If your input included a large merged PDF plus a standalone
+          copy of something already inside it, check
+          `Merged_Document_Overlap_Report.txt` for the containment
+          explanation instead.
+
+23a. **Test the "Review Uncertain Matches" screen (RC2)**
+    - [ ] If the result screen shows a "Review Uncertain Matches"
+          button, click it. Confirm it opens without error, and that
+          every listed item defaults to "Keep Both" (nothing pre-selects
+          an exclusion).
+    - [ ] Confirm clicking "Apply Decisions" with everything left on
+          "Keep Both" changes nothing (no confirmation popup appears,
+          and reopening Final shows the same documents as before).
+    - [ ] Pick one item, select "Mark as duplicate to exclude" for one
+          document, and click "Apply Decisions." Confirm a popup asks
+          you to confirm before anything happens, and that clicking
+          "No" leaves everything unchanged.
+    - [ ] Repeat and click "Yes" this time. Confirm the chosen document
+          is removed from the Final package, and that
+          `Uncertain_Match_Review_Log.txt` (in the Reports folder)
+          records your decision, the document you chose, and a
+          timestamp.
+    - [ ] Confirm the OG package still contains every document,
+          including the one you just excluded from Final.
 
 24. **Confirm output folders open correctly**
     - [ ] The "Open Output Folder" (or similar) button/link in the app

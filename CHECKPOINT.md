@@ -1,20 +1,20 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
-**Status as of this checkpoint: IMPLEMENTATION IN PROGRESS, substantial and fully tested. Working
-autonomously through the remaining RC2 punch list (user instruction: complete the full RC2 deliverable
-end to end without pausing between routine milestones).**
+**STATUS: RC2 COMPLETE.** All planned engine modules, GUI work, the interactive uncertain-match
+review workflow, the (documented-blocked, synthetically-substituted) Robert-package acceptance test,
+the GitHub Actions Node-deprecation fix, and real Windows CI validation are all done, all green, and
+the portable Windows artifact has been built and verified. **See `RC2_DELIVERABLE_REPORT.md` at the
+repo root for the complete, final deliverable** (features, safety behavior, detection logic, Portfolio
+behavior, GUI review behavior, Robert-package results, test counts, Windows CI/build results, known
+limitations, exact artifact location, and install/run instructions for a nontechnical Windows 11
+user). This CHECKPOINT.md file remains as the detailed development history/resume record; the
+deliverable report is the user-facing summary.
 
-All 6 new detection modules, full pipeline wiring, validation.py generalization, reporting.py expansion,
-and all originally-planned GUI work are done. **This session's chunk upgraded the read-only "Review
-Uncertain Matches" dialog into a fully interactive, auditable decision workflow** (per an explicit new
-user instruction): a human can now explicitly choose "Keep Both" (default, safe, always available) or
-mark one specific document as the duplicate to exclude, with a required confirmation step before
-anything is excluded, a full audit trail (decision/document/timestamp/reason) written to a new
-`Uncertain_Match_Review_Log.txt` report and `Processing_Manifest.json`, and OG/original source files
-proven untouched regardless of the decision. See §1 items 18-25. **188/188 engine tests passing; GUI
-tests pass file-by-file (57 total, see §3).** Remaining work: Robert-package acceptance test, full
-suite re-confirmation, GitHub Actions Node-version fix, real Windows CI validation, and the final RC2
-deliverable report (§2, §9).
+**Final numbers**: 190 engine tests + 57 GUI tests = **247 total, all passing** locally; **244 passed,
+3 expected skips, 0 failed** on real Windows CI (run
+[29517398524](https://github.com/emb2514/lp/actions/runs/29517398524), commit `e52374b`+one docs
+commit -- see §4 for the exact final commit). Portable Windows artifact built, uploaded, and verified
+runnable with no external Python/pip/Git/Visual Studio/internet dependency.
 
 **A real, non-trivial bug was found and fixed while building this feature**: the review dialog only
 ever appears after a build has already finished, by which point the pipeline's temporary conversion
@@ -299,15 +299,23 @@ proving `ResultView` stores the config the dialog needs).
 
 ## 2. What is partially complete / not yet started
 
-Per §7b's module dependency chain and the task's own required deliverable list, still remaining:
+**Nothing.** Everything in §7b's module dependency chain and the task's own required deliverable list
+is complete:
 
-- **Windows CI build+package validation** — a real `--onedir` PyInstaller build has NOT been run since
-  RC2's changes (including the just-updated GitHub Actions versions); `pypdfium2` packaging (native
-  binary bundling via the hooks-contrib hook) is unverified on an actual Windows runner. This is
-  required before RC2 can be called done.
-- **Final RC2 deliverable report** (root-cause summary, files changed, detection design, test results,
-  known limitations, manual Robert-package testing instructions, path to the built artifact) — not
-  written yet, waiting on the Windows CI run above.
+- Windows CI build+package validation: run
+  [29517398524](https://github.com/emb2514/lp/actions/runs/29517398524), **SUCCESS**, all 16 steps
+  individually verified (not inferred from the green checkmark), 244 passed/3 expected skips/0 failed
+  on the real-Windows test run, `pypdfium2` native binary bundling specifically confirmed via direct
+  inspection of the two cooperating `pyinstaller-hooks-contrib` hooks. Full detail in
+  `RC2_DELIVERABLE_REPORT.md` §8.
+- Final RC2 deliverable report: written as `RC2_DELIVERABLE_REPORT.md` at the repo root — see that
+  file for the complete, final, user-facing summary (this CHECKPOINT.md remains the development
+  history/resume record).
+
+If resuming after this point, there is no RC2 work left to pick up — check with the user for a new
+task, or see `RC2_DELIVERABLE_REPORT.md` §9 "Known limitations" for what a genuinely NEW follow-up
+task might address (e.g. obtaining the real Robert package, merged-vs-merged overlap, email-attachment
+content-aware matching).
 
 ## 3. Tests run and results (current, this session)
 
@@ -328,9 +336,17 @@ for f in tests/gui/test_*.py; do QT_QPA_PLATFORM=offscreen python -m pytest "$f"
    since it occurs deep in Qt/pytest-qt's own teardown machinery, not in any RC2 code path).
 ```
 57 GUI tests collected total (was 51; net +6: `test_uncertain_review_dialog.py` rewritten in place from
-4 read-only tests to 10 interactive tests, `test_results.py` net 0). GUI correctness will additionally
-be confirmed on real Windows CI per the remaining §9 steps, as always required before RC2 is declared
-done.
+4 read-only tests to 10 interactive tests, `test_results.py` net 0).
+
+**Real Windows CI, final confirmation** (run
+[29517398524](https://github.com/emb2514/lp/actions/runs/29517398524), commit `e52374b`, conclusion
+SUCCESS): the exact same 247-test suite (engine + GUI together, no per-file workaround needed on real
+Windows -- the sandbox segfault is specific to this Linux container's Qt offscreen platform) ran as one
+process and produced **244 passed, 3 skipped (all expected -- 2x because LibreOffice is not installed
+on the runner, 1x `test_windows_console_attach_is_noop_on_non_windows`, which is designed to run only
+on non-Windows platforms and correctly self-skips when actually running on Windows), 0 failed, 1
+warning (the same expected zipfile UserWarning seen locally)** -- matching the local collection count
+of 247 exactly. Full step-by-step detail in `RC2_DELIVERABLE_REPORT.md` §8.
 
 **Original RC1 baseline (kept for reference, still accurate as a pre-RC2 comparison point):**
 ```
@@ -370,11 +386,16 @@ done.
 - `318ff50` (+ follow-up `a04a2e6`) — interactive uncertain-match review/decision workflow (§1 items
   18-25) — this was the previous checkpoint's commit.
 
-**This session's chunk** (Robert-package acceptance test + GitHub Actions Node fix, see §1 items 26-27)
-— to be committed at the end of this chunk (see §9 for the exact commit hash once pushed):
+- `e52374b` — Robert-package acceptance test + GitHub Actions Node fix (§1 items 26-27). This was the
+  commit the successful Windows CI run (29517398524) built and tested.
+
+**This session's final chunk** (RC2_DELIVERABLE_REPORT.md, WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md RC2
+update, this CHECKPOINT.md closeout) — to be committed at the very end (see §9 for the exact final
+commit hash once pushed):
 ```
-A  tests/test_robert_package_regression.py
- M .github/workflows/build-windows-portable.yml
+A  RC2_DELIVERABLE_REPORT.md
+ M WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md
+ M CHECKPOINT.md
 ```
 
 ---
@@ -873,52 +894,24 @@ file from §7's draft.
 
 ---
 
-## 9. Exact next step to resume this task
+## 9. RC2 is complete — nothing to resume
 
-Architecture research, validation, all originally-planned implementation, AND the interactive
-uncertain-match review/decision workflow (§1, items 1-25) are all done and tested (188 engine + 57 GUI
-tests). The user is running this session autonomously (explicit instruction: work through the full
-remaining RC2 punch list without pausing for confirmation between routine milestones; only stop for a
-genuine blocker or a decision that would materially change user-visible behavior/risk data loss/need
-credentials not available/be irreversible). Resume by:
+Every item in the original task spec and every item from the autonomous-completion instruction is
+done: architecture research, all engine modules, GUI work, the interactive uncertain-match review
+workflow, validation.py's 27 integrity checks, the (documented-blocked, synthetically-substituted)
+Robert-package acceptance test, the GitHub Actions Node-deprecation fix, and real Windows CI
+build+package validation (run 29517398524, SUCCESS, verified step-by-step, artifact uploaded).
 
-1. Re-read this `CHECKPOINT.md` §1–§4 for exactly what's done and what's not; re-read **§7b** for the
-   Robert-package test plan and any remaining canonical-selection/confidence-band reasoning.
-2. Confirm via `git log --oneline -8` and `git status` that the commit referenced at the end of this
-   checkpoint is present and the working tree is clean; if not, investigate before continuing.
-3. Continue in this order (everything before this point is done):
-   a. Robert-package regression/acceptance test — locate the real test package if available in this
-      environment/repo; if unavailable, document that blocker explicitly and continue with every other
-      task that doesn't depend on it (do not fabricate a substitute and call it the Robert-package test).
-   b. Run the FULL local test suite (engine + GUI, per-file for GUI per §3's workaround) once more after
-      any further changes; fix real defects, distinguish them clearly from the known environmental
-      whole-suite-GUI segfault.
-   c. GitHub Actions Windows workflow: fix the Node 20 deprecation warning by upgrading official actions
-      to current Node 24-compatible major versions (e.g. `actions/checkout`, `actions/setup-python`,
-      `actions/upload-artifact`, etc., to their latest majors) — do not touch the app's own Python
-      version/behavior to do this.
-   d. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
-      `workflow_dispatch`, watch it through to a successful artifact upload. Confirm `pypdfium2`
-      bundles correctly (native binary via `pyinstaller-hooks-contrib`'s `hook-pypdfium2.py`, unverified
-      on real Windows until this run), run the Windows tests/doctor/acceptance/smoke-test steps that
-      exist in this repo's CI, and confirm the packaged app needs no Python/pip/Git/Visual
-      Studio/internet access to run. Investigate and fix any real failure rather than declaring success
-      from source-only tests.
-   e. Write the final RC2 deliverable report per the task's own required format (features completed,
-      safety behavior, duplicate/overlap/version logic, Portfolio behavior, GUI review behavior,
-      Robert-package results, complete test counts/results, Windows CI/build results, known limitations,
-      exact artifact location/name, install/run instructions for a nontechnical Windows 11 user).
-4. The original full task spec (all 26 required tests verbatim, all 5 detection levels, all reporting/
-   GUI/performance requirements) was provided by the user earlier in this task's conversation. §5–§7b
-   condense the architecturally-relevant parts in enough detail to implement correctly, but
-   **re-confirm exact wording/expectations against the original spec** if anything here seems
-   ambiguous — it is not fully re-quoted in this file.
-
-**Suggested exact resume prompt for the user to give**:
-
-> Continue autonomously from CHECKPOINT.md: run the Robert-package acceptance test (or document why it's
-> blocked), re-run the full test suite, fix the GitHub Actions Node deprecation warning, validate the
-> real Windows CI build end to end, and produce the final RC2 deliverable report.
+**If you are resuming this task from a fresh context**: there is nothing left to do for RC2 itself.
+Read `RC2_DELIVERABLE_REPORT.md` at the repo root first — it is the complete, final, user-facing
+summary (features, safety behavior, detection logic, Portfolio behavior, GUI review behavior,
+Robert-package results, test counts, Windows CI/build results, known limitations, exact artifact
+location, install/run instructions). This CHECKPOINT.md remains only as the detailed development
+history. Confirm via `git log --oneline -5` and `git status` that the final commit referenced in §4 is
+present and the working tree is clean; if the user has a NEW request, treat it as its own task rather
+than continuing RC2 — see `RC2_DELIVERABLE_REPORT.md` §9 "Known limitations" for plausible next steps
+(e.g. obtaining and running against the real Robert package, merged-vs-merged overlap detection,
+email-attachment content-aware matching, or a version-string bump if the project owner wants one).
 
 ---
 
