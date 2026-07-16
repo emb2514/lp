@@ -260,17 +260,17 @@ real Windows CI per the remaining §9 steps, as always required before RC2 is de
 - `fac0ae1` (+ follow-up `3e85c00`) — reporting.py expansion + 3 new test files (§1 items 14-17).
 
 **This session's chunk** (GUI: review dialog + advanced-settings toggle + result-view stat rows + 10 new
-GUI tests, see §1 items 18-21) — to be committed at the end of this chunk (see §9 for the exact commit
-hash once pushed):
+GUI tests, see §1 items 18-21) — committed as `69d3fee` and pushed to
+`claude/lender-package-builder-stage-1-h9sa3n`:
 ```
  M src/lender_package_builder/gui/main_window.py
  M src/lender_package_builder/gui/state.py
  M src/lender_package_builder/gui/widgets/advanced_settings.py
  M src/lender_package_builder/gui/widgets/result_view.py
+A  src/lender_package_builder/gui/widgets/uncertain_review_dialog.py
  M tests/gui/test_advanced_settings.py
  M tests/gui/test_results.py
-?? src/lender_package_builder/gui/widgets/uncertain_review_dialog.py
-?? tests/gui/test_uncertain_review_dialog.py
+A  tests/gui/test_uncertain_review_dialog.py
 ```
 
 ---
