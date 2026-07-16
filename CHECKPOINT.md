@@ -1,6 +1,25 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
-**POST-RELEASE FIX, RE-VALIDATED ON WINDOWS CI**: a real user hit `FileNotFoundError: [WinError 3]`
+**POST-RELEASE FIX #2 (Final folder silently empty)**: a real user reported that a rebuilt package
+("packaged successfully") produced a completely empty `Final` folder. Root cause, confirmed by direct
+reproduction: `pdf_portfolio.py`'s `_expand_one()` set `occurrence.is_portfolio_container = True`
+(which unconditionally excludes a document's own pages from Final) whenever a PDF's `/Root` dictionary
+carried a `/Collection` entry — **regardless of whether any actual embedded attachments were found to
+replace it with**. A PDF can carry `/Collection` (a leftover/cosmetic Portfolio flag from whatever tool
+assembled it, e.g. some loan-origination/document-binder software) with zero attachments pypdf's
+`.attachments` can enumerate. When that happened, the document was excluded from Final with **zero**
+replacement children spliced in — and because `is_portfolio_container` is treated as an "explained"
+removal reason, every integrity check still passed and the run reported success. If such a PDF was the
+only (or dominant) file in the package, Final came out completely empty. Fixed by reordering
+`_expand_one()` so `is_portfolio_container` is only ever set once real replacement attachments have
+actually been found and spliced in as children — a `/Collection`-flagged PDF with no enumerable
+attachments now stays an ordinary standalone document instead of vanishing. 2 new regression tests in
+`tests/test_pdf_portfolio.py` (a direct reproduction plus a full end-to-end pipeline run), both
+confirmed failing before the fix and passing after. Local suite: 204 engine + 57 GUI = 261 total, all
+passing. Committed and pushed; Windows CI re-validation and updated artifact link are the next step —
+see §4/§8/§10 in `RC2_DELIVERABLE_REPORT.md` once that lands.
+
+**POST-RELEASE FIX #1, RE-VALIDATED ON WINDOWS CI**: a real user hit `FileNotFoundError: [WinError 3]`
 on `Path.mkdir()` when building a package from a file with a very long, browser-downloaded/
 URL-derived filename -- the derived output folder name exceeded Windows' 260-char MAX_PATH limit
 despite `app.manifest` declaring `longPathAware="true"` (proven insufficient by this real crash).
@@ -69,8 +88,10 @@ All of these are implemented, individually unit-tested, AND verified working tog
    aggregation is WEAKEST-LINK, never average. Staged bucketing + oversized-bucket fallback.
 5. **`pdf_portfolio.py`** (NEW) — Portfolio/embedded-file detection wired into
    `InventoryBuilder.build()` as a post-pass. `/Names/EmbeddedFiles` non-empty → extract attachments
-   regardless of `/Collection`; `/Collection` present → `is_portfolio_container=True` (only then are the
-   container's own pages excluded from Final). Verified against real pypdf-built fixtures, not assumed.
+   regardless of `/Collection`; `/Collection` present AND at least one attachment was actually found and
+   spliced in as a replacement child → `is_portfolio_container=True` (only then are the container's own
+   pages excluded from Final — see POST-RELEASE FIX #2 above: a `/Collection` flag with zero enumerable
+   attachments no longer excludes anything). Verified against real pypdf-built fixtures, not assumed.
 6. **`overlap_detection.py`** (NEW) — merged-document containment, reusing `content_dedup.compare_page`
    directly. Always excludes the standalone side, never the merged PDF. Per-container only, never
    chained across two different containers.

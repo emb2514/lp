@@ -145,6 +145,45 @@ def test_corrupt_pdf_does_not_crash_expansion(tmp_path: Path):
     ws.cleanup()
 
 
+# TEST 6b - REGRESSION (real user-reported bug): a PDF whose /Root
+# carries /Collection (marking it a Portfolio in Adobe's UI sense) but
+# where pypdf's `.attachments` enumeration finds ZERO actual embedded
+# files must NOT be excluded from Final -- it has no replacement
+# content, so treating it as a portfolio container here would silently
+# discard the entire document. This exact shape (a "binder"/merged PDF
+# produced by some document-assembly tool that leaves a /Collection
+# entry set without true separate attachment streams) is realistic,
+# not a contrived edge case: it was the root cause of a real report of
+# "packaged successfully but the Final folder was empty."
+def test_collection_present_with_zero_attachments_is_not_treated_as_portfolio(tmp_path: Path):
+    portfolio = builders.make_pdf_portfolio(tmp_path / "binder.pdf", [])
+    ws = Workspace()
+    occ = _occ(portfolio)
+    expanded = pdf_portfolio.expand_portfolios([occ], ws)
+
+    assert len(expanded) == 1
+    assert occ.is_portfolio_container is False
+    assert occ.included_in_final is True
+    ws.cleanup()
+
+
+# TEST 6c - same regression, but through the real end-to-end pipeline:
+# a package consisting SOLELY of such a PDF must produce a non-empty
+# Final folder containing that document, and every integrity check
+# must pass.
+def test_full_pipeline_zero_attachment_collection_pdf_is_not_dropped_from_final(tmp_path, run_build):
+    folder = tmp_path / "input"
+    builders.make_pdf_portfolio(folder / "loan_binder.pdf", [])
+
+    run = run_build(folder)
+
+    assert run.success is True
+    final_flat = [doc_id for part in run.final_parts for doc_id in part.document_ids]
+    assert len(final_flat) == 1
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
+
+
 # TEST 7 - full integration through InventoryBuilder: a Portfolio inside
 # the real discovery pipeline produces real, independently-hashed occurrences
 def test_portfolio_expansion_via_inventory_builder(tmp_path: Path, config):

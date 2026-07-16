@@ -94,8 +94,6 @@ def _expand_one(occurrence: SourceOccurrence, workspace: Workspace) -> list[Sour
         is_collection = "/Collection" in root
     except Exception:
         is_collection = False
-    if is_collection:
-        occurrence.is_portfolio_container = True
 
     attachment_names: list[tuple[str, bytes]] = []
     try:
@@ -106,15 +104,25 @@ def _expand_one(occurrence: SourceOccurrence, workspace: Workspace) -> list[Sour
         logger.warning(
             "Could not enumerate embedded files in %s: %s", occurrence.original_relative_path, exc
         )
-        return []
+        attachment_names = []
 
     if not attachment_names:
+        # /Root/Collection can be present on a PDF with no attachments
+        # pypdf can actually enumerate (a leftover/cosmetic Portfolio
+        # flag from whatever tool assembled it, or a name-tree pypdf
+        # cannot walk) -- excluding this document's own pages from Final
+        # with nothing to replace them would silently discard real
+        # content, so it is only ever treated as a Portfolio container
+        # once real replacement attachments are actually in hand below.
         return []
 
     children: list[SourceOccurrence] = []
     for i, (name, data) in enumerate(attachment_names, start=1):
         child = _build_child_occurrence(occurrence, i, name, data, workspace)
         children.append(child)
+
+    if is_collection:
+        occurrence.is_portfolio_container = True
 
     return children
 
