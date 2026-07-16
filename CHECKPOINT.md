@@ -275,32 +275,49 @@ reopen within the session, the audit report reflects a decision, the empty state
 wiring); `tests/gui/test_results.py` (net 0 -- replaced the now-obsolete dialog-internals test with one
 proving `ResultView` stores the config the dialog needs).
 
+26. **`tests/test_robert_package_regression.py`** (NEW, 2 tests) — **the real Robert package (the actual
+    customer-reported package referenced in the original task spec) is NOT present anywhere in this
+    repository or environment** (confirmed via full repo + filesystem search for "robert" -- see the
+    file's own docstring for the complete documented blocker). Per the explicit fallback instruction
+    covering this exact situation, built a synthetic acceptance test recreating the SAME CLASS of bug
+    instead: a large merged package containing several component documents, some of those same
+    documents ALSO redundantly re-submitted standalone (content-identical, byte-different -- exactly
+    what defeated RC1's exact-hash-only detection), two genuinely different signed/unsigned versions of
+    one document (must both survive), and a conventional exact-duplicate pair (Level 1 unaffected).
+    Assertions are entirely about which specific documents survive and why, never a fixed page-count
+    target. Both tests pass; see §3 and the final deliverable report for the full result.
+27. **GitHub Actions workflow (`build-windows-portable.yml`)** — the Node.js 20 deprecation warning
+    fixed by bumping `actions/checkout` v4→v5, `actions/setup-python` v5→v6, `actions/upload-artifact`
+    v4→v6. Every version verified empirically (not guessed) by fetching each candidate tag's real
+    `action.yml`/`package.json` from `raw.githubusercontent.com` and confirming `runs.using: node24` plus
+    self-consistent version metadata before choosing it (`checkout@v6`'s tag had inconsistent
+    `package.json` metadata still reporting `5.0.0`, so `v5` was chosen instead as the clean,
+    self-consistent Node24 major). Confirmed each release's own changelog states the ONLY breaking
+    change is the Node20→24 runtime bump itself (no input/behavior changes) -- the app's own Python
+    version and every workflow step's behavior are untouched. GitHub-hosted `windows-latest` runners
+    already satisfy the new minimum Actions Runner version requirement (v2.327.1+) automatically.
+
 ## 2. What is partially complete / not yet started
 
 Per §7b's module dependency chain and the task's own required deliverable list, still remaining:
 
-- **`tests/test_robert_package_regression.py`** (new file) — existing 14 SHA-256 groups still correct;
-  synthetic 619-vs-1099-page recreation of the reported bug (Final = one copy of each unique logical
-  document version, explicitly NO fixed-page-total assertion).
-- **Full local test suite run** including GUI tests (aware of the pre-existing sandbox Qt segfault —
-  see old §3 below, still applies; GUI correctness must ultimately be confirmed on real Windows CI).
 - **Windows CI build+package validation** — a real `--onedir` PyInstaller build has NOT been run since
-  RC2's changes; `pypdfium2` packaging (native binary bundling via the hooks-contrib hook) is unverified
-  on an actual Windows runner. This is required before RC2 can be called done.
+  RC2's changes (including the just-updated GitHub Actions versions); `pypdfium2` packaging (native
+  binary bundling via the hooks-contrib hook) is unverified on an actual Windows runner. This is
+  required before RC2 can be called done.
 - **Final RC2 deliverable report** (root-cause summary, files changed, detection design, test results,
   known limitations, manual Robert-package testing instructions, path to the built artifact) — not
-  written yet, waiting on all of the above.
+  written yet, waiting on the Windows CI run above.
 
 ## 3. Tests run and results (current, this session)
 
 ```
 .venv/bin/python -m pytest -q tests/ --ignore=tests/gui
-=> 188 passed, 1 warning in 32.02s
+=> 190 passed, 1 warning in 32.1s
 ```
-Clean. Breakdown: the previous checkpoint's 176 passing tests, plus 12 new this chunk in
-`tests/test_review_decisions.py` (NEW file -- keep-both, explicit exclusion, OG/original-file
-invariance, integrity/report consistency, rejection paths, the stale-converted-PDF regression fix both
-directly and via a real `run_build` pipeline run).
+Clean. Breakdown: 188 from the interactive-review chunk (176 + 12 new in
+`tests/test_review_decisions.py`), plus 2 more in `tests/test_robert_package_regression.py` (NEW file --
+the documented real-package blocker + the synthetic acceptance test, see §1 item 26).
 
 **GUI tests, this chunk**: the interactive review dialog is done (§1 items 18-25) and its tests pass.
 ```
@@ -350,24 +367,14 @@ done.
   + 10 GUI tests (§1 items 18-21 as originally built, before this session's interactive-decision
   upgrade) — this was the previous checkpoint's commit.
 
-**This session's chunk** (interactive uncertain-match review/decision workflow, see §1 items 18-25) —
-committed as `318ff50` and pushed to `claude/lender-package-builder-stage-1-h9sa3n`:
+- `318ff50` (+ follow-up `a04a2e6`) — interactive uncertain-match review/decision workflow (§1 items
+  18-25) — this was the previous checkpoint's commit.
+
+**This session's chunk** (Robert-package acceptance test + GitHub Actions Node fix, see §1 items 26-27)
+— to be committed at the end of this chunk (see §9 for the exact commit hash once pushed):
 ```
- M src/lender_package_builder/cli.py
- M src/lender_package_builder/content_dedup.py
- M src/lender_package_builder/gui/main_window.py
- M src/lender_package_builder/gui/widgets/result_view.py
- M src/lender_package_builder/gui/widgets/uncertain_review_dialog.py
- M src/lender_package_builder/models.py
- M src/lender_package_builder/reporting.py
- M src/lender_package_builder/validation.py
-A  src/lender_package_builder/review_decisions.py
- M tests/gui/test_results.py
- M tests/gui/test_uncertain_review_dialog.py
- M tests/test_content_dedup.py
- M tests/test_validation.py
- M tests/test_version_classification.py
-A  tests/test_review_decisions.py
+A  tests/test_robert_package_regression.py
+ M .github/workflows/build-windows-portable.yml
 ```
 
 ---
