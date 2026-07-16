@@ -9,7 +9,21 @@ source-only or Linux-only check) built the portable executable, ran the entire 2
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
 green, with real evidence (not just a checkmark) verified below.
 
-**Post-release fix**: a real user hit `FileNotFoundError: [WinError 3]` building a package from a
+**Post-release fix #2**: a real user reported that a package built with the fix-#1 rebuild said
+"packaged successfully" but the `Final` folder was completely empty. Root cause, confirmed by direct
+reproduction: `pdf_portfolio.py` excluded a PDF's own pages from Final (`is_portfolio_container=True`)
+whenever the PDF's internal `/Collection` flag was present, **even when zero actual embedded
+attachments could be found to replace it with** -- some PDF-assembly/loan-binder tools leave that flag
+set without a true multi-file Portfolio structure underneath it. When that happened, the document
+vanished from Final with nothing to replace it, while every safety/integrity check still passed
+because the removal looked "explained." Fixed by only ever setting `is_portfolio_container` once real
+replacement attachments have actually been found and spliced in as their own documents -- a
+`/Collection`-flagged PDF with no enumerable attachments now stays an ordinary standalone document
+instead of being dropped. 2 new regression tests (`tests/test_pdf_portfolio.py`), both confirmed
+failing before the fix and passing after. See `CHECKPOINT.md` for the commit hash and Windows CI
+re-validation status.
+
+**Post-release fix #1**: a real user hit `FileNotFoundError: [WinError 3]` building a package from a
 file downloaded via a browser with a very long, URL-derived filename (a common, realistic case --
 e.g. saving a document from an API endpoint whose long query string the browser turns into a
 filename). The output folder name, derived from that filename, exceeded Windows' 260-character
@@ -148,9 +162,12 @@ Two distinct signals are checked, deliberately not conflated:
   deduplication, and merging exactly like any other discovered file -- **regardless of** whether
   `/Collection` is present, so an ordinary PDF that merely carries a paperclip attachment never has
   its own content wrongly excluded.
-- `/Collection` present -> `is_portfolio_container=True` on the parent occurrence, so ONLY THEN is
-  the container's own page content (the generic "open this in Acrobat" cover/UI page) excluded from
-  Final. It always remains in OG, untouched, like every other original file.
+- `/Collection` present -> `is_portfolio_container=True` on the parent occurrence **only once at
+  least one real embedded attachment has actually been found and spliced in as a replacement
+  document** -- so ONLY THEN is the container's own page content (the generic "open this in Acrobat"
+  cover/UI page) excluded from Final. It always remains in OG, untouched, like every other original
+  file. (See "Post-release fix #2" above: a `/Collection` flag with zero enumerable attachments no
+  longer excludes anything, since there would be nothing to replace it with.)
 
 ## 5. GUI review behavior ("Review Uncertain Matches")
 
