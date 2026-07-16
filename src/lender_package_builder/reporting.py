@@ -1,9 +1,12 @@
 """Plain-text and JSON report generation.
 
-Three files are produced per run: `Processing_Report.txt` (the main
+Five files are produced per run: `Processing_Report.txt` (the main
 human-readable summary), `Duplicate_Removal_Log.txt` (full detail on
-every exact duplicate excluded from Final), and
-`Processing_Manifest.json` (a complete machine-readable record).
+every duplicate excluded from Final, exact-byte AND content-aware),
+`Document_Version_Report.txt` (RC2: per-family version breakdown),
+`Merged_Document_Overlap_Report.txt` (RC2: merged-package containment
+findings), and `Processing_Manifest.json` (a complete machine-readable
+record).
 """
 
 from __future__ import annotations
@@ -14,10 +17,36 @@ from pathlib import Path
 
 from .models import ProcessingStatus, RunResult, SourceOccurrence
 
+_METHOD_SECTION_TITLES = {
+    "normalized_pdf": "NORMALIZED PDF DUPLICATES",
+    "content_equivalent": "CONTENT-EQUIVALENT DUPLICATES",
+    "blank_page_tolerant": "BLANK-PAGE-TOLERANT DUPLICATES",
+}
+
+_METHOD_DESCRIPTIONS = {
+    "normalized_pdf": (
+        "Same visible/interactive content despite differences in filename, PDF metadata, "
+        "creation software, compression, object ordering, or other non-visible technical "
+        "PDF structure -- every page matched by exact normalized content."
+    ),
+    "content_equivalent": (
+        "Same complete document content confirmed via multi-signal comparison (text, form "
+        "fields, annotations, signature state, and/or rendered visual appearance for pages "
+        "without reliable extractable text), within the app's high-confidence threshold."
+    ),
+    "blank_page_tolerant": (
+        "Same complete document content once verified-blank pages (no meaningful text, "
+        "images, form fields, annotations, or marks) are ignored on either side; the "
+        "remaining non-blank pages matched in strict order."
+    ),
+}
+
 
 def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
     write_duplicate_removal_log(run, reports_dir / "Duplicate_Removal_Log.txt")
+    write_document_version_report(run, reports_dir / "Document_Version_Report.txt")
+    write_merged_overlap_report(run, reports_dir / "Merged_Document_Overlap_Report.txt")
     write_processing_report(run, config, meta, reports_dir / "Processing_Report.txt")
     write_processing_manifest(run, meta, reports_dir / "Processing_Manifest.json")
 
@@ -25,41 +54,263 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
 def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
     occ_by_id = {o.document_id: o for o in run.occurrences}
     duplicates = [o for o in run.occurrences if o.is_duplicate]
+    total_removed = len(duplicates) + sum(
+        len(g.document_ids) - 1 for g in run.content_duplicate_groups
+    )
 
     lines: list[str] = []
     lines.append("DUPLICATE REMOVAL LOG")
     lines.append("=" * 70)
     lines.append(
-        "Lists every source occurrence excluded from the Final package because it is a "
-        "byte-for-byte exact duplicate (identical SHA-256) of an earlier occurrence."
+        "Lists every source occurrence excluded from the Final package because it was "
+        "identified as a duplicate of an earlier occurrence, by detection method. Every "
+        "occurrence remains fully present in OG regardless of anything below."
     )
-    lines.append(f"Total duplicate occurrences removed from Final: {len(duplicates)}")
+    lines.append(f"Total duplicate occurrences removed from Final: {total_removed}")
     lines.append("")
 
+    lines.append("=" * 70)
+    lines.append("EXACT BYTE DUPLICATES")
+    lines.append("=" * 70)
+    lines.append(
+        "Byte-for-byte exact duplicates (identical SHA-256 of the original, untouched "
+        "source file) -- the fastest and safest detection method, always run first."
+    )
+    lines.append(f"Count: {len(duplicates)}")
+    lines.append("")
     if not duplicates:
-        lines.append("No exact duplicates were found in this run.")
+        lines.append("None found.")
+        lines.append("")
     else:
         for i, occ in enumerate(duplicates, start=1):
             retained = occ_by_id.get(occ.duplicate_of_document_id or "")
             lines.append(f"[{i}] Duplicate occurrence")
-            lines.append(f"    Duplicate traversal index:      {occ.traversal_index}")
-            lines.append(f"    Duplicate internal document ID: {occ.document_id}")
-            lines.append(f"    Duplicate original filename:    {occ.original_filename}")
-            lines.append(f"    Duplicate original relative path: {occ.original_relative_path}")
+            lines.append(f"    Removed filename:  {occ.original_filename}")
+            lines.append(f"    Removed path:      {occ.original_relative_path}")
+            lines.append(f"    Removed document ID: {occ.document_id}")
             if retained:
-                lines.append(f"    Retained traversal index:       {retained.traversal_index}")
-                lines.append(f"    Retained internal document ID:  {retained.document_id}")
-                lines.append(f"    Retained original filename:     {retained.original_filename}")
-                lines.append(
-                    f"    Retained original relative path: {retained.original_relative_path}"
-                )
-            lines.append(f"    Shared SHA-256:                 {occ.original_sha256}")
-            lines.append(f"    Converted page count:           {occ.converted_page_count}")
-            lines.append(f"    OG output part (duplicate):     {occ.og_part_index}")
+                lines.append(f"    Retained filename: {retained.original_filename}")
+                lines.append(f"    Retained path:     {retained.original_relative_path}")
+                lines.append(f"    Retained document ID: {retained.document_id}")
+            lines.append("    Detection method:  exact_sha256")
+            lines.append("    Confidence:        1.00 (byte-identical)")
+            lines.append(f"    Shared SHA-256:    {occ.original_sha256}")
+            lines.append(f"    Page count:        {occ.converted_page_count}")
             lines.append(
-                f"    Final output part (retained):   {retained.final_part_index if retained else 'N/A'}"
+                f"    Reason:            Original file bytes are identical (same SHA-256) to the "
+                "retained occurrence."
             )
             lines.append("")
+
+    for method in ("normalized_pdf", "content_equivalent", "blank_page_tolerant"):
+        groups = [g for g in run.content_duplicate_groups if g.method == method]
+        lines.append("=" * 70)
+        lines.append(_METHOD_SECTION_TITLES[method])
+        lines.append("=" * 70)
+        lines.append(_METHOD_DESCRIPTIONS[method])
+        removed_count = sum(len(g.document_ids) - 1 for g in groups)
+        lines.append(f"Count: {removed_count}")
+        lines.append("")
+        if not groups:
+            lines.append("None found.")
+            lines.append("")
+            continue
+        i = 0
+        for group in groups:
+            retained = occ_by_id.get(group.retained_document_id)
+            for doc_id in group.document_ids:
+                if doc_id == group.retained_document_id:
+                    continue
+                occ = occ_by_id.get(doc_id)
+                if occ is None:
+                    continue
+                i += 1
+                lines.append(f"[{i}] Duplicate occurrence")
+                lines.append(f"    Removed filename:  {occ.original_filename}")
+                lines.append(f"    Removed path:      {occ.original_relative_path}")
+                lines.append(f"    Removed document ID: {occ.document_id}")
+                if retained:
+                    lines.append(f"    Retained filename: {retained.original_filename}")
+                    lines.append(f"    Retained path:     {retained.original_relative_path}")
+                    lines.append(f"    Retained document ID: {retained.document_id}")
+                lines.append(f"    Detection method:  {occ.duplicate_detection_method or method}")
+                confidence = occ.duplicate_confidence if occ.duplicate_confidence is not None else group.confidence
+                lines.append(f"    Confidence:        {confidence:.2f}")
+                lines.append(f"    Page count:        {occ.converted_page_count}")
+                if occ.blank_pages_ignored_count:
+                    lines.append(f"    Blank pages ignored: {occ.blank_pages_ignored_count}")
+                lines.append(f"    Reason:            {_METHOD_DESCRIPTIONS[method]}")
+                lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_document_version_report(run: RunResult, path: Path) -> None:
+    occ_by_id = {o.document_id: o for o in run.occurrences}
+
+    lines: list[str] = []
+    lines.append("DOCUMENT VERSION REPORT")
+    lines.append("=" * 70)
+    lines.append(
+        "Groups related occurrences into document families and shows which distinct "
+        "version(s) of each were kept, and why repeated copies within the same version were "
+        "excluded. Grouping into a family never removes anything by itself -- it is purely "
+        "descriptive; the actual keep/remove decision was already made by content-aware "
+        "duplicate detection and merged-package overlap analysis (see the other reports)."
+    )
+    lines.append(f"Document families identified: {len(run.document_families)}")
+    lines.append("")
+
+    if not run.document_families:
+        lines.append("No related document families were identified in this run.")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return
+
+    for i, family in enumerate(run.document_families, start=1):
+        lines.append("=" * 70)
+        lines.append(f"FAMILY {i}: {family.family_id}")
+        lines.append("=" * 70)
+        members = [occ_by_id[d] for d in family.document_ids if d in occ_by_id]
+        by_version: dict[str, list[SourceOccurrence]] = {}
+        for occ in members:
+            version = family.versions.get(occ.document_id) or "unclassified"
+            by_version.setdefault(version, []).append(occ)
+
+        lines.append(f"Versions found: {', '.join(sorted(by_version))}")
+        lines.append("")
+        for version, occs in sorted(by_version.items()):
+            lines.append(f"  Version: {version}")
+            for occ in occs:
+                status = "RETAINED in Final" if occ.included_in_final else "EXCLUDED from Final"
+                lines.append(f"    - [{status}] {occ.original_filename} ({occ.document_id})")
+                if not occ.included_in_final:
+                    reason = _final_exclusion_reason(occ, occ_by_id)
+                    lines.append(f"        Reason: {reason}")
+                if occ.needs_review:
+                    lines.append(f"        Uncertain: {occ.review_reason}")
+            lines.append("")
+
+        lines.append(
+            "  Repeated copies within the same version above were excluded because their "
+            "content was confirmed identical to another occurrence of the same version (see "
+            "Duplicate_Removal_Log.txt for the exact method/confidence). Documents kept as "
+            "separate versions differ meaningfully -- e.g. signature state, dates, form "
+            "values, or other content -- and are never merged."
+        )
+        lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _final_exclusion_reason(occ: SourceOccurrence, occ_by_id: dict[str, SourceOccurrence]) -> str:
+    if occ.is_duplicate:
+        retained = occ_by_id.get(occ.duplicate_of_document_id or "")
+        name = retained.original_filename if retained else occ.duplicate_of_document_id
+        return f"exact byte duplicate of {name}"
+    if occ.is_content_duplicate:
+        retained = occ_by_id.get(occ.content_duplicate_of_document_id or "")
+        name = retained.original_filename if retained else occ.content_duplicate_of_document_id
+        return f"content-aware duplicate ({occ.duplicate_detection_method}) of {name}"
+    if occ.is_portfolio_container:
+        return "PDF Portfolio container page(s) -- its embedded attachments are included separately"
+    if occ.is_contained_in_merged_document:
+        container = occ_by_id.get(occ.contained_in_document_id or "")
+        name = container.original_filename if container else occ.contained_in_document_id
+        return f"content safely proven fully contained inside merged package {name}"
+    if occ.is_ignored_artifact:
+        return occ.ignored_artifact_reason or "ignored system artifact"
+    return "no reason recorded (this should never happen -- see integrity checks)"
+
+
+def write_merged_overlap_report(run: RunResult, path: Path) -> None:
+    occ_by_id = {o.document_id: o for o in run.occurrences}
+
+    lines: list[str] = []
+    lines.append("MERGED DOCUMENT OVERLAP REPORT")
+    lines.append("=" * 70)
+    lines.append(
+        "Shows every comparison between a standalone document (or PDF Portfolio attachment) "
+        "and a candidate merged-package container, and every PDF Portfolio detected. A merged "
+        "package's own pages are NEVER modified, reordered, or removed by this analysis -- "
+        "only a redundant standalone copy is ever excluded from Final, and only when safely "
+        "proven to be fully contained."
+    )
+    lines.append("")
+
+    portfolios = [o for o in run.occurrences if o.is_portfolio_container]
+    lines.append("=" * 70)
+    lines.append("PDF PORTFOLIOS DETECTED")
+    lines.append("=" * 70)
+    lines.append(f"Count: {len(portfolios)}")
+    lines.append("")
+    if not portfolios:
+        lines.append("None found.")
+        lines.append("")
+    else:
+        for portfolio in portfolios:
+            attachments = [
+                o for o in run.occurrences if o.portfolio_parent_document_id == portfolio.document_id
+            ]
+            lines.append(f"  {portfolio.original_filename} ({portfolio.document_id})")
+            lines.append(
+                "    Its own page content (the generic 'open this in Acrobat' cover/UI page) is "
+                "excluded from Final; it remains untouched in OG."
+            )
+            lines.append(f"    Embedded attachments extracted: {len(attachments)}")
+            for att in attachments:
+                lines.append(f"      - {att.original_filename} ({att.document_id})")
+            lines.append("")
+
+    lines.append("=" * 70)
+    lines.append("MERGED-PACKAGE CONTAINMENT FINDINGS")
+    lines.append("=" * 70)
+    lines.append(f"Total comparisons resulting in a finding: {len(run.overlap_findings)}")
+    lines.append("")
+    if not run.overlap_findings:
+        lines.append("No merged-package containment relationships were found in this run.")
+        lines.append("")
+    else:
+        classifications = ("exact_contained", "equivalent_contained", "different_version", "partial_overlap", "uncertain_overlap")
+        for classification in classifications:
+            findings = [f for f in run.overlap_findings if f.classification == classification]
+            if not findings:
+                continue
+            lines.append(f"--- {classification.upper()} ({len(findings)}) ---")
+            for finding in findings:
+                standalone = occ_by_id.get(finding.standalone_document_id)
+                container = occ_by_id.get(finding.container_document_id)
+                s_name = standalone.original_filename if standalone else finding.standalone_document_id
+                c_name = container.original_filename if container else finding.container_document_id
+                lines.append(f"  Standalone: {s_name} ({finding.standalone_document_id})")
+                lines.append(f"  Container:  {c_name} ({finding.container_document_id})")
+                if finding.contained_page_range:
+                    lines.append(
+                        f"  Container page range: {finding.contained_page_range[0]}-{finding.contained_page_range[1]} "
+                        "(0-based, inclusive)"
+                    )
+                lines.append(f"  Confidence: {finding.confidence:.2f}")
+                if finding.excluded:
+                    lines.append(
+                        "  Outcome: standalone copy safely proven contained -- excluded from Final. "
+                        "The merged package is preserved in full regardless of the standalone copy's "
+                        "relative quality; this is a structural safety rule, not a quality judgment."
+                    )
+                elif classification == "different_version":
+                    lines.append(
+                        "  Outcome: content differs meaningfully (signature state, dates, form "
+                        "values, or other content) -- BOTH retained."
+                    )
+                elif classification == "uncertain_overlap":
+                    lines.append(
+                        "  Outcome: confidence below the safe auto-exclusion threshold -- BOTH "
+                        "retained and flagged for review."
+                    )
+                elif classification == "partial_overlap":
+                    lines.append(
+                        "  Outcome: only part of the standalone document matches the container -- "
+                        "not classified as a full duplicate; BOTH retained (no unsafe removal)."
+                    )
+                lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -231,11 +482,15 @@ def write_processing_manifest(run: RunResult, meta: dict, path: Path) -> None:
         "elapsed_seconds": run.elapsed_seconds,
         "occurrences": [occ_dict(o) for o in run.occurrences],
         "duplicate_groups": [dataclasses.asdict(g) for g in run.duplicate_groups],
+        "content_duplicate_groups": [dataclasses.asdict(g) for g in run.content_duplicate_groups],
+        "document_families": [dataclasses.asdict(f) for f in run.document_families],
+        "overlap_findings": [dataclasses.asdict(f) for f in run.overlap_findings],
         "og_parts": [dataclasses.asdict(p) for p in run.og_parts],
         "final_parts": [dataclasses.asdict(p) for p in run.final_parts],
         "integrity_checks": [dataclasses.asdict(c) for c in run.integrity_checks],
         "conversion_backend_usage": run.conversion_backend_usage,
         "unsafe_archive_incidents": run.unsafe_archive_incidents,
+        "content_dedup_notes": run.content_dedup_notes,
         "overall_success": run.success,
     }
 

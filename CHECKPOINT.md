@@ -3,11 +3,13 @@
 **Status as of this checkpoint: IMPLEMENTATION IN PROGRESS, substantial and fully tested.**
 The user approved both flagged decision points from §7b (TEST 4 gets updated with a documented reason;
 build BOTH the review dialog and the advanced-settings toggle) and said to implement. All 6 new
-detection modules, full pipeline wiring, and validation.py generalization are done and committed. GUI
-work, reporting expansion, the two new dedicated test files (test_validation.py/test_merging.py), the
-Robert-package acceptance test, and Windows CI packaging validation have **not** started yet. This
-checkpoint exists because the user needs to step away; work was paused at a safe, fully-tested boundary,
-not mid-edit. `git status` shows only clean, coherent, already-verified changes (see §4).
+detection modules, full pipeline wiring, validation.py generalization, reporting.py expansion (2 new
+report files + expanded duplicate log), and the 3 new dedicated test files (`test_reporting_v2.py`,
+`test_validation.py`, `test_merging.py`) are done and passing (176/176 locally, engine suite). GUI
+work, the Robert-package acceptance test, and Windows CI packaging validation have **not** started yet.
+This checkpoint exists to record a safe, fully-tested boundary — reporting.py expansion and its three
+test files are the last completed chunk; `git status` at time of writing has these changes staged but
+not yet committed (see §4).
 
 **§5, §6, §7b below are unchanged and still the authoritative research/design reference — read them
 before touching anything.** §1–§4 below replace the old (now-stale) planning-phase status entirely.
@@ -77,6 +79,44 @@ All of these are implemented, individually unit-tested, AND verified working tog
     explaining why the expected behavior changed from RC1.
 13. **`tests/test_progress.py`** — `expected_order` updated for the 4 new stages; added a new test
     proving the stage sequence is stable even with content-aware dedup disabled via config.
+14. **`reporting.py`** — expanded. `write_duplicate_removal_log()` now has 4 sections: "EXACT BYTE
+    DUPLICATES" (unchanged content, reformatted) plus one section per content-aware method
+    (`normalized_pdf` → "NORMALIZED PDF DUPLICATES", `content_equivalent` → "CONTENT-EQUIVALENT
+    DUPLICATES", `blank_page_tolerant` → "BLANK-PAGE-TOLERANT DUPLICATES"), each with a description,
+    count, and per-item detail block (removed/retained filename+path+ID, detection method, confidence,
+    page count, blank-pages-ignored count when applicable). New `write_document_version_report()` →
+    `Document_Version_Report.txt` (per-family version breakdown, RETAINED/EXCLUDED status per member via
+    `included_in_final`, `_final_exclusion_reason()` helper covering all 4 exclusion categories). New
+    `write_merged_overlap_report()` → `Merged_Document_Overlap_Report.txt` (PDF Portfolios detected +
+    their attachments; containment findings grouped by classification, with the structural-safety-rule
+    explanation for `exact_contained`/`equivalent_contained`). `write_processing_manifest()` explicitly
+    now includes `content_duplicate_groups`, `document_families`, `overlap_findings`,
+    `content_dedup_notes` (the manifest dict is hand-built per-field, NOT a blind `asdict(run)` — this
+    was a real gap, now fixed and covered by a dedicated test). `write_all_reports()` calls all 5 report
+    functions.
+15. **`tests/test_reporting_v2.py`** (NEW, 7 tests) — end-to-end (via `run_build`, not hand-built
+    `RunResult` objects) coverage of the reporting.py expansion above: all 4 duplicate-log method
+    sections present with correct detail; Document_Version_Report.txt lists families/versions/
+    retention status correctly (including the "no families" empty case); Merged_Document_Overlap_Report.txt
+    lists both detected Portfolios+attachments and containment findings with the correct outcome text;
+    Processing_Manifest.json carries all 4 new RC2 fields; all 5 report files still generate cleanly
+    (with empty-but-present RC2 sections) when `enable_content_aware_dedup=False`.
+16. **`tests/test_validation.py`** (NEW, 17 tests) — dedicated unit tests calling the 5 new
+    `validation.py` check functions directly (`_check_final_contains_all_included`,
+    `_check_no_unexplained_removal`, `_check_needs_review_never_excluded`,
+    `_check_content_duplicate_retained_exists`, `_check_contained_in_document_retained_exists`),
+    exercising both their PASS and FAIL branches with hand-built `SourceOccurrence` objects — proving
+    each check actually catches the specific safety violation it exists to catch (e.g. an exclusion flag
+    set with no explanation, a `needs_review` occurrence also excluded, a duplicate/containment reference
+    pointing at a broken or missing target), not just that it passes on the happy path. Plus one
+    end-to-end sanity test confirming all 5 appear in `run.integrity_checks` (26 total) and all pass on a
+    real run.
+17. **`tests/test_merging.py`** (NEW, 2 tests) — the dedicated OG-invariance safety test: one real
+    `run_build` package triggers all 4 current RC2 Final-exclusion reasons at once (exact-hash duplicate,
+    content-aware/normalized_pdf duplicate, PDF Portfolio container, standalone-contained-in-merged-
+    package) and asserts every single non-ignored occurrence is present in OG regardless, OG's total page
+    count equals the sum of every non-ignored document's own page count, and every Final exclusion has an
+    auditable reason.
 
 ### Four real safety bugs found via direct testing during this work, all fixed and regression-tested
 
@@ -117,16 +157,6 @@ Each bug has a dedicated regression test (see file list in §4) proving it stays
 
 Per §7b's module dependency chain and the task's own required deliverable list, still remaining:
 
-- **`reporting.py`** — expand `Duplicate_Removal_Log.txt` with per-method sections (exact-byte/
-  normalized-PDF/content-equivalent/blank-page-tolerant); add `write_document_version_report()` →
-  `Document_Version_Report.txt`; add `write_merged_overlap_report()` → `Merged_Document_Overlap_Report.txt`.
-  `Processing_Manifest.json` needs no code change (confirmed: the existing blind `dataclasses.asdict()`
-  walk already picks up every new field automatically) but should get a test proving it.
-- **`tests/test_reporting_v2.py`** (new file) — for the above.
-- **`tests/test_validation.py`** and **`tests/test_merging.py`** (new files, per §7b's test plan) — a
-  dedicated safety test proving OG's document set is invariant to every new exclusion field, and
-  dedicated tests for the 5 new validation checks (currently only exercised indirectly through
-  end-to-end tests, which IS passing, but a focused test file was planned and not yet written).
 - **GUI work** (none started): `gui/widgets/uncertain_review_dialog.py` (new, read-only `QDialog`
   listing `needs_review=True` groups, inspection only, no approval workflow — triggered by a button in
   `ResultView`); `gui/widgets/advanced_settings.py`/`gui/state.py` (new `enable_content_aware_dedup`
@@ -151,13 +181,14 @@ Per §7b's module dependency chain and the task's own required deliverable list,
 
 ```
 .venv/bin/python -m pytest -q tests/ --ignore=tests/gui
-=> 150 passed, 1 warning in 46.06s
+=> 176 passed, 1 warning in 32.34s
 ```
-Clean. Breakdown: 83 pre-existing engine tests (all still passing, including the RC1 baseline) + 67 new/
-updated tests across `test_content_fingerprinting.py` (16), `test_pdf_render.py` (5),
-`test_content_dedup.py` (24), `test_pdf_portfolio.py` (8), `test_merged_document_overlap.py` (7),
-`test_version_classification.py` (6), plus `test_progress.py` (+1 new test) and
-`test_hashing_and_deduplication.py` (TEST 4 rewritten, not a net-new test).
+Clean. Breakdown: the previous checkpoint's 150 passing tests, plus 26 new this chunk:
+`tests/test_reporting_v2.py` (7, NEW file), `tests/test_validation.py` (17, NEW file),
+`tests/test_merging.py` (2, NEW file). The reporting.py edit was also verified directly beforehand via
+an inline smoke test (a hand-built `RunResult` populated with every new RC2 field, run through
+`write_all_reports()`, all 5 output files inspected) to catch field-name mismatches before running the
+full suite — none found.
 
 GUI tests (`tests/gui/`) were not re-run this session beyond what already passed in earlier milestones —
 the pre-existing sandbox Qt-offscreen segfault (documented in the original §3, preserved below) is
@@ -187,25 +218,21 @@ written) will need confirming once GUI work starts, and ultimately on real Windo
   `content_dedup.py` (escalation-logic bug fix #2 above), `tests/test_content_dedup.py` (regression test).
 - `b94d792` — `version_classification.py` (NEW), `tests/test_version_classification.py` (NEW).
 
-**NOT yet committed as of this checkpoint** (staged/working-tree only, but fully tested — 150/150
-passing with these changes included):
+- `5f00288` — the six items listed just above (`config.toml`, `cli.py`, `config.py`, `content_dedup.py`
+  bug fixes #3/#4, `gui/widgets/progress_view.py`, `models.py` `content_dedup_notes` field,
+  `pdf_content.py` `average_color`/bug fix #4, `progress.py`, `validation.py` full generalization, plus
+  test updates in `test_content_dedup.py`/`test_content_fingerprinting.py`/
+  `test_hashing_and_deduplication.py`/`test_progress.py`) — this was the previous checkpoint's commit.
+
+**This session's chunk** (reporting.py expansion + 3 new test files, see §1 items 14-17) — committed in
+this checkpoint (see §9 for the exact commit hash once pushed):
 ```
- M config.toml
- M src/lender_package_builder/cli.py
- M src/lender_package_builder/config.py
- M src/lender_package_builder/content_dedup.py       (bug fixes #3, #4 above)
- M src/lender_package_builder/gui/widgets/progress_view.py
- M src/lender_package_builder/models.py               (content_dedup_notes field)
- M src/lender_package_builder/pdf_content.py           (average_color, bug fix #4 above)
- M src/lender_package_builder/progress.py
- M src/lender_package_builder/validation.py            (full generalization)
- M tests/test_content_dedup.py                         (3 new regression tests)
- M tests/test_content_fingerprinting.py                (1 new regression test)
- M tests/test_hashing_and_deduplication.py             (TEST 4 rewrite)
- M tests/test_progress.py                              (stage order + disabled-toggle test)
+ M CHECKPOINT.md
+ M src/lender_package_builder/reporting.py
+?? tests/test_merging.py
+?? tests/test_reporting_v2.py
+?? tests/test_validation.py
 ```
-**This checkpoint commits these now** (see §9) — by the time you read this, they should be a 6th commit
-on the branch; check `git log` to confirm before assuming anything is still uncommitted.
 
 ---
 
@@ -706,40 +733,35 @@ file from §7's draft.
 ## 9. Exact next step to resume this task
 
 Architecture research, validation, AND a substantial, fully-tested chunk of implementation are all done
-(§1). The two decision points from the old §7b are resolved (user approved both). Resume by:
+(§1, items 1-17). The two decision points from the old §7b are resolved (user approved both).
+`reporting.py`'s expansion and all 3 planned dedicated test files (`test_reporting_v2.py`,
+`test_validation.py`, `test_merging.py`) are now done, tested (176/176 passing), and committed as part of
+this checkpoint. Resume by:
 
 1. Re-read this `CHECKPOINT.md` §1–§4 for exactly what's done and what's not; re-read **§7b** for the
-   authoritative design of everything still to build (reporting report formats, the GUI plan, the
-   canonical-selection/confidence-band reasoning) — it remains accurate for the remaining work.
+   authoritative design of everything still to build (the GUI plan, canonical-selection/confidence-band
+   reasoning) — it remains accurate for the remaining work.
 2. Confirm via `git log --oneline -8` and `git status` that the commit referenced at the end of this
    checkpoint (see the session's final message / commit hash) is present and the working tree is clean;
    if not, something unexpected happened between sessions — investigate before continuing.
 3. Continue implementation in this order (everything before this point is done):
-   a. `reporting.py` — expand `Duplicate_Removal_Log.txt`, add `write_document_version_report()` and
-      `write_merged_overlap_report()`, wire both into `write_all_reports()`. Write
-      `tests/test_reporting_v2.py` alongside it, including a test proving the manifest JSON picks up
-      the new RC2 fields automatically.
-   b. `tests/test_validation.py` + `tests/test_merging.py` (new files) — the dedicated OG-invariance
-      safety test and focused tests for the 5 new validation checks, per §7b's test plan. (The checks
-      themselves are done and passing via end-to-end tests; this is dedicated, focused coverage that
-      was planned but not yet written.)
-   c. GUI work: `gui/widgets/uncertain_review_dialog.py` (new), `gui/widgets/advanced_settings.py` +
+   a. GUI work: `gui/widgets/uncertain_review_dialog.py` (new), `gui/widgets/advanced_settings.py` +
       `gui/state.py` (new checkbox), `gui/widgets/result_view.py` (new stat rows), `main_window.py`
       (wire the new config field through the existing `dataclasses.replace(...)` call). New/extended
       GUI tests. Remember the GUI-test sandbox segfault (§3) — GUI tests may need running individually
       or their correctness confirmed via careful review + eventual Windows CI, not assumed clean from a
       full local `pytest` run in this environment.
-   d. `tests/test_robert_package_regression.py` (new file) — 14-exact-dup-groups-still-correct +
+   b. `tests/test_robert_package_regression.py` (new file) — 14-exact-dup-groups-still-correct +
       synthetic 619-vs-1099-page recreation.
-   e. Run the FULL local test suite (engine + GUI, working around the sandbox segfault if needed) and
+   c. Run the FULL local test suite (engine + GUI, working around the sandbox segfault if needed) and
       fix anything that breaks.
-   f. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
+   d. Real Windows CI build+package validation — trigger `build-windows-portable.yml` via
       `workflow_dispatch` (see commit `4478695` for how this branch's CI was last made green), watch it
       through to a successful artifact upload. `pypdfium2`'s native binary bundling via
       `pyinstaller-hooks-contrib`'s `hook-pypdfium2.py` is unverified on real Windows — this is the one
       genuinely new packaging risk in this whole RC2 change and needs real confirmation, not just local
       reasoning.
-   g. Write the final RC2 deliverable report per the task's own required format (root-cause summary,
+   e. Write the final RC2 deliverable report per the task's own required format (root-cause summary,
       files changed, detection design implemented, tests added, complete test results, known
       limitations, exact manual Robert-package testing instructions, path to the new portable RC2
       artifact).
@@ -751,9 +773,9 @@ Architecture research, validation, AND a substantial, fully-tested chunk of impl
 
 **Suggested exact resume prompt for the user to give**:
 
-> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md §1–§4. Continue with reporting.py
-> expansion, the two new dedicated test files, GUI work, the Robert-package acceptance test, then run
-> the full test suite, validate the Windows CI build, and produce the final RC2 deliverable report.
+> Resume the RC2 content-aware deduplication upgrade from CHECKPOINT.md §1–§4. Continue with GUI work
+> (review dialog + advanced-settings toggle), the Robert-package acceptance test, then run the full test
+> suite, validate the Windows CI build, and produce the final RC2 deliverable report.
 
 ---
 
