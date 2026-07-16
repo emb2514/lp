@@ -224,14 +224,14 @@ written) will need confirming once GUI work starts, and ultimately on real Windo
   test updates in `test_content_dedup.py`/`test_content_fingerprinting.py`/
   `test_hashing_and_deduplication.py`/`test_progress.py`) — this was the previous checkpoint's commit.
 
-**This session's chunk** (reporting.py expansion + 3 new test files, see §1 items 14-17) — committed in
-this checkpoint (see §9 for the exact commit hash once pushed):
+**This session's chunk** (reporting.py expansion + 3 new test files, see §1 items 14-17) — committed as
+`fac0ae1` and pushed to `claude/lender-package-builder-stage-1-h9sa3n`:
 ```
  M CHECKPOINT.md
  M src/lender_package_builder/reporting.py
-?? tests/test_merging.py
-?? tests/test_reporting_v2.py
-?? tests/test_validation.py
+A  tests/test_merging.py
+A  tests/test_reporting_v2.py
+A  tests/test_validation.py
 ```
 
 ---
