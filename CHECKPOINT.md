@@ -16,8 +16,12 @@ actually been found and spliced in as children — a `/Collection`-flagged PDF w
 attachments now stays an ordinary standalone document instead of vanishing. 2 new regression tests in
 `tests/test_pdf_portfolio.py` (a direct reproduction plus a full end-to-end pipeline run), both
 confirmed failing before the fix and passing after. Local suite: 204 engine + 57 GUI = 261 total, all
-passing. Committed and pushed; Windows CI re-validation and updated artifact link are the next step —
-see §4/§8/§10 in `RC2_DELIVERABLE_REPORT.md` once that lands.
+passing. Committed as `11d6229`, pushed, and **re-validated on real Windows CI** (run
+[29528680767](https://github.com/emb2514/lp/actions/runs/29528680767), SUCCESS, 258 passed/3 expected
+skips/0 failed — matches the local 261-collected count exactly). New artifact ID `8387805926`, release
+ZIP SHA-256 `BD5D862C50E34BC21A88316321C9CB724CAA18726C1D1FF4D8BFFA37825F50FB` — see
+`RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link (the artifact from run `29525368003`
+does NOT have this fix and should not be used).
 
 **POST-RELEASE FIX #1, RE-VALIDATED ON WINDOWS CI**: a real user hit `FileNotFoundError: [WinError 3]`
 on `Path.mkdir()` when building a package from a file with a very long, browser-downloaded/
