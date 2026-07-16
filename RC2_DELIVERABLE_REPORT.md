@@ -9,6 +9,19 @@ source-only or Linux-only check) built the portable executable, ran the entire 2
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
 green, with real evidence (not just a checkmark) verified below.
 
+**Post-release fix**: a real user hit `FileNotFoundError: [WinError 3]` building a package from a
+file downloaded via a browser with a very long, URL-derived filename (a common, realistic case --
+e.g. saving a document from an API endpoint whose long query string the browser turns into a
+filename). The output folder name, derived from that filename, exceeded Windows' 260-character
+MAX_PATH limit -- and this app's own `app.manifest` already declares `longPathAware="true"`, which
+this real crash proved is not sufficient on its own to prevent it. Fixed by proactively shortening
+every filesystem name this app derives from an arbitrary input filename (output folder name, and the
+two places a preserved-original-copy's filename is used), always leaving generous headroom below the
+260-character limit, while preserving file extensions and leaving normal, reasonably-named inputs
+completely untouched. 12 new regression tests (`tests/test_output_path_safety.py`) pin this down,
+including a full end-to-end pipeline run using the exact shape of the filename that crashed. See
+`CHECKPOINT.md` for the commit hash.
+
 ---
 
 ## 1. What RC2 adds

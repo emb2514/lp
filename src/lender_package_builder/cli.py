@@ -322,7 +322,50 @@ def _compute_output_dir(input_path: Path, explicit: Path | None) -> Path:
         return explicit.expanduser().resolve()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = input_path.stem if input_path.is_file() else input_path.name
-    return input_path.parent / f"{name}_Lender_Package_Output_{timestamp}"
+    suffix = f"_Lender_Package_Output_{timestamp}"
+    name = _shorten_for_filesystem(name, len(str(input_path.parent)) + 1 + len(suffix))
+    return input_path.parent / f"{name}{suffix}"
+
+
+# Windows' classic MAX_PATH is 260 characters, and this app's own manifest
+# declaring longPathAware="true" has been found, in real user-reported
+# crashes, NOT to reliably exempt every path operation this app performs
+# (notably `Path.mkdir()` on a directory derived from an arbitrarily-named
+# input file) -- browser downloads routinely produce very long,
+# URL-derived filenames (e.g. an API endpoint with a long query string,
+# sanitized into a filename by the browser) that are entirely realistic
+# input, not an edge case. Rather than depend on OS/manifest behavior that
+# has already proven unreliable in practice, every filesystem name this
+# app derives from untrusted input is proactively kept well under the
+# limit, with generous headroom for the subfolders/files created beneath
+# it later (e.g. "\Reports\Uncertain_Match_Review_Log.txt").
+_MAX_SAFE_PATH_LENGTH = 200
+_MIN_DERIVED_NAME_LENGTH = 20
+
+
+def _shorten_for_filesystem(name: str, reserved_length: int) -> str:
+    """Truncates `name` so that `reserved_length + len(result) <=
+    _MAX_SAFE_PATH_LENGTH`, never truncating below
+    `_MIN_DERIVED_NAME_LENGTH` (accepting the small residual risk of an
+    extremely long/deeply-nested parent path in that rare case, which is
+    a distinct problem from an overly-long derived name). Leaves `name`
+    completely unchanged when it already fits -- this never alters the
+    common case.
+
+    Preserves a short, real-looking file extension (e.g. `.pdf`, `.docx`)
+    when present, so a truncated FILENAME (as opposed to a directory
+    name, which has no extension to preserve) stays recognizable and
+    still opens with the right application.
+    """
+
+    budget = max(_MAX_SAFE_PATH_LENGTH - reserved_length, _MIN_DERIVED_NAME_LENGTH)
+    if len(name) <= budget:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if dot and 0 < len(ext) <= 10:
+        keep = max(budget - len(ext) - 1, 1)
+        return f"{stem[:keep].rstrip(' _-')}.{ext}"
+    return name[:budget].rstrip(" _-")
 
 
 def _setup_logging(logs_dir: Path, verbose: bool) -> logging.Handler:
@@ -717,7 +760,8 @@ def _preserve_unconverted_original(occ, unconverted_dir: Path) -> None:
 
 
 def _copy_extra_preserved_file(relative_name: str, source_path: Path, unconverted_dir: Path) -> None:
-    dest = unconverted_dir / relative_name
+    safe_name = _shorten_for_filesystem(relative_name, len(str(unconverted_dir)) + 1)
+    dest = unconverted_dir / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest = dest.with_name(f"{dest.stem}_{source_path.stat().st_size}{dest.suffix}")
@@ -725,7 +769,12 @@ def _copy_extra_preserved_file(relative_name: str, source_path: Path, unconverte
 
 
 def _unique_destination(base_dir: Path, relative_path: str, document_id: str) -> Path:
-    parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
+    # Each path segment (both intermediate folder names from a nested
+    # archive and the final filename) is independently kept short --
+    # see _shorten_for_filesystem's docstring on why this is not merely
+    # a theoretical edge case.
+    reserved = len(str(base_dir)) + 1
+    parts = [_shorten_for_filesystem(p, reserved) for p in relative_path.replace("\\", "/").split("/") if p]
     candidate = base_dir.joinpath(*parts) if parts else base_dir / "unnamed"
     if not candidate.exists():
         return candidate

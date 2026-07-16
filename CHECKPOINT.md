@@ -1,5 +1,16 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX**: a real user hit `FileNotFoundError: [WinError 3]` on `Path.mkdir()` when
+building a package from a file with a very long, browser-downloaded/URL-derived filename -- the
+derived output folder name exceeded Windows' 260-char MAX_PATH limit despite `app.manifest`
+declaring `longPathAware="true"` (proven insufficient by this real crash). Fixed in `cli.py`:
+`_compute_output_dir`, `_unique_destination`, and `_copy_extra_preserved_file` now all proactively
+shorten any filesystem name derived from arbitrary input via a new shared `_shorten_for_filesystem()`
+helper (extension-preserving, headroom-aware, leaves normal filenames untouched). 12 new regression
+tests in `tests/test_output_path_safety.py`, including a full pipeline run using the exact shape of
+the filename that crashed. All 202 engine tests pass (190 + these 12). See the top of
+`RC2_DELIVERABLE_REPORT.md` for the user-facing summary of this fix.
+
 **STATUS: RC2 COMPLETE.** All planned engine modules, GUI work, the interactive uncertain-match
 review workflow, the (documented-blocked, synthetically-substituted) Robert-package acceptance test,
 the GitHub Actions Node-deprecation fix, and real Windows CI validation are all done, all green, and
