@@ -1,15 +1,19 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
-**POST-RELEASE FIX**: a real user hit `FileNotFoundError: [WinError 3]` on `Path.mkdir()` when
-building a package from a file with a very long, browser-downloaded/URL-derived filename -- the
-derived output folder name exceeded Windows' 260-char MAX_PATH limit despite `app.manifest`
-declaring `longPathAware="true"` (proven insufficient by this real crash). Fixed in `cli.py`:
-`_compute_output_dir`, `_unique_destination`, and `_copy_extra_preserved_file` now all proactively
-shorten any filesystem name derived from arbitrary input via a new shared `_shorten_for_filesystem()`
-helper (extension-preserving, headroom-aware, leaves normal filenames untouched). 12 new regression
-tests in `tests/test_output_path_safety.py`, including a full pipeline run using the exact shape of
-the filename that crashed. All 202 engine tests pass (190 + these 12). See the top of
-`RC2_DELIVERABLE_REPORT.md` for the user-facing summary of this fix.
+**POST-RELEASE FIX, RE-VALIDATED ON WINDOWS CI**: a real user hit `FileNotFoundError: [WinError 3]`
+on `Path.mkdir()` when building a package from a file with a very long, browser-downloaded/
+URL-derived filename -- the derived output folder name exceeded Windows' 260-char MAX_PATH limit
+despite `app.manifest` declaring `longPathAware="true"` (proven insufficient by this real crash).
+Fixed in `cli.py`: `_compute_output_dir`, `_unique_destination`, and `_copy_extra_preserved_file`
+now all proactively shorten any filesystem name derived from arbitrary input via a new shared
+`_shorten_for_filesystem()` helper (extension-preserving, headroom-aware, leaves normal filenames
+untouched). 12 new regression tests in `tests/test_output_path_safety.py`, including a full pipeline
+run using the exact shape of the filename that crashed. Committed as `122d7ce`, pushed, and
+**re-validated on real Windows CI** (run
+[29525368003](https://github.com/emb2514/lp/actions/runs/29525368003), SUCCESS, 256 passed/3 expected
+skips/0 failed). New artifact ID `8386505901` -- see `RC2_DELIVERABLE_REPORT.md` §8/§10 for the
+current download link (the artifact from the earlier run does NOT have this fix and should not be
+used).
 
 **STATUS: RC2 COMPLETE.** All planned engine modules, GUI work, the interactive uncertain-match
 review workflow, the (documented-blocked, synthetically-substituted) Robert-package acceptance test,

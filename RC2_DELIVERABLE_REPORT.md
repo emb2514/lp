@@ -5,7 +5,7 @@
 what a nontechnical Windows 11 user needs to know to run it.
 
 **Bottom line: yes, the RC2 Windows application is ready to use.** Real Windows CI (not a
-source-only or Linux-only check) built the portable executable, ran the entire 247-test suite
+source-only or Linux-only check) built the portable executable, ran the entire 259-test suite
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
 green, with real evidence (not just a checkmark) verified below.
 
@@ -214,14 +214,15 @@ fixed target page count, per the plan's explicit instruction not to force one.
 
 ## 7. Complete test counts and results
 
-**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **190 passed, 0 failed.**
+**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **202 passed, 0 failed.**
 
 Breakdown by area (approximate, by file):
 conversion, splitting/merging, reporting, progress, hashing/deduplication, inventory, archive safety,
 full-pipeline end-to-end, packaging/CLI/config, content fingerprinting, content-aware deduplication,
 PDF rendering, PDF Portfolio, merged-document overlap, document version classification, validation
 (dedicated), the OG-invariance safety test, expanded reporting coverage, the interactive review-decision
-engine, and the Robert-package synthetic acceptance test.
+engine, the Robert-package synthetic acceptance test, and output-path-length safety (the MAX_PATH fix,
+see the top of this report).
 
 **GUI test suite** (`tests/gui/`, run per-file due to a known, pre-existing, environment-specific Qt
 offscreen-platform teardown instability in this sandboxed container -- confirmed nondeterministic
@@ -230,24 +231,24 @@ deep inside pytest-qt/Qt's own teardown machinery in files this session never to
 collected, all pass when run file-by-file.** GUI correctness is further confirmed on the real Windows
 CI runner below, which does not share this container's offscreen-platform quirk.
 
-**Total: 247 automated tests, all passing** (190 engine + 57 GUI).
+**Total: 259 automated tests, all passing** (202 engine + 57 GUI).
 
 ## 8. Windows CI / build results
 
-**Run**: [`Build Windows Portable Release` #29517398524](https://github.com/emb2514/lp/actions/runs/29517398524)
+**Latest run** (includes the MAX_PATH fix -- §0 above):
+[`Build Windows Portable Release` #29525368003](https://github.com/emb2514/lp/actions/runs/29525368003)
 -- triggered via `workflow_dispatch` on branch `claude/lender-package-builder-stage-1-h9sa3n` at
-commit `e52374b` (the last commit before this report was written; the Node-deprecation-fixed
-workflow itself, plus the Robert-package test, ran in this exact build). **Conclusion: SUCCESS**,
-runner `windows-latest`, total job time ~3.5 minutes (16:52:23-16:56:06 UTC).
+commit `122d7ce`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~3.7 minutes
+(18:47:08-18:50:53 UTC).
 
 Every one of the 16 steps passed -- verified individually, not inferred from the overall green
 checkmark:
 
 | Step | Result |
 |---|---|
-| Check out repository / Set up Python 3.13 | PASS (both actions running on their newly-upgraded Node 24 majors, no warning) |
+| Check out repository / Set up Python 3.13 | PASS (both actions running on their upgraded Node 24 majors, no warning) |
 | Install build dependencies | PASS |
-| **Run the full automated test suite on Windows** | PASS -- **244 passed, 3 skipped, 0 failed, 1 warning**, in 38.19s (247 collected total, matching the local count exactly) |
+| **Run the full automated test suite on Windows** | PASS -- **256 passed, 3 skipped, 0 failed, 1 warning**, in 37.42s (259 collected total, matching the local count exactly -- includes the 12 new MAX_PATH regression tests) |
 | Generate the multi-resolution application icon | PASS |
 | Build the portable executable with PyInstaller | PASS |
 | Verify the build produced `LenderPackageBuilder.exe` | PASS |
@@ -266,16 +267,16 @@ warning is Python's own `zipfile` module surfacing an intentional test fixture (
 duplicate entry name, to test the app's own duplicate-name handling) -- the same warning seen
 throughout local development, not an application defect.
 
-**Downloadable artifact**:
+**Downloadable artifact (current, includes the MAX_PATH fix)**:
 - Name: `Lender_Package_Builder_1.0.0_RC1_Windows_x64-Portable` (internal release label; contains
   RC2's full feature set -- see the note in this section's last paragraph)
 - Contains: `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` (the actual portable release,
-  SHA-256 `0D861CD07880B7150ABD0D3321DA2286277281BA3771E8EC1A9582722F4152BF`) and its matching
+  SHA-256 `32A0F8404F37AA7D872D80652A432EB9DDF4303171E77D64955035BFADFA71DF`) and its matching
   `..._Portable_SHA256.txt` checksum file
-- Artifact size: 80,106,406 bytes (~76.4 MB)
-- Artifact ID: `8383329424`, digest `sha256:0ff554910571111e871ff25ad2a21b475775353282ee2fa6eeec5fe57c220429`
+- Artifact size: 80,108,222 bytes (~76.4 MB)
+- Artifact ID: `8386505901`, digest `sha256:895f0b21a8754a505b1a4d75a915a6280e1e62e3690fe35462c37459f58a51ef`
   (the wrapper artifact's own hash -- distinct from the release ZIP's hash above)
-- Download URL: <https://github.com/emb2514/lp/actions/runs/29517398524/artifacts/8383329424>
+- Download URL: <https://github.com/emb2514/lp/actions/runs/29525368003/artifacts/8386505901>
   (expires 2026-08-15, 30-day GitHub Actions retention -- download and store it somewhere durable
   well before then if it needs to be kept)
 - Inside the release folder: `LenderPackageBuilder.exe` + `_internal/` (all bundled dependencies,
@@ -285,6 +286,10 @@ throughout local development, not an application defect.
   `PACKAGING_TROUBLESHOOTING.md`, the synthetic `Sample_Test_Package.zip` +
   `Sample_Test_Package_Expected_Results.txt`, and `BUILD_MANIFEST.txt` (records the exact commit,
   CI run, and `pip freeze` lock for this specific build).
+
+**Previous run** (before the MAX_PATH fix, kept for history only -- do not use this artifact):
+[#29517398524](https://github.com/emb2514/lp/actions/runs/29517398524) at commit `e52374b`, 244
+passed/3 skipped/0 failed, artifact ID `8383329424`. Superseded by the run above.
 
 **`pypdfium2` native binary bundling -- specifically verified, not assumed**: inspected the
 installed `pyinstaller-hooks-contrib` package directly (both locally and as installed fresh by this
@@ -335,7 +340,7 @@ described in this report; only the version string itself has not yet been advanc
 ## 10. Installing and running (for a nontechnical Windows 11 user)
 
 1. Download the release from the Windows CI build artifact:
-   <https://github.com/emb2514/lp/actions/runs/29517398524/artifacts/8383329424> (requires being
+   <https://github.com/emb2514/lp/actions/runs/29525368003/artifacts/8386505901> (requires being
    signed in to GitHub with access to this repository; the artifact expires 2026-08-15). Inside is
    `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` -- no account, license key, or
    installer is required beyond that GitHub download step.
