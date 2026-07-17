@@ -33,7 +33,14 @@ hardcoded version-string assertions in `tests/test_stage3_packaging.py` to match
 forward-looking (non-historical) filename references in `README_PORTABLE.txt`,
 `STAGE3_BUILD_AND_RELEASE.md`, and `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` to describe the new pattern
 generically rather than hardcoding the old exact name. Local suite: 212 engine + 57 GUI = 269 total,
-all passing.
+all passing. Committed as `ad00fd8`, pushed, and **re-validated on real Windows CI** (run
+[29607844766](https://github.com/emb2514/lp/actions/runs/29607844766), SUCCESS, 266 passed/3 expected
+skips/0 failed -- matches the local 269-collected count exactly; job log directly confirms
+`test_spec_excludes_lxml_isoschematron` PASSED, and no isoschematron-related PyInstaller warning
+appears anywhere in the build log). New artifact `LP_Builder_RC2_ad00fd8_Windows_x64-Portable`
+(ID `8417625480`), release ZIP SHA-256
+`6E92B4BF6DC3658198F858DD8782D489E3072CCFA656B1E003D5B46B9521F46C` -- see
+`RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link.
 
 **POST-RELEASE FIX #6 (real-package validation: SUCCESS, plus one report-accuracy bug found via
 manual manifest cross-check)**: the user ran their real ~212-document package on the fix-#5 build and

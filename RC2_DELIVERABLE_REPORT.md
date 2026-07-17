@@ -5,12 +5,27 @@
 what a nontechnical Windows 11 user needs to know to run it.
 
 **Bottom line: yes, the RC2 Windows application is ready to use.** Real Windows CI (not a
-source-only or Linux-only check) built the portable executable, ran the entire 268-test suite
+source-only or Linux-only check) built the portable executable, ran the entire 269-test suite
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
 green, with real evidence (not just a checkmark) verified below. **This is now also confirmed on the
 actual real-world package that drove fixes #1-#5**: the user ran their real ~212-document, ~1,666-page
 lender package on the fix-#5 build and shared all five generated reports -- OVERALL RESULT: SUCCESS,
 all 27 integrity checks passed, in ~10.6 minutes (down from ~35 minutes before the performance fix).
+
+**Post-release fix #7 + release naming overhaul**: extracting the fix-#6 release ZIP failed in Windows
+Explorer with "Error 0x80010135: Path too long" on a file belonging to `lxml.isoschematron`. `lxml`
+itself is a real, needed dependency (`python-docx` uses `lxml.etree`), but PyInstaller's lxml packaging
+hook bundles every lxml submodule unconditionally, including `isoschematron` -- an unrelated XML-
+validation feature confirmed, by direct inspection, to never be used anywhere in this app or
+python-docx. That submodule's own hook bundles its entire, deeply nested resource tree regardless,
+whose longest file is ~90 characters of nested path on its own -- enough, combined with a normal
+Downloads-folder path, to exceed Windows Explorer's classic 260-character extraction limit. Fixed by
+excluding `lxml.isoschematron` from the build (removes ~30 unused files, no effect on real
+functionality). Separately, per explicit request, the release artifact was renamed from
+`Lender_Package_Builder_1.0.0_RC1_<sha>_...` to the shorter `LP_Builder_RC2_<sha>_...`, and the
+single-source app version (`_version.py`) was bumped to reflect "RC2" -- the name this entire upgrade
+has been called throughout. 1 new regression test guards the PyInstaller exclude against an accidental
+future revert. See `CHECKPOINT.md` for the commit hash and Windows CI re-validation status.
 
 **Post-release fix #6**: cross-checking those real reports against the authoritative
 `Processing_Manifest.json` (212 - 174 = 38 excluded documents, independently verified against every
@@ -303,11 +318,12 @@ fix #6" above for the one (report-accuracy-only) issue found by cross-checking t
 
 ## 7. Complete test counts and results
 
-**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **211 passed, 0 failed.**
+**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **212 passed, 0 failed.**
 
 Breakdown by area (approximate, by file):
 conversion, splitting/merging, reporting, progress, hashing/deduplication, inventory, archive safety,
-full-pipeline end-to-end, packaging/CLI/config, content fingerprinting (including the fingerprinting
+full-pipeline end-to-end, packaging/CLI/config (including the lxml.isoschematron packaging-exclude
+regression, "Post-release fix #7" above), content fingerprinting (including the fingerprinting
 performance regression, "Post-release fix #3" above), content-aware deduplication (including the
 orphaned-canonical-selection regression, "Post-release fix #4" above), PDF rendering, PDF Portfolio
 (including the Final-folder-empty regression, "Post-release fix #2" above), merged-document overlap
@@ -325,15 +341,16 @@ deep inside pytest-qt/Qt's own teardown machinery in files this session never to
 collected, all pass when run file-by-file.** GUI correctness is further confirmed on the real Windows
 CI runner below, which does not share this container's offscreen-platform quirk.
 
-**Total: 268 automated tests, all passing** (211 engine + 57 GUI).
+**Total: 269 automated tests, all passing** (212 engine + 57 GUI).
 
 ## 8. Windows CI / build results
 
-**Latest run** (includes the duplicate-removal-log accuracy fix -- "Post-release fix #6" above):
-[`Build Windows Portable Release` #29606148402](https://github.com/emb2514/lp/actions/runs/29606148402)
+**Latest run** (includes the lxml.isoschematron packaging exclude and the LP_Builder/RC2 release
+rename -- "Post-release fix #7" above):
+[`Build Windows Portable Release` #29607844766](https://github.com/emb2514/lp/actions/runs/29607844766)
 -- triggered via `workflow_dispatch` on branch `claude/lender-package-builder-stage-1-h9sa3n` at
-commit `72cf1b8`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~3.3 minutes
-(19:03:50-19:07:07 UTC).
+commit `ad00fd8`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~3.3 minutes
+(19:31:33-19:34:48 UTC).
 
 Every one of the 16 steps passed -- verified individually, not inferred from the overall green
 checkmark:
@@ -342,7 +359,7 @@ checkmark:
 |---|---|
 | Check out repository / Set up Python 3.13 | PASS |
 | Install build dependencies | PASS |
-| **Run the full automated test suite on Windows** | PASS -- **265 passed, 3 skipped, 0 failed, 1 warning**, in 29.90s (268 collected total, matching the local count exactly -- includes the new duplicate-removal-log accuracy regression test) |
+| **Run the full automated test suite on Windows** | PASS -- **266 passed, 3 skipped, 0 failed, 1 warning**, in 34.64s (269 collected total, matching the local count exactly -- includes the new `test_spec_excludes_lxml_isoschematron` regression test, directly confirmed PASSED in the job log) |
 | Generate the multi-resolution application icon | PASS |
 | Build the portable executable with PyInstaller | PASS |
 | Verify the build produced `LenderPackageBuilder.exe` | PASS |
@@ -360,31 +377,38 @@ specifically designed to run on non-Windows and correctly skips itself when actu
 Windows. The single warning is Python's own `zipfile` module surfacing an intentional test fixture (a
 ZIP built with a duplicate entry name), not an application defect.
 
-**Downloadable artifact (current, includes all six post-release fixes)**:
-- Name: `Lender_Package_Builder_1.0.0_RC1_72cf1b8_Windows_x64-Portable` (internal release label +
-  short commit SHA; contains RC2's full feature set -- see the note in this section's last paragraph)
-- Contains: `Lender_Package_Builder_1.0.0_RC1_72cf1b8_Windows_x64_Portable.zip` (the actual portable
-  release, SHA-256 `97DAE9C4429E38A9729C43704365E40632F94311FB86AB00DB84C937D0C1126D`) and its matching
+**Downloadable artifact (current, includes all seven post-release fixes -- new short, versioned
+naming)**:
+- Name: `LP_Builder_RC2_ad00fd8_Windows_x64-Portable` (short product name + version label + short
+  commit SHA; contains RC2's full feature set)
+- Contains: `LP_Builder_RC2_ad00fd8_Windows_x64_Portable.zip` (the actual portable release, SHA-256
+  `6E92B4BF6DC3658198F858DD8782D489E3072CCFA656B1E003D5B46B9521F46C`) and its matching
   `..._Portable_SHA256.txt` checksum file
-- Artifact size: 80,112,923 bytes (~76.4 MB)
-- Artifact ID: `8416986057`, digest `sha256:ded19f9e1641ec0ce847a913564cd355d67e161675e316356e6be836796f2d9f`
+- Artifact size: 80,068,333 bytes (~76.4 MB)
+- Artifact ID: `8417625480`, digest `sha256:3eace9282e91a0dc13950319178e84f576363b65c9a0f85d1448012dc7482150`
   (the wrapper artifact's own hash -- distinct from the release ZIP's hash above)
-- Download URL: <https://github.com/emb2514/lp/actions/runs/29606148402/artifacts/8416986057>
+- Download URL: <https://github.com/emb2514/lp/actions/runs/29607844766/artifacts/8417625480>
   (expires 2026-08-16, 30-day GitHub Actions retention -- download and store it somewhere durable
   well before then if it needs to be kept)
 - Inside the release folder: `LenderPackageBuilder.exe` + `_internal/` (all bundled dependencies,
-  including the Windows PDFium binary for `pypdfium2`), `config.toml`, `RUN_DIAGNOSTICS.bat`,
-  `README_PORTABLE.txt`, `RELEASE_NOTES_1.0.0_RC1.md`, `THIRD_PARTY_NOTICES.txt`,
+  including the Windows PDFium binary for `pypdfium2`, and now WITHOUT the unused
+  `lxml/isoschematron/resources/` tree that caused the Explorer extraction failure), `config.toml`,
+  `RUN_DIAGNOSTICS.bat`, `README_PORTABLE.txt`, `RELEASE_NOTES_1.0.0_RC1.md`, `THIRD_PARTY_NOTICES.txt`,
   `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` (now updated for RC2 -- see §6/§10),
   `PACKAGING_TROUBLESHOOTING.md`, the synthetic `Sample_Test_Package.zip` +
   `Sample_Test_Package_Expected_Results.txt`, and `BUILD_MANIFEST.txt` (records the exact commit,
   CI run, and `pip freeze` lock for this specific build).
 
-**Previous runs (kept for history only -- do not use these artifacts):**
+**Previous runs (kept for history only -- do not use these artifacts; note the old, long
+`Lender_Package_Builder_1.0.0_RC1_...` naming on all of these, superseded by the `LP_Builder_RC2_...`
+naming above)**:
+- [#29606148402](https://github.com/emb2514/lp/actions/runs/29606148402) at commit `72cf1b8`
+  (MAX_PATH + Final-folder-empty + performance + orphaned-canonical + orphaned-dependent-rescue +
+  unique-filename + duplicate-removal-log-accuracy fixes, does NOT have the lxml.isoschematron
+  exclude or the LP_Builder/RC2 rename), 265 passed/3 skipped/0 failed, artifact ID `8416986057`.
 - [#29600140245](https://github.com/emb2514/lp/actions/runs/29600140245) at commit `cc02467`
   (MAX_PATH + Final-folder-empty + performance + orphaned-canonical + orphaned-dependent-rescue +
-  unique-filename fixes only, does NOT have the duplicate-removal-log accuracy fix), 264 passed/3
-  skipped/0 failed, artifact ID `8414739955`.
+  unique-filename fixes only), 264 passed/3 skipped/0 failed, artifact ID `8414739955`.
 - [#29598340493](https://github.com/emb2514/lp/actions/runs/29598340493) at commit `e6f32ff`
   (MAX_PATH + Final-folder-empty + performance + orphaned-canonical fixes only), 262 passed/3
   skipped/0 failed, artifact ID `8414035077`.
@@ -449,10 +473,10 @@ described in this report; only the version string itself has not yet been advanc
 ## 10. Installing and running (for a nontechnical Windows 11 user)
 
 1. Download the release from the Windows CI build artifact:
-   <https://github.com/emb2514/lp/actions/runs/29606148402/artifacts/8416986057> (requires being
-   signed in to GitHub with access to this repository; the artifact expires 2026-08-15). Inside is
-   `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` -- no account, license key, or
-   installer is required beyond that GitHub download step.
+   <https://github.com/emb2514/lp/actions/runs/29607844766/artifacts/8417625480> (requires being
+   signed in to GitHub with access to this repository; the artifact expires 2026-08-16). Inside is
+   `LP_Builder_RC2_ad00fd8_Windows_x64_Portable.zip` -- no account, license key, or installer is
+   required beyond that GitHub download step.
 2. Right-click the downloaded ZIP and choose **Extract All...**, then pick any folder (Desktop,
    Documents, or a USB drive all work).
 3. Open the extracted folder and double-click **LenderPackageBuilder.exe**.
