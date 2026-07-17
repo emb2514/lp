@@ -288,11 +288,11 @@ CI runner below, which does not share this container's offscreen-platform quirk.
 
 ## 8. Windows CI / build results
 
-**Latest run** (includes the fingerprinting performance fix -- "Post-release fix #3" above):
-[`Build Windows Portable Release` #29596759299](https://github.com/emb2514/lp/actions/runs/29596759299)
+**Latest run** (includes the orphaned-content-duplicate-reference fix -- "Post-release fix #4" above):
+[`Build Windows Portable Release` #29598340493](https://github.com/emb2514/lp/actions/runs/29598340493)
 -- triggered via `workflow_dispatch` on branch `claude/lender-package-builder-stage-1-h9sa3n` at
-commit `2b1da0e`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~4.1 minutes
-(16:35:31-16:39:41 UTC).
+commit `e6f32ff`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~3.4 minutes
+(17:00:01-17:03:23 UTC).
 
 Every one of the 16 steps passed -- verified individually, not inferred from the overall green
 checkmark:
@@ -301,7 +301,7 @@ checkmark:
 |---|---|
 | Check out repository / Set up Python 3.13 | PASS |
 | Install build dependencies | PASS |
-| **Run the full automated test suite on Windows** | PASS -- **259 passed, 3 skipped, 0 failed, 1 warning**, in 49.32s (262 collected total, matching the local count exactly -- includes the new fingerprinting performance regression test) |
+| **Run the full automated test suite on Windows** | PASS -- **262 passed, 3 skipped, 0 failed, 1 warning**, in 27.53s (265 collected total, matching the local count exactly -- includes the 3 new orphaned-canonical regression tests) |
 | Generate the multi-resolution application icon | PASS |
 | Build the portable executable with PyInstaller | PASS |
 | Verify the build produced `LenderPackageBuilder.exe` | PASS |
@@ -319,16 +319,16 @@ specifically designed to run on non-Windows and correctly skips itself when actu
 Windows. The single warning is Python's own `zipfile` module surfacing an intentional test fixture (a
 ZIP built with a duplicate entry name), not an application defect.
 
-**Downloadable artifact (current, includes all three post-release fixes)**:
+**Downloadable artifact (current, includes all four post-release fixes)**:
 - Name: `Lender_Package_Builder_1.0.0_RC1_Windows_x64-Portable` (internal release label; contains
   RC2's full feature set -- see the note in this section's last paragraph)
 - Contains: `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` (the actual portable release,
-  SHA-256 `DAEECC94FA7AE2F7976E944AC1681EE13544491C4A4FC711F70EFBE5E955B15B`) and its matching
+  SHA-256 `349A0B50865EFDD9B9DA93A58312E2869730383561736B512F856454F6E101C7`) and its matching
   `..._Portable_SHA256.txt` checksum file
-- Artifact size: 80,112,679 bytes (~76.4 MB)
-- Artifact ID: `8413426018`, digest `sha256:e0c576819efa7609b23ba7f622a9ac3e883548acaf13016b9eba98edd7685a63`
+- Artifact size: 80,112,559 bytes (~76.4 MB)
+- Artifact ID: `8414035077`, digest `sha256:11c4602649da94e6b91d6308fe017b8f7b580e01b6e68c461f94c1f58f20675c`
   (the wrapper artifact's own hash -- distinct from the release ZIP's hash above)
-- Download URL: <https://github.com/emb2514/lp/actions/runs/29596759299/artifacts/8413426018>
+- Download URL: <https://github.com/emb2514/lp/actions/runs/29598340493/artifacts/8414035077>
   (expires 2026-08-16, 30-day GitHub Actions retention -- download and store it somewhere durable
   well before then if it needs to be kept)
 - Inside the release folder: `LenderPackageBuilder.exe` + `_internal/` (all bundled dependencies,
@@ -340,9 +340,11 @@ ZIP built with a duplicate entry name), not an application defect.
   CI run, and `pip freeze` lock for this specific build).
 
 **Previous runs (kept for history only -- do not use these artifacts):**
+- [#29596759299](https://github.com/emb2514/lp/actions/runs/29596759299) at commit `2b1da0e`
+  (MAX_PATH + Final-folder-empty + performance fixes only, does NOT have the orphaned-reference fix),
+  259 passed/3 skipped/0 failed, artifact ID `8413426018`.
 - [#29528680767](https://github.com/emb2514/lp/actions/runs/29528680767) at commit `11d6229`
-  (MAX_PATH + Final-folder-empty fixes only, does NOT have the performance fix), 258 passed/3
-  skipped/0 failed, artifact ID `8387805926`.
+  (MAX_PATH + Final-folder-empty fixes only), 258 passed/3 skipped/0 failed, artifact ID `8387805926`.
 - [#29525368003](https://github.com/emb2514/lp/actions/runs/29525368003) at commit `122d7ce`
   (MAX_PATH fix only), 256 passed/3 skipped/0 failed, artifact ID `8386505901`.
 - [#29517398524](https://github.com/emb2514/lp/actions/runs/29517398524) at commit `e52374b`
@@ -399,7 +401,7 @@ described in this report; only the version string itself has not yet been advanc
 ## 10. Installing and running (for a nontechnical Windows 11 user)
 
 1. Download the release from the Windows CI build artifact:
-   <https://github.com/emb2514/lp/actions/runs/29596759299/artifacts/8413426018> (requires being
+   <https://github.com/emb2514/lp/actions/runs/29598340493/artifacts/8414035077> (requires being
    signed in to GitHub with access to this repository; the artifact expires 2026-08-15). Inside is
    `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` -- no account, license key, or
    installer is required beyond that GitHub download step.

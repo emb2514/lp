@@ -27,7 +27,12 @@ decided during inventory building, long before content_dedup runs). 3 new regres
 module-level reproductions in `tests/test_merged_document_overlap.py` and `tests/test_content_dedup.py`,
 plus a full end-to-end `run_build` test reproducing the exact "26/27 integrity checks passed" symptom)
 -- all three confirmed failing before the fix and passing after. Local suite: 208 engine + 57 GUI = 265
-total, all passing.
+total, all passing. Committed as `e6f32ff`, pushed, and **re-validated on real Windows CI** (run
+[29598340493](https://github.com/emb2514/lp/actions/runs/29598340493), SUCCESS, 262 passed/3 expected
+skips/0 failed -- matches the local 265-collected count exactly). New artifact ID `8414035077`, release
+ZIP SHA-256 `349A0B50865EFDD9B9DA93A58312E2869730383561736B512F856454F6E101C7` -- see
+`RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link (all earlier artifacts are missing at
+least this fix and should not be used).
 
 **POST-RELEASE FIX #3 (severe performance bug on real scanned documents)**: a real user reported the
 app appeared stuck for 10+ minutes on stage "[5/10] Analyzing document content..." while processing a
