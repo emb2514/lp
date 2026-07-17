@@ -16,8 +16,13 @@ per-pixel loops -- mathematically identical results (verified directly, matching
 fingerprint under the old code now fingerprints in ~11 seconds end to end. 1 new performance-regression
 test in `tests/test_content_fingerprinting.py` (asserts realistic-resolution processing stays under a
 generous 2-second ceiling, not a specific value -- correctness is already covered by the existing
-blank-classification and `average_color` tests, all of which still pass unchanged). Local suite: 204
-engine + 57 GUI = 261 total, all passing.
+blank-classification and `average_color` tests, all of which still pass unchanged). Local suite: 205
+engine + 57 GUI = 262 total, all passing. Committed as `2b1da0e`, pushed, and **re-validated on real
+Windows CI** (run [29596759299](https://github.com/emb2514/lp/actions/runs/29596759299), SUCCESS, 259
+passed/3 expected skips/0 failed -- matches the local 262-collected count exactly). New artifact ID
+`8413426018`, release ZIP SHA-256 `DAEECC94FA7AE2F7976E944AC1681EE13544491C4A4FC711F70EFBE5E955B15B`
+-- see `RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link (all three earlier artifacts
+are missing at least this fix and should not be used).
 
 **POST-RELEASE FIX #2 (Final folder silently empty)**: a real user reported that a rebuilt package
 ("packaged successfully") produced a completely empty `Final` folder. Root cause, confirmed by direct
