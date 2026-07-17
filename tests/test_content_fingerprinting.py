@@ -216,3 +216,45 @@ def test_average_color_distinguishes_solid_colors():
 
     assert c_red == c_red_again  # same color, different size -- must match exactly
     assert c_red != c_blue
+
+
+# TEST 16 - PERFORMANCE REGRESSION (real user-reported bug): a real
+# full-resolution scanned page (millions of pixels) must be classified
+# and averaged quickly. `_average_color` and `_classify_image_blank`
+# used to materialize every pixel into a Python list and sum it in a
+# pure-Python loop -- fine for small test fixtures, but for a real scan
+# (~1700x2200px, a typical 200 DPI letter-size page) this took multiple
+# seconds PER IMAGE, once per embedded image on every page of every
+# document. A real "full lender package" of 200+ documents, several of
+# them 80-150 page scanned PDFs, made this the dominant cost of the
+# entire content-aware analysis stage -- confirmed as the actual root
+# cause of a real report of the app appearing stuck for 10+ minutes.
+# Fixed by using Pillow's own C-implemented `ImageStat`/`histogram()`
+# instead of a Python-level per-pixel pass; this pins the fix down by
+# asserting realistic-resolution images are still processed in a small
+# fraction of a second, not by asserting a specific value (see TEST 15
+# and the blank-classification tests above for correctness).
+def test_average_color_and_blank_classification_are_fast_on_realistic_scan_resolution():
+    import time
+
+    from PIL import Image
+
+    # A solid-ish page with some scattered dark content, roughly the
+    # pixel count of a real 200 DPI letter-size scan.
+    img = Image.new("L", (1700, 2200), color=250)
+    pixels = img.load()
+    for i in range(0, 1700, 7):
+        for j in range(0, 2200, 11):
+            pixels[i, j] = 40
+
+    start = time.perf_counter()
+    pdf_content._average_color(img)
+    pdf_content._classify_image_blank(img)
+    elapsed = time.perf_counter() - start
+
+    # Generous ceiling (the fixed implementation runs in well under
+    # 0.1s locally) -- the old pure-Python implementation took several
+    # seconds for an image this size, so this comfortably catches a
+    # regression back to a per-pixel Python loop without being flaky
+    # on a slower CI runner.
+    assert elapsed < 2.0, f"took {elapsed:.2f}s -- likely regressed back to a per-pixel Python loop"

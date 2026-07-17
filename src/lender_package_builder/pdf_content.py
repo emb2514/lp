@@ -25,6 +25,7 @@ import hashlib
 import re
 import unicodedata
 
+from PIL import ImageStat
 from pypdf import PdfReader
 from pypdf.generic import IndirectObject
 
@@ -242,17 +243,22 @@ def hamming_distance(a: int, b: int) -> int:
 def _average_color(image) -> tuple[float, float, float]:
     """Mean (R, G, B), 0-255 each. See EmbeddedImageSignal.average_color's
     docstring for why this is needed alongside the gradient-based dHash.
+
+    Uses Pillow's own C-implemented `ImageStat` rather than materializing
+    every pixel into a Python list and summing in pure Python -- confirmed,
+    via a real user report of the app appearing stuck for many minutes on
+    a package containing large full-page scanned documents, to be the
+    dominant cost of fingerprinting a realistic scanned page (a pure-Python
+    per-pixel pass over a several-megapixel scan took multiple seconds,
+    once per embedded image, on every page of every document). `ImageStat`
+    computes the identical mean, just without the Python-level loop.
     """
 
     rgb_image = image.convert("RGB")
-    pixels = list(rgb_image.getdata())
-    if not pixels:
+    if rgb_image.width == 0 or rgb_image.height == 0:
         return (0.0, 0.0, 0.0)
-    n = len(pixels)
-    r = sum(p[0] for p in pixels) / n
-    g = sum(p[1] for p in pixels) / n
-    b = sum(p[2] for p in pixels) / n
-    return (r, g, b)
+    mean = ImageStat.Stat(rgb_image).mean
+    return (mean[0], mean[1], mean[2])
 
 
 def _classify_image_blank(image) -> bool:
@@ -262,18 +268,23 @@ def _classify_image_blank(image) -> bool:
     single global near-white-ratio/variance pair: a small faint mark
     (signature stroke, stamp corner, barcode) covers such a tiny share
     of a full page's pixels that page-wide statistics alone wash it out.
+
+    Uses `Image.histogram()` (256 bins, computed in C) and Pillow's
+    `ImageStat` for mean/variance instead of a pure-Python per-pixel pass
+    -- see `_average_color`'s docstring for why that distinction matters
+    at realistic scanned-page resolutions. `histogram()[:n]` summed gives
+    the exact same "how many pixels are below this gray level" count as
+    iterating pixels directly, just without the Python-level loop.
     """
 
     gray = image.convert("L")
-    pixels = list(gray.getdata())
-    if not pixels:
+    if gray.width == 0 or gray.height == 0:
         return True
-    total = len(pixels)
-    dark_count = sum(1 for p in pixels if p < _BLANK_IMAGE_DARK_LEVEL)
+    total = gray.width * gray.height
+    dark_count = sum(gray.histogram()[:_BLANK_IMAGE_DARK_LEVEL])
     if (dark_count / total) > _BLANK_IMAGE_MAX_DARK_PIXEL_RATIO:
         return False
-    mean = sum(pixels) / total
-    variance = sum((p - mean) ** 2 for p in pixels) / total
+    variance = ImageStat.Stat(gray).var[0]
     return variance <= _BLANK_IMAGE_MAX_VARIANCE
 
 

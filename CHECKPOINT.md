@@ -1,5 +1,24 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #3 (severe performance bug on real scanned documents)**: a real user reported the
+app appeared stuck for 10+ minutes on stage "[5/10] Analyzing document content..." while processing a
+real 212-document, ~900-page lender package containing several large (86-155 page) scanned PDFs.
+Root cause, confirmed by direct timing reproduction: `pdf_content.py`'s `_average_color()` and
+`_classify_image_blank()` (run once per embedded image, for every page of every document, during
+fingerprinting) materialized every pixel of the decoded image into a Python list and summed it in a
+pure-Python loop. For a realistic full-resolution scan (~1700x2200px, a typical 200 DPI letter-size
+page), this took **~3 seconds per image** (0.29s blank-check + 2.68s average-color, measured directly)
+-- for the four largest documents in the reported package alone (155+126+95+86 = 462 pages), that is
+roughly **23 minutes**, fully explaining the reported stall. Fixed by using Pillow's own C-implemented
+`ImageStat` (mean/variance) and `Image.histogram()` (dark-pixel count) instead of Python-level
+per-pixel loops -- mathematically identical results (verified directly, matching to 4+ decimal places),
+~13-100x faster per image. A 155-page synthetic scanned PDF that would have taken minutes to
+fingerprint under the old code now fingerprints in ~11 seconds end to end. 1 new performance-regression
+test in `tests/test_content_fingerprinting.py` (asserts realistic-resolution processing stays under a
+generous 2-second ceiling, not a specific value -- correctness is already covered by the existing
+blank-classification and `average_color` tests, all of which still pass unchanged). Local suite: 204
+engine + 57 GUI = 261 total, all passing.
+
 **POST-RELEASE FIX #2 (Final folder silently empty)**: a real user reported that a rebuilt package
 ("packaged successfully") produced a completely empty `Final` folder. Root cause, confirmed by direct
 reproduction: `pdf_portfolio.py`'s `_expand_one()` set `occurrence.is_portfolio_container = True`
