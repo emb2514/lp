@@ -5,9 +5,26 @@
 what a nontechnical Windows 11 user needs to know to run it.
 
 **Bottom line: yes, the RC2 Windows application is ready to use.** Real Windows CI (not a
-source-only or Linux-only check) built the portable executable, ran the entire 262-test suite
+source-only or Linux-only check) built the portable executable, ran the entire 265-test suite
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
 green, with real evidence (not just a checkmark) verified below.
+
+**Post-release fix #4**: after fix #3 let a real ~900-page package finish content-aware analysis (on
+the OLD, pre-fix-#3 build the user was still running when this happened -- not a new stall), the run
+correctly reported failed integrity checks rather than shipping something unreliable: "1
+content-duplicate(s) reference a retained document missing from Final". Root cause, confirmed by
+direct reproduction: `content_dedup.py` designates one document per group as the "retained" canonical
+that every other content-equivalent copy points to, but `overlap_detection.py` runs afterward with no
+awareness of this -- if it later found that same canonical fully contained inside a separate merged
+package, it excluded it from Final, orphaning the reference (the duplicate was correctly excluded, but
+its retained copy vanished too). `validation.py`'s own integrity check did exactly its job -- it caught
+this and safely blocked the run rather than producing a broken package -- but the interaction needed
+fixing at the source. Fixed two ways: `overlap_detection.py` now never excludes a document that is
+serving as another occurrence's retained content-duplicate target, and `content_dedup.py`'s canonical
+selection now also proactively never chooses a PDF Portfolio container (the same bug class, fixed
+before it could ever be reported). 3 new regression tests, including a full end-to-end test
+reproducing the exact "26/27 integrity checks passed" symptom -- all confirmed failing before the fix
+and passing after. See `CHECKPOINT.md` for the commit hash and Windows CI re-validation status.
 
 **Post-release fix #3**: a real user reported the app appeared stuck for 10+ minutes on stage
 "Analyzing document content..." while processing a real ~212-document, ~900-page lender package
@@ -247,16 +264,18 @@ fixed target page count, per the plan's explicit instruction not to force one.
 
 ## 7. Complete test counts and results
 
-**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **205 passed, 0 failed.**
+**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **208 passed, 0 failed.**
 
 Breakdown by area (approximate, by file):
 conversion, splitting/merging, reporting, progress, hashing/deduplication, inventory, archive safety,
 full-pipeline end-to-end, packaging/CLI/config, content fingerprinting (including the fingerprinting
-performance regression, "Post-release fix #3" above), content-aware deduplication, PDF rendering, PDF
-Portfolio (including the Final-folder-empty regression, "Post-release fix #2" above), merged-document
-overlap, document version classification, validation (dedicated), the OG-invariance safety test,
-expanded reporting coverage, the interactive review-decision engine, the Robert-package synthetic
-acceptance test, and output-path-length safety (the MAX_PATH fix, "Post-release fix #1" above).
+performance regression, "Post-release fix #3" above), content-aware deduplication (including the
+orphaned-canonical-selection regression, "Post-release fix #4" above), PDF rendering, PDF Portfolio
+(including the Final-folder-empty regression, "Post-release fix #2" above), merged-document overlap
+(including the orphaned-containment-exclusion regression, "Post-release fix #4" above), document
+version classification, validation (dedicated), the OG-invariance safety test, expanded reporting
+coverage, the interactive review-decision engine, the Robert-package synthetic acceptance test, and
+output-path-length safety (the MAX_PATH fix, "Post-release fix #1" above).
 
 **GUI test suite** (`tests/gui/`, run per-file due to a known, pre-existing, environment-specific Qt
 offscreen-platform teardown instability in this sandboxed container -- confirmed nondeterministic
@@ -265,7 +284,7 @@ deep inside pytest-qt/Qt's own teardown machinery in files this session never to
 collected, all pass when run file-by-file.** GUI correctness is further confirmed on the real Windows
 CI runner below, which does not share this container's offscreen-platform quirk.
 
-**Total: 262 automated tests, all passing** (205 engine + 57 GUI).
+**Total: 265 automated tests, all passing** (208 engine + 57 GUI).
 
 ## 8. Windows CI / build results
 

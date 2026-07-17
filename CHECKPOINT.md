@@ -1,5 +1,34 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #4 (integrity check correctly caught a real cross-module bug: orphaned
+content-duplicate reference)**: after fix #3 let a real ~900-page package finish "Analyzing document
+content" (in ~35 min on the OLD, pre-fix-#3 build the user was still running -- not a new stall), the
+run correctly reported failed integrity checks rather than shipping something unreliable: "1
+content-duplicate(s) reference a retained document missing from Final: ['DOC-000159']". Root cause,
+confirmed by direct reproduction: `content_dedup.py` designates one document per group as the
+"retained" canonical that every other content-equivalent copy's `content_duplicate_of_document_id`
+points to, but `overlap_detection.py` runs AFTERWARD and had no awareness of this -- if it later found
+that same canonical document fully, confidently contained inside a separate larger merged package, it
+excluded it from Final (`is_contained_in_merged_document=True`) with no knowledge that another
+occurrence was relying on it staying present. This orphaned the content-duplicate reference: the
+duplicate was correctly excluded, but its "retained" copy vanished too, leaving that content with zero
+copies in Final. validation.py's own `_check_content_duplicate_retained_exists` integrity check did
+exactly its job -- it caught this and safely blocked the run rather than producing a broken package
+("Processing finished, but one or more required integrity checks did not pass. This output should not
+be treated as reliable.") -- but the underlying cross-module interaction needed fixing at the source.
+Fixed two ways: (1) `overlap_detection.detect_overlaps()` now never excludes a candidate that is
+currently serving as another occurrence's retained content-duplicate target, even on a fully-proven
+containment match -- the finding is still recorded for the report, the candidate (and everything
+depending on it) simply stays in Final, exactly like the existing "different_version"/"partial_overlap"
+cases already do. (2) `content_dedup._select_canonical()` now also proactively never chooses a PDF
+Portfolio container as canonical (its own pages are unconditionally excluded from Final regardless of
+anything else -- the identical bug class, but knowable in advance since `is_portfolio_container` is
+decided during inventory building, long before content_dedup runs). 3 new regression tests (2 direct
+module-level reproductions in `tests/test_merged_document_overlap.py` and `tests/test_content_dedup.py`,
+plus a full end-to-end `run_build` test reproducing the exact "26/27 integrity checks passed" symptom)
+-- all three confirmed failing before the fix and passing after. Local suite: 208 engine + 57 GUI = 265
+total, all passing.
+
 **POST-RELEASE FIX #3 (severe performance bug on real scanned documents)**: a real user reported the
 app appeared stuck for 10+ minutes on stage "[5/10] Analyzing document content..." while processing a
 real 212-document, ~900-page lender package containing several large (86-155 page) scanned PDFs.

@@ -412,3 +412,33 @@ def test_oversized_bucket_falls_back_to_hash_only(tmp_path: Path):
     assert len(notes) == 1
     assert "exceeded" in notes[0]
     assert sum(not o.is_content_duplicate for o in occs) == 1
+
+
+# TEST 23 - REGRESSION (same bug class as the real user-reported
+# containment/canonical interaction, fixed proactively here since it is
+# knowable in advance): a PDF Portfolio container's own pages are
+# UNCONDITIONALLY excluded from Final regardless of anything else, so it
+# must never be chosen as the "retained" canonical of a content-duplicate
+# group -- doing so would orphan every other member's
+# content_duplicate_of_document_id reference. Traversal order alone would
+# otherwise pick the portfolio-container copy here (it comes first).
+def test_portfolio_container_never_chosen_as_canonical(tmp_path: Path):
+    portfolio_cover = builders.make_pdf(tmp_path / "cover.pdf", pages=1, text_prefix="Shared Cover Content")
+    standalone = builders.make_pdf(
+        tmp_path / "standalone.pdf", pages=1, text_prefix="Shared Cover Content", metadata={"/CustomTag": "x"}
+    )
+
+    occ_portfolio = _occ("PORTFOLIO", 1, portfolio_cover)  # earlier traversal_index
+    occ_portfolio.is_portfolio_container = True
+    occ_standalone = _occ("STANDALONE", 2, standalone)
+
+    groups, _, _ = _run([occ_portfolio, occ_standalone])
+
+    assert len(groups) == 1
+    assert groups[0].retained_document_id == "STANDALONE"
+    # The canonical itself is never marked is_content_duplicate, and it
+    # actually stays in Final -- unlike the portfolio-container copy,
+    # which was already excluded unconditionally for an unrelated reason.
+    assert occ_standalone.is_content_duplicate is False
+    assert occ_standalone.included_in_final is True
+    assert occ_portfolio.content_duplicate_of_document_id == "STANDALONE"

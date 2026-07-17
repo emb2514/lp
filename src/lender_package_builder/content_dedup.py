@@ -387,10 +387,21 @@ def _select_canonical(
     (never across versions -- documents that differ meaningfully never
     reach this function at all, since compare_documents would have
     returned "different_version" or "no_match" for them). Preference
-    order: signature/annotation preservation, fewer accidental blank
-    pages, more searchable text (a proxy for a native/digital original
-    over a lower-quality scan when content is otherwise equivalent),
-    then earliest traversal order as the final tiebreak.
+    order: never a Portfolio container (its own pages are unconditionally
+    excluded from Final regardless of anything else -- see
+    `is_portfolio_container` below), then signature/annotation
+    preservation, fewer accidental blank pages, more searchable text (a
+    proxy for a native/digital original over a lower-quality scan when
+    content is otherwise equivalent), then earliest traversal order as
+    the final tiebreak.
+
+    Choosing a Portfolio container as canonical would orphan every other
+    member's `content_duplicate_of_document_id` reference (the container
+    itself never appears in Final), the exact same class of bug fixed in
+    `overlap_detection.detect_overlaps` for merged-document containment
+    -- see that module's docstring. `is_portfolio_container` is decided
+    during inventory building, long before this runs, so it is already a
+    known, final fact about every candidate here.
     """
 
     def sort_key(doc_id: str):
@@ -399,6 +410,7 @@ def _select_canonical(
         blank_count = sum(1 for p in fp.pages if p.blank.is_blank)
         total_text_len = sum(len(p.normalized_text) for p in fp.pages)
         return (
+            occ.is_portfolio_container,  # False (not a container) sorts first (preferred)
             not fp.has_signature_field,  # has_signature_field=True sorts first (preferred)
             blank_count,
             -total_text_len,

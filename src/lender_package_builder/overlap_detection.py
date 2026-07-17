@@ -168,6 +168,21 @@ def detect_overlaps(
     uncertain containment for review (`needs_review`/`review_reason`,
     never excluded from Final) -- exactly mirroring content_dedup.py's
     own safety guarantees.
+
+    A candidate currently serving as another occurrence's
+    `content_duplicate_of_document_id` (i.e. content_dedup.py already
+    designated it "the one everyone else duplicates") is never excluded
+    here even on a fully-proven containment match -- content_dedup.py
+    runs first and has no way to know overlap_detection.py would later
+    want to remove its chosen canonical, so excluding it here would
+    orphan every occurrence pointing to it (a content-duplicate
+    reference to a document no longer in Final at all). Confirmed as a
+    real, reachable defect from a real user's package: caught safely by
+    validation.py's own integrity check rather than shipping a broken
+    package, but the underlying interaction needed fixing at the
+    source. The finding is still recorded for the report; the candidate
+    and the documents that reference it simply all remain in Final,
+    exactly as the "different_version"/"partial_overlap" cases already do.
     """
 
     occurrences_by_id = {o.document_id: o for o in occurrences}
@@ -178,6 +193,11 @@ def detect_overlaps(
         and not occurrences_by_id[doc_id].is_duplicate
         and not occurrences_by_id[doc_id].is_content_duplicate
     ]
+    retained_content_duplicate_ids = {
+        occ.content_duplicate_of_document_id
+        for occ in occurrences
+        if occ.is_content_duplicate and occ.content_duplicate_of_document_id
+    }
 
     findings: list[OverlapFinding] = []
 
@@ -213,10 +233,13 @@ def detect_overlaps(
         findings.append(best)
 
         if best.classification in ("exact_contained", "equivalent_contained"):
-            best.excluded = True
-            candidate_occ.is_contained_in_merged_document = True
-            candidate_occ.contained_in_document_id = best.container_document_id
-            candidate_occ.contained_page_range = best.contained_page_range
+            if candidate_id in retained_content_duplicate_ids:
+                pass  # see the module/function docstring -- never exclude a retained canonical
+            else:
+                best.excluded = True
+                candidate_occ.is_contained_in_merged_document = True
+                candidate_occ.contained_in_document_id = best.container_document_id
+                candidate_occ.contained_page_range = best.contained_page_range
         elif best.classification == "uncertain_overlap":
             if not candidate_occ.needs_review:
                 candidate_occ.needs_review = True

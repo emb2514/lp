@@ -164,4 +164,78 @@ def test_no_candidate_container_available(tmp_path: Path):
     occ_a, occ_b = _occ("A", 1, a), _occ("B", 2, b)
     findings = _run([occ_a, occ_b])
     assert occ_a.is_contained_in_merged_document is False
-    assert occ_b.is_contained_in_merged_document is False
+
+
+# TEST 8 - REGRESSION (real user-reported bug): a document that is
+# simultaneously (a) the retained canonical for a content-duplicate group
+# AND (b) fully, safely proven contained inside a separate merged document
+# must NEVER be excluded via containment. Excluding it would orphan every
+# occurrence pointing to it via content_duplicate_of_document_id -- a
+# content-duplicate reference to a document no longer present in Final at
+# all, with no retained copy of that content anywhere in the package.
+# content_dedup.py runs first and has no way to know overlap_detection.py
+# would later want to exclude its chosen canonical; validation.py's
+# "Content-duplicate references resolve to a retained Final document"
+# check safely caught this on a real package rather than shipping a
+# broken one, but the underlying interaction needed fixing at the source.
+def test_retained_content_duplicate_canonical_never_excluded_via_containment(tmp_path: Path):
+    v1 = builders.make_pdf(
+        tmp_path / "invoice_v1.pdf", pages=1, text_prefix="Credit Report Invoice", metadata={"/CustomTag": "one"}
+    )
+    v2 = builders.make_pdf(
+        tmp_path / "invoice_v2.pdf", pages=1, text_prefix="Credit Report Invoice", metadata={"/CustomTag": "two"}
+    )
+    other = builders.make_pdf(tmp_path / "other.pdf", pages=3, text_prefix="Other Content")
+    merged = builders.make_merged_pdf(tmp_path / "merged.pdf", [other, v1])
+
+    occ_v1 = _occ("V1", 1, v1)  # lower traversal_index -- content_dedup picks this as canonical
+    occ_v2 = _occ("V2", 2, v2)
+    occ_other = _occ("OTHER", 3, other)
+    occ_merged = _occ("MERGED", 4, merged)
+
+    findings = _run([occ_v1, occ_v2, occ_other, occ_merged])
+
+    assert occ_v2.is_content_duplicate is True
+    assert occ_v2.content_duplicate_of_document_id == "V1"
+
+    # V1 is fully contained in MERGED, but is relied upon as V2's retained
+    # target -- it must stay in Final regardless.
+    assert any(
+        f.standalone_document_id == "V1" and f.classification in ("exact_contained", "equivalent_contained")
+        for f in findings
+    ), "expected a proven containment finding for V1 to actually exist (otherwise this test proves nothing)"
+    assert occ_v1.is_contained_in_merged_document is False
+    assert occ_v1.included_in_final is True
+    assert not any(f.standalone_document_id == "V1" and f.excluded for f in findings)
+
+    # The content-duplicate reference resolves to a real, retained document.
+    retained = {"V1": occ_v1, "V2": occ_v2, "OTHER": occ_other, "MERGED": occ_merged}[
+        occ_v2.content_duplicate_of_document_id
+    ]
+    assert retained.included_in_final is True
+
+
+# TEST 9 - same regression as TEST 8, but through the real end-to-end
+# pipeline (inventory/hashing/conversion/merging/validation together, not
+# just the two engine modules directly) -- the exact shape of the real
+# reported package: two byte-different-but-content-equivalent copies of
+# one small document, one of which is also fully contained in a larger
+# merged package. Every integrity check must pass, and the run must
+# succeed.
+def test_full_pipeline_retained_canonical_contained_in_merged_doc(tmp_path, run_build):
+    folder = tmp_path / "input"
+    folder.mkdir()
+    v1 = builders.make_pdf(
+        folder / "Invoice (1).pdf", pages=1, text_prefix="Credit Report Invoice", metadata={"/CustomTag": "one"}
+    )
+    builders.make_pdf(
+        folder / "Invoice (2).pdf", pages=1, text_prefix="Credit Report Invoice", metadata={"/CustomTag": "two"}
+    )
+    other = builders.make_pdf(folder / "other.pdf", pages=3, text_prefix="Other Content")
+    builders.make_merged_pdf(folder / "CollateralLoanPackage.pdf", [other, v1])
+
+    run = run_build(folder)
+
+    assert run.success is True
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
