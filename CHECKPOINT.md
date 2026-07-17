@@ -7,7 +7,13 @@ Replaced it with `$env:GITHUB_RUN_NUMBER` (a plain, ever-increasing integer -- t
 build count), giving a clean `LP_Builder_v<N>_Windows_x64_Portable.zip` pattern -- exactly the
 "v1, v2, v3..." style the user had already been doing by hand before asking for this to be automated.
 Still guaranteed unique per build; `RELEASE_LABEL` ("RC2") is retained internally (BUILD_MANIFEST.txt,
-`--version` output) but no longer appears in the filename itself.
+`--version` output) but no longer appears in the filename itself. Committed as `55dbe55`, pushed, and
+**re-validated on real Windows CI** (run
+[29608871958](https://github.com/emb2514/lp/actions/runs/29608871958), build #18, SUCCESS, 266
+passed/3 expected skips/0 failed -- matches local exactly). Artifact is literally named
+`LP_Builder_v18_Windows_x64-Portable` (ID `8417997302`), release ZIP SHA-256
+`71827A8191F64F57BC80A6E3BCD31C4EC28430AFFD3745EDFF85B9CFA47E972A` -- confirms the new naming works
+exactly as intended. See `RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link.
 
 **POST-RELEASE FIX #7 (Explorer "Path too long" extracting the ZIP, real user report) + release
 naming/version overhaul (explicit user request)**: the user's Windows Explorer failed to extract the
