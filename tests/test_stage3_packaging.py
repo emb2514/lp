@@ -28,14 +28,14 @@ from lender_package_builder.self_test import run_self_test
 def test_single_version_source_matches_installed_package_metadata():
     installed_version = importlib_metadata.version("lender-package-builder")
     assert installed_version == __version__
-    assert __version__ == "1.0.0rc1"
+    assert __version__ == "1.0.0rc2"
 
 
 # STAGE 3 TEST 2 - USER-FACING AND WINDOWS FILE VERSION FORMAT
 def test_user_version_and_windows_file_version_format():
-    assert USER_VERSION == "1.0.0 RC1"
+    assert USER_VERSION == "RC2"
     assert re.fullmatch(r"\d+\.\d+\.\d+\.\d+", WINDOWS_FILE_VERSION)
-    assert RELEASE_LABEL == "1.0.0_RC1"
+    assert RELEASE_LABEL == "RC2"
 
 
 # STAGE 3 TEST 3 - NOT FROZEN WHEN RUNNING FROM SOURCE
@@ -570,3 +570,36 @@ def test_spec_extract_msg_hidden_imports_are_real_modules():
 
     for module_name in deps:
         importlib.import_module(module_name)  # raises ImportError if the name is wrong
+
+
+# STAGE 3 TEST 31 - REGRESSION (real user-reported crash): lxml.isoschematron
+# is explicitly excluded from the PyInstaller build. pyinstaller-hooks-
+# contrib's hook-lxml.py unconditionally collect_submodules()'s all of
+# lxml (lxml.etree is a real, needed dependency via python-docx), which
+# also pulls in lxml.isoschematron -- an unrelated ISO Schematron
+# XML-validation submodule nothing in this app or python-docx ever
+# imports. That submodule's own hook then bundles its entire deeply
+# nested resources/ tree (e.g.
+# isoschematron/resources/xsl/iso-schematron-xslt1/
+# iso_schematron_skeleton_for_xslt1.xsl), which a real user's Windows
+# Explorer could not extract ("Error 0x80010135: Path too long") once
+# combined with a normal Downloads-folder path. Confirmed via direct
+# inspection that lxml.isoschematron is never imported anywhere in this
+# app's own dependency graph, so excluding it removes ~30 unused files
+# and their long nested paths without affecting any real functionality.
+def test_spec_excludes_lxml_isoschematron():
+    import ast
+
+    spec_path = runtime_paths.app_root() / "LenderPackageBuilder.spec"
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"), filename=str(spec_path))
+
+    excludes: list[str] | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Analysis":
+            for kw in node.keywords:
+                if kw.arg == "excludes":
+                    excludes = ast.literal_eval(kw.value)
+            break
+
+    assert excludes, "could not find excludes= in LenderPackageBuilder.spec's Analysis(...) call"
+    assert "lxml.isoschematron" in excludes

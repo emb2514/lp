@@ -109,8 +109,9 @@ This, on a Windows machine with Python 3.11-3.13 available:
 3. Regenerates `packaging\app_icon.ico` from `app_icon.svg`.
 4. Runs `pyinstaller LenderPackageBuilder.spec --noconfirm --clean`
    after deleting any previous `build\`/`dist\` output.
-5. Assembles `release\Lender_Package_Builder_1.0.0_RC1_Windows_x64\`
-   with the built app, `config.toml`, documentation, the sample test
+5. Assembles `release\LP_Builder_<RELEASE_LABEL>_Windows_x64\` (the
+   version label comes from the single source in `_version.py`) with
+   the built app, `config.toml`, documentation, the sample test
    package, and collected third-party license files.
 6. Writes `BUILD_MANIFEST.txt` (Python version, `pip freeze`, git
    commit).

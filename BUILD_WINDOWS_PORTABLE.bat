@@ -146,7 +146,7 @@ rem 7. Assemble the release folder
 rem ------------------------------------------------------------------
 echo.
 echo Assembling the release folder...
-set "RELEASE_NAME=Lender_Package_Builder_%RELEASE_LABEL%_Windows_x64"
+set "RELEASE_NAME=LP_Builder_%RELEASE_LABEL%_Windows_x64"
 set "RELEASE_DIR=release\%RELEASE_NAME%"
 if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%"

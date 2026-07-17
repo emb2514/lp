@@ -1,5 +1,40 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #7 (Explorer "Path too long" extracting the ZIP, real user report) + release
+naming/version overhaul (explicit user request)**: the user's Windows Explorer failed to extract the
+fix-#6 ZIP with "Error 0x80010135: Path too long" on `iso_schematron_skeleton_for_xslt1` (an XSL
+Stylesheet). Root cause, confirmed by direct inspection: `lxml` is a real, needed transitive dependency
+(`python-docx` uses `lxml.etree` for .docx parsing), but `pyinstaller-hooks-contrib`'s `hook-lxml.py`
+unconditionally `collect_submodules('lxml')`s -- including `lxml.isoschematron`, an unrelated ISO
+Schematron XML-validation submodule confirmed (via grep across this app and python-docx) to never be
+imported anywhere in this app's dependency graph. That submodule's own hook then bundles its entire
+`resources/` tree unconditionally, whose deepest file
+(`isoschematron/resources/xsl/iso-schematron-xslt1/iso_schematron_skeleton_for_xslt1.xsl`) is ~90
+characters of nested path on its own -- enough, combined with a normal Downloads-folder path, to push
+the full extracted path over Windows Explorer's classic 260-character extraction limit (a different
+mechanism than this app's own MAX_PATH handling for output folders it creates itself -- Explorer's
+built-in Zip extraction is not long-path-aware). Fixed by adding `"lxml.isoschematron"` to
+`LenderPackageBuilder.spec`'s `Analysis(excludes=[...])` -- removes ~30 unused files with no effect on
+real functionality (confirmed PySide6's own per-module hooks mean the app's unused QtQuick/QML tree,
+whose deepest paths are even longer, was never bundled either, since this is a QtWidgets-only app).
+1 new regression test (`tests/test_stage3_packaging.py`) parses the spec file's AST to assert the
+exclude is present, guarding against an accidental future revert.
+
+**Separately, per explicit user request** ("that needs to be LP Builder v(whatever version the next
+one is)"): the release naming was overhauled. `_version.py` (the single authoritative version source)
+bumped from `1.0.0 RC1` / `RELEASE_LABEL="1.0.0_RC1"` to `USER_VERSION="RC2"` /
+`RELEASE_LABEL="RC2"` / `__version__="1.0.0rc2"` / `WINDOWS_FILE_VERSION="1.0.0.2"` -- reflecting the
+milestone this entire session's work has consistently been called throughout (this CHECKPOINT's own
+title). The hardcoded `Lender_Package_Builder` release-folder/ZIP prefix (in both
+`build-windows-portable.yml` and `BUILD_WINDOWS_PORTABLE.bat`) was shortened to `LP_Builder`, so a
+build's release ZIP is now named `LP_Builder_RC2_<shortsha>_Windows_x64_Portable.zip` -- short, human-
+readable, and still unique per build (the short-commit-SHA fix from fix #5 is retained). Updated the two
+hardcoded version-string assertions in `tests/test_stage3_packaging.py` to match, and updated
+forward-looking (non-historical) filename references in `README_PORTABLE.txt`,
+`STAGE3_BUILD_AND_RELEASE.md`, and `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` to describe the new pattern
+generically rather than hardcoding the old exact name. Local suite: 212 engine + 57 GUI = 269 total,
+all passing.
+
 **POST-RELEASE FIX #6 (real-package validation: SUCCESS, plus one report-accuracy bug found via
 manual manifest cross-check)**: the user ran their real ~212-document package on the fix-#5 build and
 shared all five generated reports. Result: **OVERALL RESULT: SUCCESS, all 27 integrity checks

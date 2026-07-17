@@ -108,9 +108,9 @@ ask your IT department for approval first if you are on a managed
 work computer.
 
 You can verify the ZIP file you downloaded has not been tampered with
-by checking its SHA-256 checksum against the value in
-Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable_SHA256.txt
-(see WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md for how).
+by checking its SHA-256 checksum against the value in the matching
+..._Portable_SHA256.txt file next to it (see
+WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md for how).
 
 ------------------------------------------------------------------
 HOW TO RUN THE SELF-TEST

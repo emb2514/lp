@@ -188,6 +188,24 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "tkinter",
+        # lxml is a real, needed transitive dependency (python-docx uses
+        # lxml.etree for .docx XML parsing), but pyinstaller-hooks-
+        # contrib's hook-lxml.py unconditionally collect_submodules()'s
+        # ALL of lxml -- including lxml.isoschematron, an unrelated ISO
+        # Schematron XML-validation submodule this app never imports
+        # (confirmed: nothing in this app or python-docx references
+        # isoschematron). That submodule's own hook then bundles its
+        # entire resources/ tree, whose deepest file
+        # (isoschematron/resources/xsl/iso-schematron-xslt1/
+        # iso_schematron_skeleton_for_xslt1.xsl) is ~90 characters of
+        # nested path on its own -- confirmed, via a real user's crash,
+        # to push the full extracted path over Windows Explorer's
+        # classic 260-char extraction limit (distinct from this app's
+        # own MAX_PATH handling for output folders it creates itself;
+        # this is Explorer's built-in Zip extraction, which is not
+        # long-path-aware). Excluding it removes ~30 files of a
+        # submodule nothing in this app's dependency graph ever calls.
+        "lxml.isoschematron",
     ],
     noarchive=False,
     cipher=block_cipher,

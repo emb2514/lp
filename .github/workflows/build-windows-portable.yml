@@ -154,7 +154,7 @@ jobs:
           # product version shown inside the app) is untouched.
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           "RELEASE_LABEL=$releaseLabel" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "RELEASE_NAME=Lender_Package_Builder_${releaseLabel}_${shortSha}_Windows_x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_NAME=LP_Builder_${releaseLabel}_${shortSha}_Windows_x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Assemble the release folder
         shell: pwsh

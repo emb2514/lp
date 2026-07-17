@@ -31,15 +31,16 @@ what's expected.
 ## Checklist
 
 1. **Download the portable ZIP**
-   - [ ] Downloaded `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip`
-         from the location provided to you.
+   - [ ] Downloaded the `LP_Builder_..._Windows_x64_Portable.zip` file
+         from the location provided to you (the exact name includes the
+         version label and a short build identifier, unique per build).
 
 2. **Verify the checksum when practical**
    - [ ] Open PowerShell in the folder containing the downloaded ZIP.
-   - [ ] Run: `Get-FileHash .\Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip -Algorithm SHA256`
-   - [ ] Compare the printed hash to the value in
-         `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable_SHA256.txt`.
-         They must match exactly.
+   - [ ] Run: `Get-FileHash .\<the .zip filename> -Algorithm SHA256`
+   - [ ] Compare the printed hash to the value in the matching
+         `..._Portable_SHA256.txt` file next to it. They must match
+         exactly.
 
 3. **Extract the complete folder**
    - [ ] Right-click the ZIP > "Extract All..." to a normal folder
