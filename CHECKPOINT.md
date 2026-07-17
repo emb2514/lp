@@ -1,5 +1,30 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #5 (same bug class as fix #4, reached through the interactive review pathway) +
+release-artifact filename fix**: after fix #4 shipped, the SAME validation failure recurred on the
+SAME document ID ('DOC-000159') on the rebuilt artifact -- confirmed by the user this was NOT a stale
+download. Root cause, confirmed by direct reproduction: `review_decisions.apply_review_decision()`
+(the ONLY code path that applies a human's "exclude" choice from the "Review Uncertain Matches" GUI
+dialog) sets `manually_excluded=True` on the chosen document with NO check for whether some OTHER,
+completely unrelated occurrence was already relying on that same document as ITS retained
+content-duplicate target or merged-document container -- content_dedup.py and overlap_detection.py
+have their own mutual protection against this (fix #4), but a human reviewing one uncertain match has
+no visibility into an already-CONFIRMED, unrelated content-duplicate relationship elsewhere in a
+212-document package. Excluding that document orphaned the reference exactly like fix #4's scenario,
+just reached through a third, previously-unguarded path. Fixed by adding
+`_rescue_orphaned_dependents()`: whenever a document is manually excluded, any other occurrence that
+was automatically excluded BECAUSE of it (`content_duplicate_of_document_id` or
+`contained_in_document_id` pointing to the now-excluded document) is restored to Final -- the only safe
+direction, since it is no longer provably redundant with anything actually present in Final. 2 new
+regression tests in `tests/test_review_decisions.py` (a direct reproduction plus a full end-to-end
+pipeline test using real content matching, not mocks, for the confirmed pair), both confirmed failing
+before the fix and passing after. Also fixed, per direct user feedback: every CI rebuild produced the
+byte-for-byte identical release ZIP filename, forcing manual renaming to avoid collisions across
+multiple downloads -- `build-windows-portable.yml` now appends the short git commit SHA to
+`RELEASE_NAME`, so every build's filename (and GitHub Actions artifact name) is automatically unique;
+the app's own version string (`RELEASE_LABEL`) is untouched. Local suite: 210 engine + 57 GUI = 267
+total, all passing.
+
 **POST-RELEASE FIX #4 (integrity check correctly caught a real cross-module bug: orphaned
 content-duplicate reference)**: after fix #3 let a real ~900-page package finish "Analyzing document
 content" (in ~35 min on the OLD, pre-fix-#3 build the user was still running -- not a new stall), the

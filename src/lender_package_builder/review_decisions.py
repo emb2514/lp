@@ -111,7 +111,43 @@ def apply_review_decision(
     occ.manually_excluded = True
     occ.manually_excluded_match_id = match.match_id
 
+    _rescue_orphaned_dependents(run, excluded_document_id)
+
     _rebuild_final_and_reports(run, config, allow_large_input)
+
+
+def _rescue_orphaned_dependents(run: RunResult, excluded_document_id: str) -> None:
+    """A document excluded here may already have been serving, from the
+    automated passes, as the "retained" target another occurrence was
+    excluded in reference to -- a confirmed content-aware duplicate
+    (`content_duplicate_of_document_id`), or a document safely proven
+    contained inside it as a merged package (`contained_in_document_id`).
+    content_dedup.py and overlap_detection.py have no way to know a human
+    would later choose to exclude their chosen canonical/container (see
+    the identical protection those two modules apply against each
+    other -- this is the same bug class, reached through the one
+    remaining path neither of them can see: an explicit human decision on
+    a completely unrelated match). Excluding it here without rescuing
+    whatever depended on it would orphan that reference: the dependent
+    occurrence would stay excluded from Final even though the document it
+    was deemed redundant with is now gone too, silently losing that
+    content. Restoring it -- never the reverse -- is the only safe
+    direction: once the document it was equivalent to/contained inside no
+    longer represents that content in Final, there is no longer any proof
+    it is redundant, so it must come back.
+    """
+
+    for occ in run.occurrences:
+        if occ.is_content_duplicate and occ.content_duplicate_of_document_id == excluded_document_id:
+            occ.is_content_duplicate = False
+            occ.content_duplicate_of_document_id = None
+            occ.duplicate_detection_method = None
+            occ.duplicate_confidence = None
+            occ.blank_pages_ignored_count = 0
+        if occ.is_contained_in_merged_document and occ.contained_in_document_id == excluded_document_id:
+            occ.is_contained_in_merged_document = False
+            occ.contained_in_document_id = None
+            occ.contained_page_range = None
 
 
 def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_input: bool) -> None:

@@ -311,3 +311,99 @@ def test_full_pipeline_produces_and_can_decide_a_real_uncertain_match(tmp_path, 
     og_ids = {doc_id for p in run.og_parts for doc_id in p.document_ids}
     assert one.document_id in og_ids and two.document_id in og_ids
     assert run.success is True
+
+
+# TEST 12 - REGRESSION (real user-reported bug): manually excluding a
+# document via an uncertain-match decision that has NOTHING to do with a
+# separate, already-CONFIRMED content-duplicate relationship must not
+# orphan that other relationship. Direct/deterministic reproduction: a
+# document already serving as another occurrence's
+# content_duplicate_of_document_id gets manually_excluded=True via an
+# unrelated match.
+def test_manual_exclusion_rescues_orphaned_content_duplicate(tmp_path):
+    config = AppConfig()
+    run = _build_run(tmp_path, config)  # gives us D1, D2 + match UM-0001 (D1 vs D2, both excludable)
+
+    # A THIRD occurrence, already automatically excluded by the (earlier,
+    # unrelated) content-aware dedup pass as a confirmed duplicate of D1.
+    y_pdf = make_pdf(tmp_path / "Y.pdf", pages=2, text_prefix="Y")
+    occ_y = _occ("D3", y_pdf)
+    occ_y.needs_review = False
+    occ_y.is_content_duplicate = True
+    occ_y.content_duplicate_of_document_id = "D1"
+    occ_y.duplicate_detection_method = "content_equivalent"
+    occ_y.duplicate_confidence = 0.97
+    run.occurrences.append(occ_y)
+
+    # D3 belongs in OG regardless of its Final status, exactly as it
+    # would from a real build -- add its own OG part.
+    y_og_parts = merging.write_package(
+        [occ_y], run.output_path / "OG", "Extra_OG_Part_For_D3", "OG",
+        config.max_pages_per_part, config.max_size_bytes_per_part,
+    )
+    next_index = len(run.og_parts) + 1
+    for part in y_og_parts:
+        part.index = next_index
+        occ_y.og_part_index = next_index
+        next_index += 1
+    run.og_parts.extend(y_og_parts)
+
+    assert occ_y.included_in_final is False  # sanity: genuinely excluded beforehand
+
+    # The user reviews UM-0001 (D1 vs D2) -- entirely unrelated to D3/Y --
+    # and chooses to exclude D1.
+    review_decisions.apply_review_decision(run, config, "UM-0001", "excluded", excluded_document_id="D1")
+
+    # D3/Y must be rescued: it is no longer provably redundant with
+    # anything present in Final, so it must come back rather than be
+    # silently lost.
+    assert occ_y.is_content_duplicate is False
+    assert occ_y.content_duplicate_of_document_id is None
+    assert occ_y.included_in_final is True
+    final_ids = {doc_id for p in run.final_parts for doc_id in p.document_ids}
+    assert "D3" in final_ids
+    assert "D1" not in final_ids  # D1 itself is still the one excluded
+    assert "D2" in final_ids
+
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
+
+
+# TEST 13 - same regression, but through the real end-to-end pipeline,
+# mirroring the actual reported shape: a confirmed content-duplicate pair
+# (via real, unmocked exact-normalized-text matching) plus a SEPARATE
+# uncertain match that offers the confirmed pair's retained canonical as
+# an excludable choice.
+def test_full_pipeline_manual_exclusion_rescues_orphaned_content_duplicate(tmp_path, monkeypatch):
+    monkeypatch.setattr(content_dedup, "_text_similarity", lambda a, b: 0.85)
+
+    folder = tmp_path / "input"
+    make_pdf(folder / "confirmed_a.pdf", pages=1, text_prefix="Shared", metadata={"/CustomTag": "a"})
+    make_pdf(folder / "confirmed_b.pdf", pages=1, text_prefix="Shared", metadata={"/CustomTag": "b"})
+    make_pdf(folder / "other_side.pdf", pages=1, text_prefix="Different")
+
+    from lender_package_builder.cli import build_package
+
+    config = AppConfig()
+    run = build_package(input_path=folder, output_dir=tmp_path / "output", config=config, progress=False)
+
+    dup = next(o for o in run.occurrences if o.original_filename in ("confirmed_a.pdf", "confirmed_b.pdf")
+               and o.is_content_duplicate)
+    canonical = next(o for o in run.occurrences if o.original_filename in ("confirmed_a.pdf", "confirmed_b.pdf")
+                      and not o.is_content_duplicate)
+    assert dup.content_duplicate_of_document_id == canonical.document_id
+
+    match = next(m for m in run.uncertain_matches if canonical.document_id in m.excludable_ids)
+
+    review_decisions.apply_review_decision(
+        run, config, match.match_id, "excluded", excluded_document_id=canonical.document_id
+    )
+
+    assert dup.is_content_duplicate is False
+    assert dup.included_in_final is True
+    final_ids = {doc_id for p in run.final_parts for doc_id in p.document_ids}
+    assert dup.document_id in final_ids
+    assert canonical.document_id not in final_ids
+    assert run.success is True
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
