@@ -57,9 +57,23 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
 def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
     occ_by_id = {o.document_id: o for o in run.occurrences}
     duplicates = [o for o in run.occurrences if o.is_duplicate]
-    total_removed = len(duplicates) + sum(
-        len(g.document_ids) - 1 for g in run.content_duplicate_groups
-    )
+    # A group's non-canonical members are only actually removed from
+    # Final if needs_review is False -- a member that ALSO has an
+    # unrelated uncertain pairwise result (needs_review=True, set
+    # independently by a different comparison within the same
+    # structural bucket) stays in Final regardless of this "same" group
+    # membership (see SourceOccurrence.included_in_final). Counting/
+    # listing every group member here unconditionally would misreport a
+    # document as removed when it was actually retained.
+    content_dup_removed = [
+        doc_id
+        for g in run.content_duplicate_groups
+        for doc_id in g.document_ids
+        if doc_id != g.retained_document_id
+        and doc_id in occ_by_id
+        and not occ_by_id[doc_id].needs_review
+    ]
+    total_removed = len(duplicates) + len(content_dup_removed)
 
     lines: list[str] = []
     lines.append("DUPLICATE REMOVAL LOG")
@@ -111,10 +125,17 @@ def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
         lines.append(_METHOD_SECTION_TITLES[method])
         lines.append("=" * 70)
         lines.append(_METHOD_DESCRIPTIONS[method])
-        removed_count = sum(len(g.document_ids) - 1 for g in groups)
+        removed_count = sum(
+            1
+            for g in groups
+            for doc_id in g.document_ids
+            if doc_id != g.retained_document_id
+            and doc_id in occ_by_id
+            and not occ_by_id[doc_id].needs_review
+        )
         lines.append(f"Count: {removed_count}")
         lines.append("")
-        if not groups:
+        if removed_count == 0:
             lines.append("None found.")
             lines.append("")
             continue
@@ -127,6 +148,8 @@ def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
                 occ = occ_by_id.get(doc_id)
                 if occ is None:
                     continue
+                if occ.needs_review:
+                    continue  # protected -- actually still retained in Final, not removed
                 i += 1
                 lines.append(f"[{i}] Duplicate occurrence")
                 lines.append(f"    Removed filename:  {occ.original_filename}")

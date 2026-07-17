@@ -208,3 +208,74 @@ def test_reports_generated_cleanly_with_content_aware_dedup_disabled(tmp_path, r
 
     for check in run.integrity_checks:
         assert check.passed, f"{check.name}: {check.detail}"
+
+
+# TEST 8 - REGRESSION (found via direct comparison with a real user's
+# Processing_Manifest.json against Duplicate_Removal_Log.txt): a
+# ContentDuplicateGroup's non-canonical member is only actually removed
+# from Final when needs_review is False -- a member that ALSO carries an
+# independent, unrelated uncertain pairwise result (needs_review=True,
+# from a different comparison entirely) stays in Final regardless of
+# this group membership (see SourceOccurrence.included_in_final). The
+# log used to list/count every group member unconditionally, so it
+# reported a document as "removed" that was actually still present in
+# Final -- misleading, even though Final's actual contents were always
+# correct (this is a report-accuracy bug, not a data-safety one).
+def test_duplicate_removal_log_excludes_needs_review_protected_group_members(tmp_path):
+    from lender_package_builder import reporting
+    from lender_package_builder.models import (
+        ContentDuplicateGroup,
+        ProcessingStatus,
+        RunResult,
+        SourceOccurrence,
+    )
+
+    def occ(doc_id, needs_review=False, is_content_duplicate=False, content_duplicate_of=None):
+        return SourceOccurrence(
+            document_id=doc_id,
+            traversal_index=int(doc_id[-1]),
+            original_filename=f"{doc_id}.pdf",
+            original_relative_path=f"{doc_id}.pdf",
+            original_extension=".pdf",
+            original_size_bytes=1000,
+            status=ProcessingStatus.CONVERTED,
+            converted_page_count=1,
+            needs_review=needs_review,
+            is_content_duplicate=is_content_duplicate,
+            content_duplicate_of_document_id=content_duplicate_of,
+            duplicate_detection_method="content_equivalent" if is_content_duplicate else None,
+            duplicate_confidence=0.97 if is_content_duplicate else None,
+        )
+
+    canonical = occ("D1")
+    genuinely_removed = occ("D2", is_content_duplicate=True, content_duplicate_of="D1")
+    # Protected: a member of this "same" group, but ALSO has an
+    # independent uncertain result against some other document entirely
+    # -- needs_review=True keeps it in Final despite is_content_duplicate.
+    protected = occ("D3", needs_review=True, is_content_duplicate=True, content_duplicate_of="D1")
+    assert protected.included_in_final is True  # sanity per the real data model
+
+    group = ContentDuplicateGroup(
+        method="content_equivalent",
+        document_ids=["D1", "D2", "D3"],
+        retained_document_id="D1",
+        confidence=0.97,
+    )
+    run = RunResult(
+        input_path=tmp_path, output_path=tmp_path / "output", start_time="t",
+        occurrences=[canonical, genuinely_removed, protected],
+        content_duplicate_groups=[group],
+    )
+
+    path = tmp_path / "Duplicate_Removal_Log.txt"
+    reporting.write_duplicate_removal_log(run, path)
+    text = path.read_text()
+
+    assert "Total duplicate occurrences removed from Final: 1" in text
+    assert "D2.pdf" in text
+    assert "D3.pdf" not in text  # protected -- never claimed as removed
+
+    section_start = text.index("CONTENT-EQUIVALENT DUPLICATES")
+    section_end = text.index("BLANK-PAGE-TOLERANT DUPLICATES")
+    section = text[section_start:section_end]
+    assert "Count: 1" in section

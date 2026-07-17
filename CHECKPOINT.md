@@ -1,5 +1,28 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #6 (real-package validation: SUCCESS, plus one report-accuracy bug found via
+manual manifest cross-check)**: the user ran their real ~212-document package on the fix-#5 build and
+shared all five generated reports. Result: **OVERALL RESULT: SUCCESS, all 27 integrity checks
+passed**, run time ~10.6 minutes (down from ~35 minutes pre-fix-#3) -- direct, real-world confirmation
+that fixes #1-#5 all work correctly together on the actual reported package. Specifically verified: the
+DOC-000159 -> DOC-000153 -> DOC-000152 chain that broke in fix #4/#5's scenario now resolves correctly
+(DOC-000153 is fully contained in DOC-000152 but stays in Final because DOC-000159 depends on it,
+exactly as fix #4 intended). While cross-checking the human-readable reports against the authoritative
+`Processing_Manifest.json` (212 - 174 = 38 excluded: 25 exact + 9 content-duplicate + 4 contained, all
+independently verified against `included_in_final`), found a real discrepancy: `Duplicate_Removal_Log.txt`
+claimed 11 normalized/content-equivalent duplicates removed, but only 9 were actually excluded -- 2
+occurrences (DOC-000011, DOC-000012) are non-canonical members of a confirmed "same" group AND
+separately carry an unrelated uncertain pairwise result (`needs_review=True`), which correctly keeps
+them in Final (per `included_in_final`) but the log listed them as removed anyway. Root cause:
+`reporting.write_duplicate_removal_log()` counted/listed every `ContentDuplicateGroup` member
+unconditionally, never checking `needs_review`. This is a report-accuracy bug only -- Final's actual
+contents were always correct, confirmed independently via the manifest -- but a misleading audit trail
+undermines the app's core trust guarantee. Fixed by skipping (and not counting) any group member whose
+`needs_review` is True in both the per-method sections and the total. 1 new regression test in
+`tests/test_reporting_v2.py`, confirmed failing before the fix (old code reported "2" instead of "1"
+for a group with one protected member) and passing after. Local suite: 211 engine + 57 GUI = 268 total,
+all passing.
+
 **POST-RELEASE FIX #5 (same bug class as fix #4, reached through the interactive review pathway) +
 release-artifact filename fix**: after fix #4 shipped, the SAME validation failure recurred on the
 SAME document ID ('DOC-000159') on the rebuilt artifact -- confirmed by the user this was NOT a stale
