@@ -23,7 +23,14 @@ byte-for-byte identical release ZIP filename, forcing manual renaming to avoid c
 multiple downloads -- `build-windows-portable.yml` now appends the short git commit SHA to
 `RELEASE_NAME`, so every build's filename (and GitHub Actions artifact name) is automatically unique;
 the app's own version string (`RELEASE_LABEL`) is untouched. Local suite: 210 engine + 57 GUI = 267
-total, all passing.
+total, all passing. Committed as `cc02467`, pushed, and **re-validated on real Windows CI** (run
+[29600140245](https://github.com/emb2514/lp/actions/runs/29600140245), SUCCESS, 264 passed/3 expected
+skips/0 failed -- matches the local 267-collected count exactly). New artifact ID `8414739955` -- note
+the artifact/release-ZIP name now correctly includes the commit SHA
+(`Lender_Package_Builder_1.0.0_RC1_cc02467_Windows_x64_Portable.zip`), confirming the filename fix
+itself works. Release ZIP SHA-256 `2030A3264E7666774ECCAF2E7E32E706A800643ADFF8EA363C52BA96CD60265D`
+-- see `RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link (all earlier artifacts are
+missing at least this fix and should not be used).
 
 **POST-RELEASE FIX #4 (integrity check correctly caught a real cross-module bug: orphaned
 content-duplicate reference)**: after fix #3 let a real ~900-page package finish "Analyzing document
