@@ -21,7 +21,11 @@ undermines the app's core trust guarantee. Fixed by skipping (and not counting) 
 `needs_review` is True in both the per-method sections and the total. 1 new regression test in
 `tests/test_reporting_v2.py`, confirmed failing before the fix (old code reported "2" instead of "1"
 for a group with one protected member) and passing after. Local suite: 211 engine + 57 GUI = 268 total,
-all passing.
+all passing. Committed as `72cf1b8`, pushed, and **re-validated on real Windows CI** (run
+[29606148402](https://github.com/emb2514/lp/actions/runs/29606148402), SUCCESS, 265 passed/3 expected
+skips/0 failed -- matches the local 268-collected count exactly). New artifact ID `8416986057`, release
+ZIP SHA-256 `97DAE9C4429E38A9729C43704365E40632F94311FB86AB00DB84C937D0C1126D` -- see
+`RC2_DELIVERABLE_REPORT.md` §8/§10 for the current download link.
 
 **POST-RELEASE FIX #5 (same bug class as fix #4, reached through the interactive review pathway) +
 release-artifact filename fix**: after fix #4 shipped, the SAME validation failure recurred on the

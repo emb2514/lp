@@ -5,9 +5,25 @@
 what a nontechnical Windows 11 user needs to know to run it.
 
 **Bottom line: yes, the RC2 Windows application is ready to use.** Real Windows CI (not a
-source-only or Linux-only check) built the portable executable, ran the entire 267-test suite
+source-only or Linux-only check) built the portable executable, ran the entire 268-test suite
 against it, proved it needs no external Python, and produced a downloadable release ZIP -- all
-green, with real evidence (not just a checkmark) verified below.
+green, with real evidence (not just a checkmark) verified below. **This is now also confirmed on the
+actual real-world package that drove fixes #1-#5**: the user ran their real ~212-document, ~1,666-page
+lender package on the fix-#5 build and shared all five generated reports -- OVERALL RESULT: SUCCESS,
+all 27 integrity checks passed, in ~10.6 minutes (down from ~35 minutes before the performance fix).
+
+**Post-release fix #6**: cross-checking those real reports against the authoritative
+`Processing_Manifest.json` (212 - 174 = 38 excluded documents, independently verified against every
+occurrence's `included_in_final`) surfaced one more real, if minor, issue: `Duplicate_Removal_Log.txt`
+claimed 2 more documents were removed than were actually excluded. Root cause:
+`reporting.write_duplicate_removal_log()` counted every `ContentDuplicateGroup` member unconditionally,
+without checking `needs_review` -- a member can belong to a confirmed "same" group AND separately carry
+an unrelated uncertain result against a different document, which correctly keeps it in Final but the
+log described it as removed anyway. **Final's actual contents were always correct** (independently
+confirmed via the manifest); this was a report-accuracy bug only, but an audit trail this app leans on
+for trust needs to be right. Fixed by skipping needs_review-protected members from both the per-method
+counts and the total. 1 new regression test, confirmed failing before the fix and passing after. See
+`CHECKPOINT.md` for the commit hash and Windows CI re-validation status.
 
 **Post-release fix #5**: after fix #4 shipped, the identical validation failure recurred on the same
 document -- confirmed NOT a stale download. Root cause: `review_decisions.apply_review_decision()`
@@ -277,9 +293,17 @@ document remains present, untouched, in OG; and every one of the 27 integrity ch
 Assertions in this test are entirely about which specific documents survive Final and why -- never a
 fixed target page count, per the plan's explicit instruction not to force one.
 
+**Independent real-world validation (not the original Robert package, but a comparably real, complex,
+customer-scale lender package)**: while the original "Robert package" itself remains unavailable, the
+user's own real ~212-document, ~1,666-page package -- run against the fix-#5 build -- provides
+real-world evidence of the same kind: OVERALL RESULT: SUCCESS, all 27 integrity checks passed, with
+exact-hash duplicates, content-aware duplicates, a merged-package containment chain, and a genuine
+PDF-with-embedded-files all present and correctly handled together in one real run. See "Post-release
+fix #6" above for the one (report-accuracy-only) issue found by cross-checking this real output.
+
 ## 7. Complete test counts and results
 
-**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **210 passed, 0 failed.**
+**Engine test suite** (`pytest tests/ --ignore=tests/gui`): **211 passed, 0 failed.**
 
 Breakdown by area (approximate, by file):
 conversion, splitting/merging, reporting, progress, hashing/deduplication, inventory, archive safety,
@@ -290,8 +314,9 @@ orphaned-canonical-selection regression, "Post-release fix #4" above), PDF rende
 (including the orphaned-containment-exclusion regression, "Post-release fix #4" above), document
 version classification, validation (dedicated), the OG-invariance safety test, expanded reporting
 coverage, the interactive review-decision engine (including the orphaned-dependent-rescue regression,
-"Post-release fix #5" above), the Robert-package synthetic acceptance test, and output-path-length
-safety (the MAX_PATH fix, "Post-release fix #1" above).
+"Post-release fix #5" above), the Robert-package synthetic acceptance test, output-path-length safety
+(the MAX_PATH fix, "Post-release fix #1" above), and the duplicate-removal-log accuracy regression
+("Post-release fix #6" above).
 
 **GUI test suite** (`tests/gui/`, run per-file due to a known, pre-existing, environment-specific Qt
 offscreen-platform teardown instability in this sandboxed container -- confirmed nondeterministic
@@ -300,16 +325,15 @@ deep inside pytest-qt/Qt's own teardown machinery in files this session never to
 collected, all pass when run file-by-file.** GUI correctness is further confirmed on the real Windows
 CI runner below, which does not share this container's offscreen-platform quirk.
 
-**Total: 267 automated tests, all passing** (210 engine + 57 GUI).
+**Total: 268 automated tests, all passing** (211 engine + 57 GUI).
 
 ## 8. Windows CI / build results
 
-**Latest run** (includes the orphaned-dependent-rescue fix and the unique-filename fix -- "Post-release
-fix #5" above):
-[`Build Windows Portable Release` #29600140245](https://github.com/emb2514/lp/actions/runs/29600140245)
+**Latest run** (includes the duplicate-removal-log accuracy fix -- "Post-release fix #6" above):
+[`Build Windows Portable Release` #29606148402](https://github.com/emb2514/lp/actions/runs/29606148402)
 -- triggered via `workflow_dispatch` on branch `claude/lender-package-builder-stage-1-h9sa3n` at
-commit `cc02467`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~4.0 minutes
-(17:27:54-17:31:54 UTC).
+commit `72cf1b8`. **Conclusion: SUCCESS**, runner `windows-latest`, total job time ~3.3 minutes
+(19:03:50-19:07:07 UTC).
 
 Every one of the 16 steps passed -- verified individually, not inferred from the overall green
 checkmark:
@@ -318,7 +342,7 @@ checkmark:
 |---|---|
 | Check out repository / Set up Python 3.13 | PASS |
 | Install build dependencies | PASS |
-| **Run the full automated test suite on Windows** | PASS -- **264 passed, 3 skipped, 0 failed, 1 warning**, in 32.53s (267 collected total, matching the local count exactly -- includes the 2 new orphaned-dependent-rescue regression tests) |
+| **Run the full automated test suite on Windows** | PASS -- **265 passed, 3 skipped, 0 failed, 1 warning**, in 29.90s (268 collected total, matching the local count exactly -- includes the new duplicate-removal-log accuracy regression test) |
 | Generate the multi-resolution application icon | PASS |
 | Build the portable executable with PyInstaller | PASS |
 | Verify the build produced `LenderPackageBuilder.exe` | PASS |
@@ -336,17 +360,16 @@ specifically designed to run on non-Windows and correctly skips itself when actu
 Windows. The single warning is Python's own `zipfile` module surfacing an intentional test fixture (a
 ZIP built with a duplicate entry name), not an application defect.
 
-**Downloadable artifact (current, includes all five post-release fixes)** -- note the filename itself
-now proves the unique-filename fix works, unlike every earlier build in this table:
-- Name: `Lender_Package_Builder_1.0.0_RC1_cc02467_Windows_x64-Portable` (internal release label +
+**Downloadable artifact (current, includes all six post-release fixes)**:
+- Name: `Lender_Package_Builder_1.0.0_RC1_72cf1b8_Windows_x64-Portable` (internal release label +
   short commit SHA; contains RC2's full feature set -- see the note in this section's last paragraph)
-- Contains: `Lender_Package_Builder_1.0.0_RC1_cc02467_Windows_x64_Portable.zip` (the actual portable
-  release, SHA-256 `2030A3264E7666774ECCAF2E7E32E706A800643ADFF8EA363C52BA96CD60265D`) and its matching
+- Contains: `Lender_Package_Builder_1.0.0_RC1_72cf1b8_Windows_x64_Portable.zip` (the actual portable
+  release, SHA-256 `97DAE9C4429E38A9729C43704365E40632F94311FB86AB00DB84C937D0C1126D`) and its matching
   `..._Portable_SHA256.txt` checksum file
-- Artifact size: 80,112,888 bytes (~76.4 MB)
-- Artifact ID: `8414739955`, digest `sha256:15be93d26ccf8e25cf2ec988032cd28074acb2c15de05aeaa958503c283c1898`
+- Artifact size: 80,112,923 bytes (~76.4 MB)
+- Artifact ID: `8416986057`, digest `sha256:ded19f9e1641ec0ce847a913564cd355d67e161675e316356e6be836796f2d9f`
   (the wrapper artifact's own hash -- distinct from the release ZIP's hash above)
-- Download URL: <https://github.com/emb2514/lp/actions/runs/29600140245/artifacts/8414739955>
+- Download URL: <https://github.com/emb2514/lp/actions/runs/29606148402/artifacts/8416986057>
   (expires 2026-08-16, 30-day GitHub Actions retention -- download and store it somewhere durable
   well before then if it needs to be kept)
 - Inside the release folder: `LenderPackageBuilder.exe` + `_internal/` (all bundled dependencies,
@@ -358,10 +381,13 @@ now proves the unique-filename fix works, unlike every earlier build in this tab
   CI run, and `pip freeze` lock for this specific build).
 
 **Previous runs (kept for history only -- do not use these artifacts):**
+- [#29600140245](https://github.com/emb2514/lp/actions/runs/29600140245) at commit `cc02467`
+  (MAX_PATH + Final-folder-empty + performance + orphaned-canonical + orphaned-dependent-rescue +
+  unique-filename fixes only, does NOT have the duplicate-removal-log accuracy fix), 264 passed/3
+  skipped/0 failed, artifact ID `8414739955`.
 - [#29598340493](https://github.com/emb2514/lp/actions/runs/29598340493) at commit `e6f32ff`
-  (MAX_PATH + Final-folder-empty + performance + orphaned-canonical fixes only, does NOT have the
-  orphaned-dependent-rescue or unique-filename fixes), 262 passed/3 skipped/0 failed, artifact ID
-  `8414035077`.
+  (MAX_PATH + Final-folder-empty + performance + orphaned-canonical fixes only), 262 passed/3
+  skipped/0 failed, artifact ID `8414035077`.
 - [#29596759299](https://github.com/emb2514/lp/actions/runs/29596759299) at commit `2b1da0e`
   (MAX_PATH + Final-folder-empty + performance fixes only), 259 passed/3 skipped/0 failed, artifact ID
   `8413426018`.
@@ -423,7 +449,7 @@ described in this report; only the version string itself has not yet been advanc
 ## 10. Installing and running (for a nontechnical Windows 11 user)
 
 1. Download the release from the Windows CI build artifact:
-   <https://github.com/emb2514/lp/actions/runs/29600140245/artifacts/8414739955> (requires being
+   <https://github.com/emb2514/lp/actions/runs/29606148402/artifacts/8416986057> (requires being
    signed in to GitHub with access to this repository; the artifact expires 2026-08-15). Inside is
    `Lender_Package_Builder_1.0.0_RC1_Windows_x64_Portable.zip` -- no account, license key, or
    installer is required beyond that GitHub download step.
