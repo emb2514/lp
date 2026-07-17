@@ -148,13 +148,14 @@ jobs:
           # Every build otherwise produces the byte-for-byte same filename
           # (RELEASE_LABEL only changes on a deliberate version bump), which
           # forces anyone downloading more than one build in a row to
-          # manually rename files to avoid overwriting/confusing them.
-          # Appending the short commit SHA makes every build's filename
-          # unique automatically, while RELEASE_LABEL itself (the actual
-          # product version shown inside the app) is untouched.
-          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          # manually rename files to avoid overwriting/confusing them. A
+          # short git commit SHA was tried first, but a hex string means
+          # nothing to a human and reads as clutter/noise in a filename --
+          # GITHUB_RUN_NUMBER is a plain, ever-increasing integer (this
+          # workflow's own build count), giving a clean "v1", "v2", "v3"
+          # style version that is still guaranteed unique per build.
           "RELEASE_LABEL=$releaseLabel" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "RELEASE_NAME=LP_Builder_${releaseLabel}_${shortSha}_Windows_x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_NAME=LP_Builder_v${env:GITHUB_RUN_NUMBER}_Windows_x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Assemble the release folder
         shell: pwsh

@@ -1,5 +1,14 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+**POST-RELEASE FIX #8 (release naming correction, direct user feedback)**: fix #7's
+`LP_Builder_RC2_<shortsha>_...` naming still wasn't right -- the user explicitly rejected the
+7-character git-commit-hash suffix (e.g. `ad00fd8`) as meaningless clutter in a user-facing filename.
+Replaced it with `$env:GITHUB_RUN_NUMBER` (a plain, ever-increasing integer -- this workflow's own
+build count), giving a clean `LP_Builder_v<N>_Windows_x64_Portable.zip` pattern -- exactly the
+"v1, v2, v3..." style the user had already been doing by hand before asking for this to be automated.
+Still guaranteed unique per build; `RELEASE_LABEL` ("RC2") is retained internally (BUILD_MANIFEST.txt,
+`--version` output) but no longer appears in the filename itself.
+
 **POST-RELEASE FIX #7 (Explorer "Path too long" extracting the ZIP, real user report) + release
 naming/version overhaul (explicit user request)**: the user's Windows Explorer failed to extract the
 fix-#6 ZIP with "Error 0x80010135: Path too long" on `iso_schematron_skeleton_for_xslt1` (an XSL
