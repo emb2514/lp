@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from .. import archives, runtime_paths
 from .._version import USER_VERSION
+from ..cancellation import CancellationToken
 from ..cli import _default_config_path
 from ..config import AppConfig, load_config_safe
 from ..models import PackageIdentity
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         self._last_run_config: AppConfig | None = None
         self._last_allow_large_input = False
         self._last_identity: PackageIdentity | None = None
+        self._cancel_token: CancellationToken | None = None
 
         self.setWindowTitle(f"Lender Package Builder - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
@@ -133,6 +135,7 @@ class MainWindow(QMainWindow):
         self.result_view.process_another_requested.connect(self._on_process_another)
         self.failure_view.change_input_requested.connect(self._on_process_another)
         self.failure_view.try_again_requested.connect(self._on_try_again)
+        self.progress_view.cancel_requested.connect(self._on_cancel_clicked)
 
     def _build_header(self) -> QWidget:
         header = QWidget()
@@ -310,6 +313,7 @@ class MainWindow(QMainWindow):
         self._last_allow_large_input = allow_large_input
         self._last_identity = identity
         self.is_processing = True
+        self._cancel_token = CancellationToken()
         self._set_input_controls_enabled(False)
         self.progress_view.start()
         self.stack.setCurrentWidget(self.progress_view)
@@ -323,19 +327,29 @@ class MainWindow(QMainWindow):
                 allow_large_input,
                 worker.progress.emit,
                 identity,
+                self._cancel_token,
             )
         )
         worker.progress.connect(self._on_progress_event)
         worker.finished.connect(self._on_build_finished)
         worker.failed.connect(self._on_build_failed)
+        worker.cancelled.connect(self._on_build_cancelled)
         self._build_worker = worker
         self._build_thread = start_worker(worker, thread_parent=self)
 
     def _on_progress_event(self, event: ProgressEvent) -> None:
         self.progress_view.handle_event(event)
 
+    def _on_cancel_clicked(self) -> None:
+        if not self.is_processing or self._cancel_token is None:
+            return
+        if dialogs.confirm_cancel_processing(self):
+            self.progress_view.set_cancelling()
+            self._cancel_token.request()
+
     def _on_build_finished(self, run) -> None:
         self.is_processing = False
+        self._cancel_token = None
         self.progress_view.stop()
         self._set_input_controls_enabled(True)
 
@@ -359,9 +373,18 @@ class MainWindow(QMainWindow):
 
     def _on_build_failed(self, user_message: str, technical_details: str) -> None:
         self.is_processing = False
+        self._cancel_token = None
         self.progress_view.stop()
         self._set_input_controls_enabled(True)
         self.failure_view.set_error(user_message, technical_details, log_dir=None)
+        self.stack.setCurrentWidget(self.failure_view)
+
+    def _on_build_cancelled(self, error) -> None:
+        self.is_processing = False
+        self._cancel_token = None
+        self.progress_view.stop()
+        self._set_input_controls_enabled(True)
+        self.failure_view.set_cancelled(error)
         self.stack.setCurrentWidget(self.failure_view)
 
     def _on_process_another(self) -> None:

@@ -54,7 +54,53 @@ first name, loan number, adverse flag) dataclass in `models.py`:
   dialog so existing tests don't block on a real modal. Local suite: 244 engine + 62 GUI = 306
   total, all passing (up from 212/57 at the RC2 baseline).
 
-Milestone 2 (safe Cancel Processing) is next.
+**MILESTONE 2 COMPLETE -- Safe abort (Cancel Processing).** New `cancellation.py` module:
+`CancellationToken` (a thin `threading.Event` wrapper) plus `check_cancelled()`, a single-call
+check point that raises `ProcessingCancelled` when requested. Cooperative only -- nothing ever
+force-kills the worker thread.
+
+- **Check points threaded through the real pipeline**, not just top-level stage boundaries: the
+  per-document conversion loop, `merging.write_package()`'s per-part loop (both the size-check
+  rebuild loop and the temp-to-real-filename promotion loop), `inventory.py`'s per-file folder
+  and per-entry ZIP traversal loops (covers "during inventory"/"during archive extraction"),
+  `content_dedup.build_fingerprints()`'s per-document loop and `detect_content_duplicates()`'s
+  per-bucket loop, and `overlap_detection.detect_overlaps()`'s per-candidate loop -- so a long
+  fingerprinting/comparison stage on a large real package stops within about one document's worth
+  of work, not only between whole stages.
+- **`build_package()`** accepts an optional `cancellation_token`; catching `ProcessingCancelled`
+  routes to a new `_finish_cancellation()` that: deletes the workspace's temp files regardless of
+  `keep_temp` (a deliberate cancel always cleans up); deletes any partial Final/Original Lender
+  Package parts and any partial `Unconverted Files` copies (never leaves a partial PDF under a
+  real package filename); deletes the normal reports and writes a distinct
+  `Reports/Cancellation_Report.txt` instead (never the normal success-only reports); and, only if
+  that cleanup itself fails (e.g. a locked file), renames the whole output folder to a versioned
+  `Incomplete Cancelled Output` folder rather than leaving a broken folder under the identity's
+  normal name. Raises `ProcessingCancelledError` (new in `exceptions.py`) carrying the stage
+  cancelled at, the final output path, and whether cleanup succeeded -- never returns a
+  `RunResult`, so a cancelled run can never be mistaken for success or a normal failure.
+- **GUI**: `ProgressView` gets a "Cancel Processing" button; clicking it shows a new
+  "Stop processing this package?" confirmation (Continue Processing / Stop Processing, per the
+  spec) via `dialogs.confirm_cancel_processing()` -- only an explicit Stop Processing calls
+  `CancellationToken.request()`. `CallableWorker` gets a distinct `cancelled` signal (separate
+  from `failed`) carrying the `ProcessingCancelledError`, so `FailureView.set_cancelled()` shows a
+  clearly distinct amber "Processing was cancelled" banner (never the red failure banner or the
+  green success banner) with the stage, cleanup status, and a reminder that source files were
+  never touched. Processing can be restarted immediately afterward with no app restart -- the
+  identity-based output-folder versioning from Milestone 1 means a retry with the same identity
+  just becomes ", v2" automatically.
+- A real threading hazard was found and fixed while writing the end-to-end GUI test: connecting a
+  plain Python function directly to a cross-thread Qt signal executes it on the EMITTING (worker)
+  thread rather than queuing it onto the main thread, which is unsafe for touching widgets --
+  the fix (in the test only) was hooking the already-connected bound QObject method
+  (`MainWindow._on_progress_event`) instead, which Qt correctly queues across threads.
+- 12 new engine-level tests (`tests/test_cancellation.py`: token semantics, cancellation at
+  multiple real stages, no partial package/no success-only reports left behind, source files
+  never modified, immediate retry after cancellation succeeds) and 6 new GUI tests
+  (`tests/gui/test_cancellation_gui.py`, including one real-background-thread end-to-end
+  cancellation through the actual worker). Local suite: 256 engine + 68 GUI = 324 total, all
+  passing (up from 244/62 after Milestone 1).
+
+Milestone 3 (rename the visible product to "Document Merger") is next.
 
 ---
 

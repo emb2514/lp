@@ -21,6 +21,7 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 from . import naming
+from .cancellation import CancellationToken, check_cancelled
 from .models import OutputPart, PackageIdentity, SourceOccurrence
 from .splitting import plan_parts
 
@@ -46,6 +47,7 @@ def write_package(
     package_label: str,
     max_pages_per_part: int,
     max_size_bytes_per_part: int,
+    cancellation_token: CancellationToken | None = None,
 ) -> list[OutputPart]:
     """Write `docs` (in order) as one or more PDF parts under `output_dir`.
 
@@ -71,6 +73,7 @@ def write_package(
 
     i = 0
     while i < len(parts):
+        check_cancelled(cancellation_token)
         while True:
             temp_dest = output_dir / f"{temp_stem}_{i + 1:03d}.pdf"
             _build_merged_pdf(parts[i], temp_dest)
@@ -95,6 +98,7 @@ def write_package(
     total_parts = len(parts)
     output_parts: list[OutputPart] = []
     for idx, part_docs in enumerate(parts, start=1):
+        check_cancelled(cancellation_token)
         temp_dest = output_dir / f"{temp_stem}_{idx:03d}.pdf"
         dest = output_dir / naming.package_part_filename(identity, package_kind, idx, total_parts)
         temp_dest.replace(dest)

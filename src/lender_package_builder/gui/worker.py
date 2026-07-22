@@ -21,6 +21,7 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from ..cancellation import CancellationToken
 from ..config import AppConfig
 from ..exceptions import (
     ArchiveTooLargeError,
@@ -28,6 +29,7 @@ from ..exceptions import (
     InvalidInputError,
     LenderPackageBuilderError,
     OutputAlreadyExistsError,
+    ProcessingCancelledError,
 )
 from ..models import PackageIdentity
 from ..progress import ProgressCallback
@@ -39,6 +41,7 @@ class CallableWorker(QObject):
     progress = Signal(object)  # ProgressEvent
     finished = Signal(object)  # result
     failed = Signal(str, str)  # user_message, technical_details
+    cancelled = Signal(object)  # ProcessingCancelledError
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -53,6 +56,12 @@ class CallableWorker(QObject):
             return
         try:
             result = self._fn()
+        except ProcessingCancelledError as exc:
+            # A cancellation is never a failure -- it gets its own signal
+            # so the GUI can show a distinct "Cancelled" state rather
+            # than the red failure screen.
+            self.cancelled.emit(exc)
+            return
         except Exception as exc:  # the worker thread must never crash silently
             user_message, technical_details = translate_error(exc)
             self.failed.emit(user_message, technical_details)
@@ -80,6 +89,7 @@ def start_worker(worker: CallableWorker, thread_parent: QObject | None = None) -
     thread.started.connect(worker.run)
     worker.finished.connect(thread.quit)
     worker.failed.connect(thread.quit)
+    worker.cancelled.connect(thread.quit)
     thread.finished.connect(worker.deleteLater)
     thread.start()
     return thread
@@ -92,6 +102,7 @@ def make_build_callable(
     allow_large_input: bool,
     emit_progress: ProgressCallback,
     identity: PackageIdentity | None = None,
+    cancellation_token: CancellationToken | None = None,
 ) -> Callable[[], object]:
     """Build the zero-arg callable that runs the real Stage 1 engine.
 
@@ -113,6 +124,7 @@ def make_build_callable(
             progress=False,
             progress_callback=emit_progress,
             identity=identity,
+            cancellation_token=cancellation_token,
         )
 
     return _run

@@ -38,6 +38,27 @@ class LargeInputConfirmDialog(QMessageBox):
         return self.clickedButton() is self.process_button
 
 
+def confirm_cancel_processing(parent: QWidget | None) -> bool:
+    """"Stop processing this package?" -- shown when Cancel Processing is
+    clicked, so a single accidental click can never cancel a run.
+    Returns True only if the user explicitly chose Stop Processing.
+    """
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Stop processing?")
+    box.setText("Stop processing this package?")
+    box.setInformativeText(
+        "No Final or Original Lender Package files will be produced from this run. Nothing already "
+        "processed is kept; your original files are never changed either way."
+    )
+    continue_button = box.addButton("Continue Processing", QMessageBox.ButtonRole.RejectRole)
+    stop_button = box.addButton("Stop Processing", QMessageBox.ButtonRole.DestructiveRole)
+    box.setDefaultButton(continue_button)
+    box.exec()
+    return box.clickedButton() is stop_button
+
+
 def warn_processing_in_progress(parent: QWidget | None) -> None:
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Warning)

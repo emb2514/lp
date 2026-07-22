@@ -34,6 +34,7 @@ class ProgressStage(str, enum.Enum):
     RUNNING_INTEGRITY_CHECKS = "running_integrity_checks"
     WRITING_REPORTS = "writing_reports"
     COMPLETE = "complete"
+    CANCELLED = "cancelled"
 
 
 class ProgressSeverity(str, enum.Enum):

@@ -30,6 +30,7 @@ from . import (
     validation,
     version_classification,
 )
+from .cancellation import CancellationToken, ProcessingCancelled, check_cancelled
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
 from .conversion.base import make_placeholder_pdf
@@ -40,6 +41,7 @@ from .exceptions import (
     InvalidInputError,
     LenderPackageBuilderError,
     OutputAlreadyExistsError,
+    ProcessingCancelledError,
 )
 from .inventory import InventoryBuilder
 from .models import ConversionOutcome, PackageIdentity, ProcessingStatus, RunResult
@@ -224,6 +226,13 @@ class _ProgressReporter:
     def __init__(self, callback: ProgressCallback | None, print_enabled: bool):
         self._callback = callback
         self._print_enabled = print_enabled
+        # Tracks the most recent stage/progress seen, purely so a
+        # cancellation caught in build_package() can honestly report
+        # "cancelled during <stage>, N of M files processed" rather than
+        # guessing.
+        self.last_stage: ProgressStage = ProgressStage.PREFLIGHT
+        self.last_current: int | None = None
+        self.last_total: int | None = None
 
     def emit(
         self,
@@ -237,6 +246,11 @@ class _ProgressReporter:
         detail: str | None = None,
         print_message: bool = True,
     ) -> None:
+        self.last_stage = stage
+        if current is not None:
+            self.last_current = current
+        if total is not None:
+            self.last_total = total
         if self._print_enabled and print_message:
             print(message)
         self._LOG_FUNCS[severity](message)
@@ -268,6 +282,7 @@ def build_package(
     progress: bool = True,
     progress_callback: ProgressCallback | None = None,
     identity: PackageIdentity | None = None,
+    cancellation_token: CancellationToken | None = None,
 ) -> RunResult:
     if not input_path.exists():
         raise InvalidInputError(f"Input path does not exist: {input_path}")
@@ -294,59 +309,158 @@ def build_package(
     start_dt = datetime.now()
     start_perf = time.perf_counter()
     reporter = _ProgressReporter(progress_callback, print_enabled=progress)
+    workspace = Workspace()
 
     try:
-        _preflight_checks(input_path, resolved_output_dir, config, allow_large_input, reporter)
-
-        workspace = Workspace()
-        run_succeeded = False
         try:
-            run = _execute_pipeline(
-                input_path=input_path,
-                output_dir=resolved_output_dir,
-                final_dir=final_dir,
-                reports_dir=reports_dir,
-                unconverted_dir=unconverted_dir,
-                config=config,
-                allow_large_input=allow_large_input,
-                workspace=workspace,
-                progress=progress,
-                reporter=reporter,
-                identity=resolved_identity,
+            check_cancelled(cancellation_token)
+            _preflight_checks(input_path, resolved_output_dir, config, allow_large_input, reporter)
+            check_cancelled(cancellation_token)
+
+            run_succeeded = False
+            try:
+                run = _execute_pipeline(
+                    input_path=input_path,
+                    output_dir=resolved_output_dir,
+                    final_dir=final_dir,
+                    reports_dir=reports_dir,
+                    unconverted_dir=unconverted_dir,
+                    config=config,
+                    allow_large_input=allow_large_input,
+                    workspace=workspace,
+                    progress=progress,
+                    reporter=reporter,
+                    identity=resolved_identity,
+                    cancellation_token=cancellation_token,
+                )
+                run_succeeded = True
+            finally:
+                if run_succeeded and not keep_temp:
+                    workspace.cleanup()
+                elif keep_temp or not run_succeeded:
+                    logger.info("Temporary workspace preserved at: %s", workspace.root)
+
+            end_dt = datetime.now()
+            run.start_time = start_dt.isoformat(timespec="seconds")
+            run.end_time = end_dt.isoformat(timespec="seconds")
+            run.elapsed_seconds = time.perf_counter() - start_perf
+
+            meta = {
+                "app_version": __version__,
+                "os_info": platform.platform(),
+                "python_version": platform.python_version(),
+                "max_pages_per_part": config.max_pages_per_part,
+                "max_size_mb_per_part": config.max_size_mb_per_part,
+                "allow_large_input": allow_large_input,
+            }
+            check_cancelled(cancellation_token)
+            reporter.emit(ProgressStage.WRITING_REPORTS, "Writing reports...")
+            reporting.write_all_reports(run, config, meta, reports_dir)
+
+            reporter.emit(
+                ProgressStage.COMPLETE,
+                "Processing complete." if run.success else "Processing finished with failed integrity checks.",
+                severity=ProgressSeverity.INFO if run.success else ProgressSeverity.WARNING,
+                print_message=False,
             )
-            run_succeeded = True
-        finally:
-            if run_succeeded and not keep_temp:
-                workspace.cleanup()
-            elif keep_temp or not run_succeeded:
-                logger.info("Temporary workspace preserved at: %s", workspace.root)
-
-        end_dt = datetime.now()
-        run.start_time = start_dt.isoformat(timespec="seconds")
-        run.end_time = end_dt.isoformat(timespec="seconds")
-        run.elapsed_seconds = time.perf_counter() - start_perf
-
-        meta = {
-            "app_version": __version__,
-            "os_info": platform.platform(),
-            "python_version": platform.python_version(),
-            "max_pages_per_part": config.max_pages_per_part,
-            "max_size_mb_per_part": config.max_size_mb_per_part,
-            "allow_large_input": allow_large_input,
-        }
-        reporter.emit(ProgressStage.WRITING_REPORTS, "Writing reports...")
-        reporting.write_all_reports(run, config, meta, reports_dir)
-
-        reporter.emit(
-            ProgressStage.COMPLETE,
-            "Processing complete." if run.success else "Processing finished with failed integrity checks.",
-            severity=ProgressSeverity.INFO if run.success else ProgressSeverity.WARNING,
-            print_message=False,
-        )
-        return run
+            return run
+        except ProcessingCancelled:
+            workspace.cleanup()
+            raise _finish_cancellation(
+                resolved_output_dir, final_dir, reports_dir, unconverted_dir, reporter, input_path
+            ) from None
     finally:
         logger.removeHandler(file_handler)
         file_handler.close()
+
+
+def _finish_cancellation(
+    output_dir: Path,
+    final_dir: Path,
+    reports_dir: Path,
+    unconverted_dir: Path,
+    reporter: "_ProgressReporter",
+    input_path: Path,
+) -> ProcessingCancelledError:
+    """Cleans up after a cancelled run and returns the
+    `ProcessingCancelledError` to raise. Never called for a normal
+    failure -- only when `check_cancelled()` actually fired.
+
+    "Incomplete outputs" (any Final/Original Lender Package part or
+    unconverted-file copy already written, and every generated report --
+    a cancelled run must never leave anything that looks like a
+    successful one) are deleted outright when possible. If that fails
+    (e.g. a file locked by another process), the entire main output
+    folder is instead renamed to a versioned "Incomplete Cancelled
+    Output" folder in the same parent directory, so nothing is silently
+    lost and nothing is left sitting under a name that looks like a
+    normal completed package. Either way, a distinct
+    `Cancellation_Report.txt` documents what happened -- never the
+    normal success-only reports.
+    """
+
+    cancelled_at_stage = reporter.last_stage
+    reporter.emit(
+        ProgressStage.CANCELLED,
+        "Processing was cancelled.",
+        severity=ProgressSeverity.WARNING,
+        print_message=False,
+    )
+
+    cleanup_succeeded = True
+    moved_to: Path | None = None
+    try:
+        for stale_dir in (final_dir, unconverted_dir):
+            if stale_dir.exists():
+                shutil.rmtree(stale_dir)
+        for stale_file in reports_dir.glob("*"):
+            if stale_file.name != "run.log":
+                stale_file.unlink()
+        final_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        _write_cancellation_report(reports_dir, output_dir, reporter, input_path, cancelled_at_stage)
+    except OSError:
+        cleanup_succeeded = False
+        try:
+            moved_to = naming.resolve_versioned_output_dir(
+                output_dir.parent, naming.INCOMPLETE_CANCELLED_OUTPUT_FOLDER_NAME
+            )
+            output_dir.rename(moved_to)
+        except OSError:
+            moved_to = None
+
+    return ProcessingCancelledError(
+        "Processing was cancelled before it finished.",
+        stage=cancelled_at_stage.value,
+        output_path=moved_to or output_dir,
+        cleanup_succeeded=cleanup_succeeded,
+        moved_to=moved_to,
+    )
+
+
+def _write_cancellation_report(
+    reports_dir: Path,
+    output_dir: Path,
+    reporter: "_ProgressReporter",
+    input_path: Path,
+    cancelled_at_stage: ProgressStage,
+) -> None:
+    lines = [
+        "Lender Package Builder - Cancellation Report",
+        "=" * 46,
+        "",
+        "This run was stopped via Cancel Processing before it finished.",
+        "No Final or Original Lender Package files were produced by this run.",
+        "No source file was ever modified.",
+        "",
+        f"Input:               {input_path}",
+        f"Output folder:       {output_dir}",
+        f"Cancelled at stage:  {cancelled_at_stage.value}",
+    ]
+    if reporter.last_current is not None and reporter.last_total:
+        lines.append(f"Progress at cancel:  {reporter.last_current} of {reporter.last_total}")
+    lines.append(f"Cancelled at:        {datetime.now().isoformat(timespec='seconds')}")
+    (reports_dir / "Cancellation_Report.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _compute_output_dir(
@@ -493,14 +607,17 @@ def _execute_pipeline(
     progress: bool,
     reporter: _ProgressReporter,
     identity: PackageIdentity,
+    cancellation_token: CancellationToken | None = None,
 ) -> RunResult:
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/10] Discovering source files in: {input_path}")
-    inventory_builder = InventoryBuilder(config, workspace, allow_large_input)
+    inventory_builder = InventoryBuilder(config, workspace, allow_large_input, cancellation_token)
     occurrences = inventory_builder.build(input_path)
     reporter.emit(
         ProgressStage.DISCOVERING_FILES, f"      Found {len(occurrences)} source occurrence(s)."
     )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/10] Detecting exact duplicates (whole-file SHA-256)...")
     duplicate_groups = deduplication.find_duplicates(occurrences)
     dup_count = sum(len(g.duplicate_document_ids) for g in duplicate_groups)
@@ -520,6 +637,7 @@ def _execute_pipeline(
     )
 
     for i, occ in enumerate(non_ignored, start=1):
+        check_cancelled(cancellation_token)
         if occ.is_duplicate:
             retained = occ_by_id[occ.duplicate_of_document_id]
             _copy_conversion_result(retained, occ)
@@ -591,6 +709,7 @@ def _execute_pipeline(
             backend_usage.get(occ.conversion_backend or "unknown", 0) + 1
         )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.BUILDING_OG, "[4/10] Merging OG package...")
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
@@ -601,6 +720,7 @@ def _execute_pipeline(
         "OG",
         config.max_pages_per_part,
         config.max_size_bytes_per_part,
+        cancellation_token,
     )
     for part in og_parts:
         for doc_id in part.document_ids:
@@ -608,9 +728,10 @@ def _execute_pipeline(
     reporter.emit(ProgressStage.BUILDING_OG, f"      OG: {len(og_parts)} part(s) written.")
 
     content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches = (
-        _run_content_aware_analysis(occurrences, config, reporter)
+        _run_content_aware_analysis(occurrences, config, reporter, cancellation_token)
     )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.BUILDING_FINAL, "[9/10] Merging Final package...")
     final_docs = [o for o in occurrences if o.included_in_final]
     final_parts = merging.write_package(
@@ -621,6 +742,7 @@ def _execute_pipeline(
         "Final",
         config.max_pages_per_part,
         config.max_size_bytes_per_part,
+        cancellation_token,
     )
     for part in final_parts:
         for doc_id in part.document_ids:
@@ -645,6 +767,7 @@ def _execute_pipeline(
         uncertain_matches=uncertain_matches,
     )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[10/10] Running integrity checks...")
     run.integrity_checks = validation.run_integrity_checks(
         run, config.max_pages_per_part, config.max_size_bytes_per_part
@@ -659,7 +782,9 @@ def _execute_pipeline(
     return run
 
 
-def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _ProgressReporter):
+def _run_content_aware_analysis(
+    occurrences, config: AppConfig, reporter: _ProgressReporter, cancellation_token: CancellationToken | None = None
+):
     """Levels 2-4 content-aware duplicate detection, merged-document
     overlap detection, and Level 5 version classification -- all run
     over already-converted documents, between Building OG and Building
@@ -682,16 +807,18 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
             reporter.emit(stage, label)
         return [], [], [], [], []
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Analyzing document content...")
-    fingerprints = content_dedup.build_fingerprints(occurrences)
+    fingerprints = content_dedup.build_fingerprints(occurrences, cancellation_token)
     reporter.emit(
         ProgressStage.FINGERPRINTING_CONTENT,
         f"      Fingerprinted {len(fingerprints)} document(s) for content-aware comparison.",
     )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Detecting content-aware duplicates...")
     content_duplicate_groups, oversized_bucket_notes, uncertain_content_pairs = content_dedup.detect_content_duplicates(
-        occurrences, fingerprints
+        occurrences, fingerprints, cancellation_token=cancellation_token
     )
     content_dup_count = sum(len(g.document_ids) - 1 for g in content_duplicate_groups)
     reporter.emit(
@@ -702,8 +829,9 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
     for note in oversized_bucket_notes:
         reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, f"      {note}", severity=ProgressSeverity.WARNING)
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/10] Analyzing merged-package overlaps...")
-    overlap_findings = overlap_detection.detect_overlaps(occurrences, fingerprints)
+    overlap_findings = overlap_detection.detect_overlaps(occurrences, fingerprints, cancellation_token)
     contained_count = sum(1 for f in overlap_findings if f.excluded)
     reporter.emit(
         ProgressStage.ANALYZING_MERGED_PACKAGES,
@@ -711,6 +839,7 @@ def _run_content_aware_analysis(occurrences, config: AppConfig, reporter: _Progr
         "safely proven contained in a merged package.",
     )
 
+    check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Classifying document versions...")
     document_families = version_classification.build_document_families(
         occurrences, fingerprints, content_duplicate_groups, overlap_findings

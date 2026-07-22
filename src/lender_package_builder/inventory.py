@@ -21,6 +21,7 @@ import zipfile
 from pathlib import Path
 
 from . import archives, pdf_portfolio
+from .cancellation import CancellationToken, check_cancelled
 from .config import AppConfig
 from .exceptions import ArchiveTooLargeError, InvalidInputError
 from .hashing import sha256_of_file
@@ -43,10 +44,17 @@ def natural_sort_key(value: str) -> tuple:
 class InventoryBuilder:
     """Builds the ordered list of `SourceOccurrence` for one input."""
 
-    def __init__(self, config: AppConfig, workspace: Workspace, allow_large_input: bool = False):
+    def __init__(
+        self,
+        config: AppConfig,
+        workspace: Workspace,
+        allow_large_input: bool = False,
+        cancellation_token: CancellationToken | None = None,
+    ):
         self.config = config
         self.workspace = workspace
         self.allow_large_input = allow_large_input
+        self.cancellation_token = cancellation_token
         self._next_index = 1
         self.occurrences: list[SourceOccurrence] = []
         self.unsafe_incidents: list[str] = []
@@ -92,6 +100,7 @@ class InventoryBuilder:
         entries.sort(key=lambda item: natural_sort_key(item[0]))
 
         for rel_path, abs_path in entries:
+            check_cancelled(self.cancellation_token)
             ignored, reason = archives.is_ignored_system_artifact(rel_path)
             if ignored:
                 self._record_ignored(rel_path, rel_path, reason, size_hint=_safe_size(abs_path))
@@ -145,6 +154,7 @@ class InventoryBuilder:
                 if info.is_dir():
                     continue
 
+                check_cancelled(self.cancellation_token)
                 ignored, ignore_reason = archives.is_ignored_system_artifact(info.filename)
                 display_path = "/".join(chain[1:] + [info.filename.replace("\\", "/")])
                 chain_display = " -> ".join(chain + [info.filename])

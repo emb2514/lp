@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QFrame, QLabel, QPlainTextEdit, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..formatting import format_elapsed
 from ...progress import ProgressEvent, ProgressSeverity, ProgressStage
@@ -28,6 +37,8 @@ MAX_LOG_LINES = 500
 
 
 class ProgressView(QWidget):
+    cancel_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
@@ -65,6 +76,13 @@ class ProgressView(QWidget):
         self.elapsed_label.setObjectName("MutedLabel")
         card_layout.addWidget(self.elapsed_label)
 
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton("Cancel Processing")
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        button_row.addWidget(self.cancel_button)
+        card_layout.addLayout(button_row)
+
         layout.addWidget(card)
 
         log_heading = QLabel("Recent activity")
@@ -92,7 +110,19 @@ class ProgressView(QWidget):
         self.activity_log.clear()
         self._elapsed_seconds = 0.0
         self.elapsed_label.setText("Elapsed: 0s")
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setText("Cancel Processing")
         self._timer.start()
+
+    def set_cancelling(self) -> None:
+        """Called once the user has confirmed Stop Processing -- disables
+        the button (a cancellation request is a one-way, sticky flag; a
+        second click has nothing new to do) and gives immediate visual
+        feedback while the pipeline reaches its next safe check point.
+        """
+
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Cancelling...")
 
     def stop(self) -> None:
         self._timer.stop()

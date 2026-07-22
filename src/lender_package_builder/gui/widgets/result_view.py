@@ -260,11 +260,54 @@ class FailureView(QWidget):
         layout.addStretch(1)
 
     def set_error(self, user_message: str, technical_details: str, log_dir: Path | None = None) -> None:
+        self._set_banner_status("error", "Processing did not complete")
         self.reason_label.setText(user_message)
         self.details_text.setPlainText(technical_details)
         self._log_dir = log_dir
         self.open_logs_button.setEnabled(log_dir is not None and log_dir.exists())
         self.details_toggle.setChecked(False)
+
+    def set_cancelled(self, error) -> None:
+        """Distinct from `set_error()`: a cancellation is an intentional,
+        expected outcome, never a failure. `error` is the
+        `ProcessingCancelledError` raised by `build_package()`, carrying
+        the stage cancelled at, the output path, and whether cleanup
+        succeeded -- see `cli._finish_cancellation()`.
+        """
+
+        self._set_banner_status("warning", "Processing was cancelled")
+
+        stage_label = error.stage.replace("_", " ") if error.stage else "an unknown stage"
+        if error.cleanup_succeeded:
+            cleanup_note = "Incomplete files were cleaned up automatically."
+        elif error.moved_to is not None:
+            cleanup_note = (
+                f"Cleanup could not remove everything, so the incomplete output was moved to "
+                f"\"{error.moved_to.name}\" instead of being left under its normal name."
+            )
+        else:
+            cleanup_note = "Cleanup could not fully complete -- see the technical details below."
+        self.reason_label.setText(
+            f"You stopped processing during: {stage_label}. No Final or Original Lender Package files "
+            f"were produced. {cleanup_note} Your original source files were never modified."
+        )
+        self.details_text.setPlainText(
+            f"Cancelled at stage: {error.stage}\n"
+            f"Output path: {error.output_path}\n"
+            f"Cleanup succeeded: {error.cleanup_succeeded}\n"
+            f"Moved to: {error.moved_to or '(not moved)'}"
+        )
+        self._log_dir = (error.output_path / "Reports") if error.output_path else None
+        self.open_logs_button.setEnabled(self._log_dir is not None and self._log_dir.exists())
+        self.details_toggle.setChecked(False)
+
+    def _set_banner_status(self, status: str, title: str) -> None:
+        self.banner.setProperty("status", status)
+        self.banner_title.setProperty("status", status)
+        self.banner_title.setText(title)
+        for widget in (self.banner, self.banner_title):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _on_details_toggled(self, checked: bool) -> None:
         self.details_text.setVisible(checked)

@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
+from .cancellation import CancellationToken, check_cancelled
 from .content_dedup import AUTO_REMOVE_THRESHOLD, NEEDS_REVIEW_THRESHOLD, compare_page
 from .models import OverlapFinding, SourceOccurrence
 from .pdf_content import DocumentFingerprint, PageFingerprint
@@ -158,7 +159,9 @@ def find_containment(
 
 
 def detect_overlaps(
-    occurrences: list[SourceOccurrence], fingerprints: dict[str, DocumentFingerprint]
+    occurrences: list[SourceOccurrence],
+    fingerprints: dict[str, DocumentFingerprint],
+    cancellation_token: CancellationToken | None = None,
 ) -> list[OverlapFinding]:
     """Runs containment detection over every fingerprinted occurrence not
     already resolved by a cheaper pass (exact-hash or content-aware
@@ -202,6 +205,7 @@ def detect_overlaps(
     findings: list[OverlapFinding] = []
 
     for candidate_id in candidate_ids:
+        check_cancelled(cancellation_token)
         candidate_occ = occurrences_by_id[candidate_id]
         candidate_fp = fingerprints[candidate_id]
         best: OverlapFinding | None = None

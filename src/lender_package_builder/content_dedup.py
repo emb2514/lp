@@ -31,6 +31,7 @@ import difflib
 from pathlib import Path
 
 from . import pdf_render
+from .cancellation import CancellationToken, check_cancelled
 from .models import ContentDuplicateGroup, ProcessingStatus, SourceOccurrence
 from .pdf_content import DocumentFingerprint, PageFingerprint, build_document_fingerprint, hamming_distance
 
@@ -112,7 +113,9 @@ class _UnionFind:
         return out
 
 
-def build_fingerprints(occurrences: list[SourceOccurrence]) -> dict[str, DocumentFingerprint]:
+def build_fingerprints(
+    occurrences: list[SourceOccurrence], cancellation_token: CancellationToken | None = None
+) -> dict[str, DocumentFingerprint]:
     """Fingerprints every occurrence eligible for content-aware analysis.
 
     Excludes ignored artifacts and exact-hash duplicates (already fully
@@ -126,6 +129,7 @@ def build_fingerprints(occurrences: list[SourceOccurrence]) -> dict[str, Documen
 
     fingerprints: dict[str, DocumentFingerprint] = {}
     for occ in occurrences:
+        check_cancelled(cancellation_token)
         if occ.is_ignored_artifact or occ.is_duplicate:
             continue
         if occ.status != ProcessingStatus.CONVERTED:
@@ -546,6 +550,7 @@ def detect_content_duplicates(
     occurrences: list[SourceOccurrence],
     fingerprints: dict[str, DocumentFingerprint],
     max_bucket_size: int = DEFAULT_MAX_BUCKET_SIZE,
+    cancellation_token: CancellationToken | None = None,
 ) -> tuple[list[ContentDuplicateGroup], list[str], list[tuple[str, str, float]]]:
     """Runs Levels 2/3/4 over every fingerprinted occurrence and mutates
     matching `SourceOccurrence`s in place (is_content_duplicate,
@@ -580,6 +585,7 @@ def detect_content_duplicates(
     uncertain_pairs: list[tuple[str, str, float]] = []
 
     for doc_ids in buckets.values():
+        check_cancelled(cancellation_token)
         if len(doc_ids) < 2:
             continue
         if len(doc_ids) > max_bucket_size:
