@@ -22,6 +22,7 @@ from . import (
     archives,
     content_dedup,
     deduplication,
+    key_documents,
     merging,
     naming,
     overlap_detection,
@@ -611,7 +612,7 @@ def _execute_pipeline(
     cancellation_token: CancellationToken | None = None,
 ) -> RunResult:
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/10] Discovering source files in: {input_path}")
+    reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/11] Discovering source files in: {input_path}")
     inventory_builder = InventoryBuilder(config, workspace, allow_large_input, cancellation_token)
     occurrences = inventory_builder.build(input_path)
     reporter.emit(
@@ -619,7 +620,7 @@ def _execute_pipeline(
     )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/10] Detecting exact duplicates (whole-file SHA-256)...")
+    reporter.emit(ProgressStage.DETECTING_DUPLICATES, "[2/11] Detecting exact duplicates (whole-file SHA-256)...")
     duplicate_groups = deduplication.find_duplicates(occurrences)
     dup_count = sum(len(g.duplicate_document_ids) for g in duplicate_groups)
     reporter.emit(
@@ -633,7 +634,7 @@ def _execute_pipeline(
     non_ignored = [o for o in occurrences if not o.is_ignored_artifact]
     reporter.emit(
         ProgressStage.CONVERTING_DOCUMENTS,
-        f"[3/10] Converting {len(non_ignored)} document(s) to PDF...",
+        f"[3/11] Converting {len(non_ignored)} document(s) to PDF...",
         total=len(non_ignored),
     )
 
@@ -711,7 +712,7 @@ def _execute_pipeline(
         )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.BUILDING_OG, "[4/10] Merging OG package...")
+    reporter.emit(ProgressStage.BUILDING_OG, "[4/11] Merging OG package...")
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
         og_docs,
@@ -733,7 +734,7 @@ def _execute_pipeline(
     )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.BUILDING_FINAL, "[9/10] Merging Final package...")
+    reporter.emit(ProgressStage.BUILDING_FINAL, "[9/11] Merging Final package...")
     final_docs = [o for o in occurrences if o.included_in_final]
     final_parts = merging.write_package(
         final_docs,
@@ -769,7 +770,16 @@ def _execute_pipeline(
     )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[10/10] Running integrity checks...")
+    reporter.emit(ProgressStage.LOCATING_KEY_DOCUMENTS, "[10/11] Locating key documents...")
+    run.key_document_matches = key_documents.locate_key_documents(run)
+    key_documents.extract_key_documents(run.key_document_matches, run, final_dir)
+    reporter.emit(
+        ProgressStage.LOCATING_KEY_DOCUMENTS,
+        f"      {len(run.key_document_matches)} key-document match(es) found.",
+    )
+
+    check_cancelled(cancellation_token)
+    reporter.emit(ProgressStage.RUNNING_INTEGRITY_CHECKS, "[11/11] Running integrity checks...")
     run.integrity_checks = validation.run_integrity_checks(
         run, config.max_pages_per_part, config.max_size_bytes_per_part
     )
@@ -800,16 +810,16 @@ def _run_content_aware_analysis(
 
     if not config.enable_content_aware_dedup:
         for stage, label in (
-            (ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Content-aware analysis disabled; skipping."),
-            (ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Content-aware analysis disabled; skipping."),
-            (ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/10] Content-aware analysis disabled; skipping."),
-            (ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Content-aware analysis disabled; skipping."),
+            (ProgressStage.FINGERPRINTING_CONTENT, "[5/11] Content-aware analysis disabled; skipping."),
+            (ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/11] Content-aware analysis disabled; skipping."),
+            (ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/11] Content-aware analysis disabled; skipping."),
+            (ProgressStage.CLASSIFYING_VERSIONS, "[8/11] Content-aware analysis disabled; skipping."),
         ):
             reporter.emit(stage, label)
         return [], [], [], [], []
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/10] Analyzing document content...")
+    reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/11] Analyzing document content...")
     fingerprints = content_dedup.build_fingerprints(occurrences, cancellation_token)
     reporter.emit(
         ProgressStage.FINGERPRINTING_CONTENT,
@@ -817,7 +827,7 @@ def _run_content_aware_analysis(
     )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/10] Detecting content-aware duplicates...")
+    reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, "[6/11] Detecting content-aware duplicates...")
     content_duplicate_groups, oversized_bucket_notes, uncertain_content_pairs = content_dedup.detect_content_duplicates(
         occurrences, fingerprints, cancellation_token=cancellation_token
     )
@@ -831,7 +841,7 @@ def _run_content_aware_analysis(
         reporter.emit(ProgressStage.DETECTING_CONTENT_DUPLICATES, f"      {note}", severity=ProgressSeverity.WARNING)
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/10] Analyzing merged-package overlaps...")
+    reporter.emit(ProgressStage.ANALYZING_MERGED_PACKAGES, "[7/11] Analyzing merged-package overlaps...")
     overlap_findings = overlap_detection.detect_overlaps(occurrences, fingerprints, cancellation_token)
     contained_count = sum(1 for f in overlap_findings if f.excluded)
     reporter.emit(
@@ -841,7 +851,7 @@ def _run_content_aware_analysis(
     )
 
     check_cancelled(cancellation_token)
-    reporter.emit(ProgressStage.CLASSIFYING_VERSIONS, "[8/10] Classifying document versions...")
+    reporter.emit(ProgressStage.CLASSIFYING_VERSIONS, "[8/11] Classifying document versions...")
     document_families = version_classification.build_document_families(
         occurrences, fingerprints, content_duplicate_groups, overlap_findings
     )

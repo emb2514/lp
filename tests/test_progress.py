@@ -36,6 +36,9 @@ def test_progress_callback_receives_structured_events_in_stage_order(tmp_path, r
         ProgressStage.ANALYZING_MERGED_PACKAGES,
         ProgressStage.CLASSIFYING_VERSIONS,
         ProgressStage.BUILDING_FINAL,
+        # MILESTONE 4: key-document page locator/extraction, run once
+        # Final is settled, before integrity checks.
+        ProgressStage.LOCATING_KEY_DOCUMENTS,
         ProgressStage.RUNNING_INTEGRITY_CHECKS,
         ProgressStage.WRITING_REPORTS,
         ProgressStage.COMPLETE,

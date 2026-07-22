@@ -16,6 +16,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
     ArrayObject,
     BooleanObject,
+    DecodedStreamObject,
     DictionaryObject,
     FloatObject,
     NameObject,
@@ -205,6 +206,66 @@ def _add_signature_field(writer: PdfWriter, page, name: str, rect: tuple[float, 
         root[NameObject("/AcroForm")] = acroform
     root["/AcroForm"]["/Fields"].append(widget_ref)
     return widget_ref
+
+
+def _add_ink_annotation(writer: PdfWriter, page, rect: tuple[float, float, float, float]):
+    """A minimal `/Ink` annotation with a real appearance stream (`/AP`)
+    -- the structural proxy this app's key-document signature-status
+    heuristic (`key_documents._classify_signature_status`) treats as
+    evidence of a genuine wet/freehand signature, since real ink
+    signatures on a scanned page leave no other structural PDF trace at
+    all (unlike an AcroForm `/Sig` field, which only ever means a real
+    digital/e-signature).
+    """
+
+    appearance = DecodedStreamObject()
+    appearance.set_data(b"0 0 m 10 10 l S")
+    appearance[NameObject("/Type")] = NameObject("/XObject")
+    appearance[NameObject("/Subtype")] = NameObject("/Form")
+    appearance[NameObject("/BBox")] = ArrayObject([FloatObject(x) for x in rect])
+    appearance_ref = writer._add_object(appearance)
+
+    ap_dict = DictionaryObject()
+    ap_dict[NameObject("/N")] = appearance_ref
+
+    annot = DictionaryObject()
+    annot[NameObject("/Type")] = NameObject("/Annot")
+    annot[NameObject("/Subtype")] = NameObject("/Ink")
+    annot[NameObject("/Rect")] = ArrayObject([FloatObject(x) for x in rect])
+    annot[NameObject("/AP")] = ap_dict
+    annot[NameObject("/F")] = NumberObject(4)
+    annot_ref = writer._add_object(annot)
+    annot[NameObject("/P")] = page.indirect_reference
+
+    if "/Annots" in page:
+        page["/Annots"].append(annot_ref)
+    else:
+        page[NameObject("/Annots")] = ArrayObject([annot_ref])
+    return annot_ref
+
+
+def make_pdf_with_ink_signature(path: Path, page_texts: list[str]) -> Path:
+    """Like `make_pdf_with_pages`, but the LAST page also carries a real
+    `/Ink` annotation -- a wet/freehand signature, structurally distinct
+    from both an AcroForm `/Sig` field (digital/e-signature) and a flat
+    scanned raster mark (structurally indistinguishable from an
+    unsigned scan, and deliberately NOT treated as reliable evidence).
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plain = path.with_suffix(".plain.pdf")
+    make_pdf_with_pages(plain, page_texts)
+
+    reader = PdfReader(str(plain))
+    writer = PdfWriter()
+    writer.append_pages_from_reader(reader)
+    last_page = writer.pages[-1]
+    _add_ink_annotation(writer, last_page, (72, 600, 300, 650))
+
+    with path.open("wb") as fh:
+        writer.write(fh)
+    plain.unlink()
+    return path
 
 
 def make_form_pdf(path: Path, field_values: dict[str, str], pages: int = 1, common_text: str = "Loan Application") -> Path:

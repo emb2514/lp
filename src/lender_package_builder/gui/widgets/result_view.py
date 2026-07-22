@@ -71,6 +71,10 @@ class ResultView(QWidget):
         self.open_output_button.clicked.connect(self._open_output_folder)
         button_row.addWidget(self.open_output_button)
 
+        self.open_final_package_button = QPushButton("Open Final Package")
+        self.open_final_package_button.clicked.connect(self._open_final_package)
+        button_row.addWidget(self.open_final_package_button)
+
         self.open_final_button = QPushButton("Open Final Package Folder")
         self.open_final_button.clicked.connect(self._open_final_folder)
         button_row.addWidget(self.open_final_button)
@@ -116,6 +120,12 @@ class ResultView(QWidget):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
 
+        if len(run.final_parts) > 1:
+            self.open_final_package_button.setText(f"Open Final Package (Part 1 of {len(run.final_parts)})")
+        else:
+            self.open_final_package_button.setText("Open Final Package")
+        self.open_final_package_button.setEnabled(bool(run.final_parts))
+
         self._populate_stats(run)
 
     def _populate_stats(self, run: RunResult) -> None:
@@ -139,6 +149,12 @@ class ResultView(QWidget):
         portfolio_count = sum(1 for o in non_ignored if o.is_portfolio_container)
         needs_review_count = sum(1 for o in non_ignored if o.needs_review)
 
+        wet_signed_count = sum(1 for m in run.key_document_matches if m.signature_status == "Signed")
+        wet_signed_cd_found = any(
+            m.category == "closing_disclosure" and m.signature_status == "Signed"
+            for m in run.key_document_matches
+        )
+
         rows = [
             ("Source documents discovered", str(len(run.occurrences))),
             ("Exact duplicates excluded from Final", str(duplicate_count)),
@@ -153,6 +169,12 @@ class ResultView(QWidget):
             ("Final output parts", str(len(run.final_parts))),
             ("OG total pages", str(og_pages)),
             ("Final total pages", str(final_pages)),
+            ("Key documents found", str(len(run.key_document_matches))),
+            (
+                "Wet-signed documents found",
+                str(wet_signed_count) if wet_signed_count else "None found in the Final lender package",
+            ),
+            ("Wet-signed Closing Disclosure", "Found" if wet_signed_cd_found else "Not found"),
             ("Elapsed time", format_elapsed(run.elapsed_seconds)),
             ("Integrity checks passed", f"{checks_passed}/{len(run.integrity_checks)}"),
         ]
@@ -167,6 +189,10 @@ class ResultView(QWidget):
     def _open_output_folder(self) -> None:
         if self._run is not None:
             os_actions.open_folder(self._run.output_path)
+
+    def _open_final_package(self) -> None:
+        if self._run is not None and self._run.final_parts:
+            os_actions.open_file(self._run.final_parts[0].file_path)
 
     def _open_final_folder(self) -> None:
         if self._run is not None:

@@ -123,7 +123,68 @@ only user-visible text changes, all sourced from one new centralized constant,
   `test_application_and_main_window_construct_without_exception`) updated for the new title text.
   Local suite: 263 engine + 69 GUI = 332 total, all passing (up from 256/68).
 
-Milestone 4 (key-document page locator and extraction) is next.
+**MILESTONE 4 COMPLETE -- Key-document page locator and extraction.** New `key_documents.py`
+module, run once the deduplicated Final package is settled (a new `LOCATING_KEY_DOCUMENTS`
+pipeline stage, [10/11]), identifies four document categories and, for confident results, extracts
+a standalone copy directly into `Final` using `naming.key_document_filename()` (Milestone 1).
+Recognition is purely descriptive -- it never affects duplicate detection, exclusion, or which
+documents are in Final.
+
+- **Closing Disclosure**: located via its standardized "Closing Disclosure" title plus
+  corroborating CFPB section headers (Loan Terms, Projected Payments, Loan Costs, Cash to Close,
+  ...) for confidence banding. Signature status is deliberately conservative and purely
+  structural, never based on filename: a real `/Sig` AcroForm field with a value -> "E-Sign"; a
+  real `/Ink` annotation with an appearance stream (the closest structural proxy this app has for
+  an actual wet/freehand signature) -> "Signed"; an embedded raster image with neither signal ->
+  "Signature Unknown" (a flat scan is structurally indistinguishable from unsigned -- this never
+  guesses); no image and no signature evidence at all -> "Unsigned". "Revised"/"Corrected" text
+  near the title overrides all of the above.
+- **Driver's License**: text-marker + embedded-image heuristics distinguish Front / Back / Front
+  and Back (two ID-shaped images on one page) / Side Unknown, and reuse the existing name-hint
+  extraction (`pdf_content.StructuredTokens`) to attribute a license to the actual person shown
+  when reliably detected, falling back to "borrower unknown" rather than ever inventing an
+  identity.
+- **MU Privacy Policy**: requires the literal "Mortgage Unity" company name plus a privacy
+  marker -- a generic privacy notice from any other lender is never classified as MU's.
+- **Loan non-proceeding documentation**: Adverse Action Notice / Withdrawal Certification /
+  Denial Notice / Cancellation Notice / Closed for Incompleteness, each with its own specific
+  regulatory-standard marker phrases (checked in that priority order so a document is never
+  double-counted), falling back to "Other Non-Proceeding Document" (Possible Match) for weaker
+  "will not proceed"-style language. Ordinary condition/missing-item/stipulation language alone
+  produces no match at all -- confirmed by a dedicated regression test distinguishing it from the
+  ubiquitous TRID "right to cancel" rescission notice, which must never be confused with an actual
+  loan cancellation.
+- **Page locations** are computed fresh from `run.final_parts` every time (own source-document page
+  range, Final-part-local range, and overall cumulative Final-package range across parts) -- so
+  they always reflect the current post-dedup, post-split, post-manual-review state, never stale
+  original-document numbering. `review_decisions._rebuild_final_and_reports()` now re-runs key-
+  document detection (and deletes/re-extracts affected files by exact filename, never a folder
+  glob) after every manual exclusion, confirmed by a dedicated regression test.
+- **Extraction**: only Confirmed/Strong Match results are auto-extracted (a Possible Match is
+  listed but never auto-extracted, per the explicit instruction that it needs human review first);
+  pages are copied verbatim via pypdf (confirmed preserving `/Ink`/`/Sig` annotations, never
+  re-rendered or OCR'd); files land directly in `Final`, never a subfolder.
+- **Reports**: new `Key Document Page Locations.txt` (dedicated Wet-Signed Document Status section
+  -- "No wet-signed documents were found..." when none exist, and a separate "Wet-Signed Closing
+  Disclosure: Not found" line whenever the CD specifically isn't wet-signed, even if something
+  else is) and `key_document_matches`/`identity` added to `Processing_Manifest.json`.
+- **GUI**: `ResultView` gains "Key documents found" / "Wet-signed documents found" /
+  "Wet-signed Closing Disclosure" stat rows, and a new "Open Final Package" button (opens the
+  actual first-part PDF via the OS default handler, labeled "(Part 1 of N)" when Final is split --
+  distinct from the existing "Open Final Package Folder"). Per the explicit instruction that
+  opening a specific page reliably across Windows PDF viewers is not achievable, the page number is
+  shown in the report/stats rather than attempting (and silently failing) a direct-page open.
+- 32 new engine-level tests (`tests/test_key_documents.py`: 23 direct-detector tests;
+  `tests/test_key_documents_pipeline.py`: 9 full-pipeline tests covering split/overall/post-dedup/
+  post-manual-exclusion page locations, extraction from a larger PDF, annotation preservation,
+  exact filenames, and the wet-signature messaging) and 4 new GUI tests
+  (`tests/gui/test_key_documents_gui.py`). A new `/Ink`-annotation test-fixture helper
+  (`make_pdf_with_ink_signature` in `tests/fixtures/builders.py`) was added since no existing
+  fixture modeled a real wet-signature structural signal. `ProgressStage.LOCATING_KEY_DOCUMENTS`
+  added; `tests/test_progress.py`'s exact stage-order assertion updated. Local suite: 295 engine +
+  73 GUI = 368 total, all passing (up from 263/69).
+
+Milestone 5A (Compare Packages engine) is next.
 
 ---
 

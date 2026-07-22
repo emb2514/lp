@@ -31,6 +31,9 @@ class ProgressStage(str, enum.Enum):
     ANALYZING_MERGED_PACKAGES = "analyzing_merged_packages"
     CLASSIFYING_VERSIONS = "classifying_versions"
     BUILDING_FINAL = "building_final"
+    # MILESTONE 4: key-document page locator/extraction, run once Final
+    # is built and settled, before integrity checks.
+    LOCATING_KEY_DOCUMENTS = "locating_key_documents"
     RUNNING_INTEGRITY_CHECKS = "running_integrity_checks"
     WRITING_REPORTS = "writing_reports"
     COMPLETE = "complete"

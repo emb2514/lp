@@ -50,8 +50,113 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
     write_document_version_report(run, reports_dir / "Document_Version_Report.txt")
     write_merged_overlap_report(run, reports_dir / "Merged_Document_Overlap_Report.txt")
     write_uncertain_match_review_log(run, reports_dir / "Uncertain_Match_Review_Log.txt")
+    write_key_document_report(run, reports_dir / "Key Document Page Locations.txt")
     write_processing_report(run, config, meta, reports_dir / "Processing_Report.txt")
     write_processing_manifest(run, meta, reports_dir / "Processing_Manifest.json")
+
+
+_CATEGORY_LABELS = {
+    "closing_disclosure": "Closing Disclosure",
+    "drivers_license": "Driver's License",
+    "mu_privacy_policy": "MU Privacy Policy",
+    "non_proceeding": "Loan Non-Proceeding Documentation",
+}
+
+
+def wet_signed_matches(run: RunResult) -> list:
+    """Every key-document match with reliable wet-signature evidence
+    (`signature_status == "Signed"`) -- used by both the report below
+    and the GUI/manifest so all three always agree.
+    """
+
+    return [m for m in run.key_document_matches if m.signature_status == "Signed"]
+
+
+def write_key_document_report(run: RunResult, path: Path) -> None:
+    """Human-readable key-document page-locator results (MILESTONE 4):
+    Closing Disclosures, Driver's Licenses, the Mortgage Unity Privacy
+    Policy, and loan non-proceeding documentation found in Final, plus
+    a dedicated wet-signed-document status section. Recognition here is
+    purely descriptive -- nothing in this report ever affected which
+    documents are in Final.
+    """
+
+    occ_by_id = {o.document_id: o for o in run.occurrences}
+    lines: list[str] = []
+    lines.append("KEY DOCUMENT PAGE LOCATIONS")
+    lines.append("=" * 70)
+    lines.append(
+        "Automatic recognition of specific document types within the Final package. "
+        "Recognition never excludes, reorders, or otherwise changes anything in Final -- "
+        "a \"Possible Match\" stays in the package exactly like every other document."
+    )
+    lines.append(f"Total key-document matches: {len(run.key_document_matches)}")
+    lines.append("")
+
+    wet_signed = wet_signed_matches(run)
+    lines.append("-" * 70)
+    lines.append("WET-SIGNED DOCUMENT STATUS")
+    lines.append("-" * 70)
+    if wet_signed:
+        lines.append(f"Wet-Signed Documents Found: {len(wet_signed)}")
+        for match in wet_signed:
+            occ = occ_by_id.get(match.document_id)
+            lines.append(
+                f"    - {_CATEGORY_LABELS.get(match.category, match.category)}: "
+                f"{occ.original_filename if occ else match.document_id}"
+            )
+            if match.extracted_filename:
+                lines.append(f"        Extracted file: {match.extracted_filename}")
+            if match.final_part_index is not None and match.final_part_page_range is not None:
+                lines.append(
+                    f"        Final part {match.final_part_index}, pages "
+                    f"{match.final_part_page_range[0]}-{match.final_part_page_range[1]}"
+                )
+    else:
+        lines.append("No wet-signed documents were found in the Final lender package.")
+
+    wet_signed_cds = [m for m in wet_signed if m.category == "closing_disclosure"]
+    if not wet_signed_cds:
+        lines.append("Wet-Signed Closing Disclosure: Not found")
+    lines.append("")
+
+    if not run.key_document_matches:
+        lines.append("No key documents were identified in this Final package.")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return
+
+    for match in run.key_document_matches:
+        occ = occ_by_id.get(match.document_id)
+        lines.append("=" * 70)
+        label = _CATEGORY_LABELS.get(match.category, match.category)
+        if match.subtype:
+            label = f"{label} ({match.subtype})"
+        lines.append(f"{match.match_id}: {label} -- {match.confidence_band}")
+        lines.append("=" * 70)
+        lines.append(f"    Original file: {occ.original_filename if occ else match.document_id} ({match.document_id})")
+        lines.append(f"    Page range in source document: {match.document_page_range[0]}-{match.document_page_range[1]}")
+        if match.final_part_index is not None and match.final_part_page_range is not None:
+            lines.append(
+                f"    Final package part {match.final_part_index}, pages "
+                f"{match.final_part_page_range[0]}-{match.final_part_page_range[1]}"
+            )
+        if match.overall_final_page_range is not None:
+            lines.append(
+                f"    Overall Final package pages: {match.overall_final_page_range[0]}-"
+                f"{match.overall_final_page_range[1]}"
+            )
+        if match.signature_status:
+            lines.append(f"    Signature/version status: {match.signature_status}")
+        if match.borrower_name:
+            lines.append(f"    Borrower: {match.borrower_name}")
+        if match.extracted_filename:
+            lines.append(f"    Extracted standalone file: {match.extracted_filename}")
+        else:
+            lines.append("    Extracted standalone file: (none -- Possible Match requires human review first)")
+        lines.append(f"    Reason: {match.reason}")
+        lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def write_duplicate_removal_log(run: RunResult, path: Path) -> None:
@@ -617,6 +722,8 @@ def write_processing_manifest(run: RunResult, meta: dict, path: Path) -> None:
         "unsafe_archive_incidents": run.unsafe_archive_incidents,
         "content_dedup_notes": run.content_dedup_notes,
         "uncertain_matches": [dataclasses.asdict(m) for m in run.uncertain_matches],
+        "key_document_matches": [dataclasses.asdict(m) for m in run.key_document_matches],
+        "identity": dataclasses.asdict(run.identity),
         "overall_success": run.success,
     }
 

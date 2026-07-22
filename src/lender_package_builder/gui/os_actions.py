@@ -22,3 +22,20 @@ def open_folder(path: Path) -> bool:
     if not path.exists():
         return False
     return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
+def open_file(path: Path) -> bool:
+    """Open `path` with the OS default handler for its file type (e.g.
+    the system PDF viewer on Windows). Opening a specific PAGE within a
+    PDF is not reliably supported across Windows PDF viewers, so this
+    only ever opens the whole file -- callers needing a specific page
+    must show that page number in the UI instead of pretending direct-
+    page opening worked.
+
+    Returns True if Qt reports the request was handled, False
+    otherwise (e.g. the path does not exist). Never raises.
+    """
+
+    if not path.exists():
+        return False
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))

@@ -48,7 +48,7 @@ from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
-from . import __version__, merging, naming, reporting, validation
+from . import __version__, key_documents, merging, naming, reporting, validation
 from .config import AppConfig
 from .models import RunResult, SourceOccurrence
 
@@ -168,6 +168,15 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
     for part in run.final_parts:
         if part.file_path.exists():
             part.file_path.unlink()
+    # Stale key-document extractions (Milestone 4) are equally
+    # "incomplete Final output" once Final's contents change -- e.g. the
+    # document a Closing Disclosure was extracted from could itself now
+    # be excluded. Removed precisely by filename, never a folder glob.
+    for match in run.key_document_matches:
+        if match.extracted_filename:
+            stale_path = final_dir / match.extracted_filename
+            if stale_path.exists():
+                stale_path.unlink()
 
     occ_by_id = {o.document_id: o for o in run.occurrences}
     for occ in run.occurrences:
@@ -191,6 +200,9 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
             for doc_id in part.document_ids:
                 occ_by_id[doc_id].final_part_index = part.index
         run.final_parts = final_parts
+
+        run.key_document_matches = key_documents.locate_key_documents(run)
+        key_documents.extract_key_documents(run.key_document_matches, run, final_dir)
 
         run.integrity_checks = validation.run_integrity_checks(
             run, config.max_pages_per_part, config.max_size_bytes_per_part

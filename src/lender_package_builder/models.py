@@ -294,6 +294,48 @@ class UncertainMatch:
 
 
 @dataclasses.dataclass
+class KeyDocumentMatch:
+    """One key-document page-locator result, produced by
+    key_documents.locate_key_documents() after the deduplicated Final
+    package is built. Purely descriptive -- recognition here never
+    controls duplicate detection or Final inclusion/exclusion.
+    """
+
+    match_id: str
+    # "closing_disclosure" | "drivers_license" | "mu_privacy_policy" | "non_proceeding"
+    category: str
+    # e.g. "Front"/"Back"/"Front and Back" (drivers_license), or the
+    # specific non-proceeding subtype ("Adverse Action Notice", ...).
+    subtype: str | None
+    confidence_band: str  # "Confirmed" | "Strong Match" | "Possible Match"
+    confidence: float
+    document_id: str
+    original_filename: str
+    # Detected on the page when reliably found (drivers_license only);
+    # None means "borrower unknown", never an invented identity.
+    borrower_name: str | None
+    reason: str
+    # 1-based (start, end) page range within the source document itself.
+    document_page_range: tuple[int, int]
+    # "Signed" | "E-Sign" | "Unsigned" | "Revised" | "Signature Unknown" | None
+    signature_status: str | None
+
+    # Filled in after construction, once the document's position within
+    # its Final part is known -- see key_documents._fill_final_page_ranges().
+    final_part_index: int | None = None
+    final_part_page_range: tuple[int, int] | None = None  # 1-based, within that Final part file
+    overall_final_page_range: tuple[int, int] | None = None  # 1-based, across the whole Final package
+
+    # The detected person's name, when used to override the primary
+    # borrower's name for this specific extracted file (e.g. a
+    # co-borrower's own Driver's License) -- see naming.key_document_filename().
+    person_name_override: str | None = None
+    # Set only once extract_key_documents() has actually written a
+    # standalone file for this match (Confirmed/Strong Match only).
+    extracted_filename: str | None = None
+
+
+@dataclasses.dataclass
 class PackageIdentity:
     """Borrower identity used to name the main output folder, the
     Final/Original Lender Package files, and extracted key documents
@@ -336,6 +378,9 @@ class RunResult:
     # RC2: every uncertain comparison surfaced for human review, and its
     # decision (if any) -- see UncertainMatch and review_decisions.py.
     uncertain_matches: list[UncertainMatch] = dataclasses.field(default_factory=list)
+    # Every key-document page-locator result found after Final was
+    # built -- see key_documents.py.
+    key_document_matches: list[KeyDocumentMatch] = dataclasses.field(default_factory=list)
 
     @property
     def success(self) -> bool:
