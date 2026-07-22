@@ -232,7 +232,70 @@ input is ever opened for writing.
   and non-modification of inputs. Local suite: 311 engine + 73 GUI (unchanged, no GUI code this
   milestone) = 384 total, all passing (up from 295/73).
 
-Milestone 5B/6 (Compare Packages GUI workspace) is next.
+**MILESTONE 5B/6 COMPLETE -- Compare Packages GUI workspace.** All six requested milestones are
+now functionally complete. A separate top-level workspace, not a mode of the build pipeline: a
+new `top_level_stack` (`QStackedWidget`) in `MainWindow` holds the existing build-flow `self.stack`
+on one page and the new `CompareWorkspace` on a sibling page, toggled by a header
+"Compare Packages" button and the workspace's own "Back to Build" button -- switching workspaces
+never touches build-flow or comparison state.
+
+- **`CompareWorkspace`** owns its own input -> progress -> results `QStackedWidget` and its own
+  `CancellationToken` lifecycle, entirely independent of the build pipeline's worker/cancellation
+  state.
+- **Side selection** (`CompareSideSelector`, one instance each for Old/Reference and New/Generated):
+  Select PDF, Select Multiple Parts (sorted into natural part order via the existing
+  `sort_part_files()` regardless of the order files were picked in), Select Folder, and Clear
+  Selection. Selecting a folder routes through Milestone 5A's `describe_folder_contents()`; if it
+  finds both a Final and an Original Lender Package present, `dialogs.choose_final_or_original_package()`
+  asks explicitly which set to use rather than ever guessing, and a folder with no PDFs at all shows
+  `dialogs.show_no_pdfs_found()` instead of silently enabling an empty comparison.
+- **Compare Packages** is disabled until both selectors report `is_valid()`.
+- **Non-freezing progress**: `compare_packages.compare_packages()` gained an optional
+  `progress_callback` parameter (`"Aligning N old page(s) against M new page(s)..."`, `"Resolving K
+  unmatched page(s)..."`, `"Comparison complete."`) reported through the same
+  `CallableWorker`/`start_worker()` background-thread machinery Milestone 2 already built for
+  builds -- `make_compare_callable()` in `worker.py` loads both sides (real file I/O) on the
+  background thread too, not the GUI thread, and converts the engine's raw `ProcessingCancelled`
+  into `ProcessingCancelledError` so the existing `cancelled` signal routing works unchanged for
+  comparisons. `CompareProgressView` shows the current stage message, an indeterminate bar, elapsed
+  time, and a Cancel Comparison button gated by `dialogs.confirm_cancel_comparison()` (comparison is
+  analysis-only, so cancelling never risks any output file -- the confirmation exists only so an
+  accidental click can't discard a comparison that may have taken a while).
+- **`CompareResultsView`**: summary grid (old/new page counts, matched, equivalent, likely
+  duplicates removed, contained documents, meaningful differences, only-in-old, only-in-new,
+  possible missing, needs review), a category filter and text search over findings, a findings
+  table, a side-by-side detail panel (file, part, page range, detected type, signature/version,
+  confidence, protected differences, plain-English explanation), Previous/Next Finding, Open Old
+  Package/Open New Package (via the existing `os_actions.open_file()`), Export Report, and a New
+  Comparison action that clears both selectors and returns to the input page.
+- **A real test-fixture bug found while writing `tests/gui/test_compare_workspace.py`** (not a
+  production bug): the mid-comparison cancellation test originally gave both sides equal page
+  counts (6 old, 6 new) with fully disjoint text. Under `compare_packages()`'s real alignment logic,
+  equal-length mismatched regions take the direct-pairwise `_compare_pair()` branch rather than ever
+  populating `unresolved_old`/`unresolved_new`, so the `"Resolving ..."` progress message the test's
+  cancellation hook watches for never fired, and the real worker simply ran the (fast, 6x6) comparison
+  to completion before the test's `qtbot.waitUntil` could observe a cancelled state -- confirmed by
+  reading `compare_packages.py`'s opcode-handling branches directly, not by guessing. Fixed by giving
+  the two sides unequal page counts (8 old, 5 new), which reliably forces every page through the
+  unresolved-page path and lets the "Resolving ..." hook fire as intended. The same
+  wrapped-bound-method cross-thread hook pattern Milestone 2 established (`test_cancel_mid_run_through_real_worker`)
+  is reused here for `test_cancel_comparison_through_real_worker`.
+- 8 new GUI tests (`tests/gui/test_compare_workspace.py`): workspace navigation, each side-selector
+  action, folder disambiguation, New Comparison reset, and two `@pytest.mark.real_background_thread`
+  end-to-end tests (a full comparison through the real worker, and mid-comparison cancellation through
+  the real worker). Local suite: 311 engine + 81 GUI = 392 total, all passing (up from 311/73) --
+  every GUI test file passes individually, including `test_progress_worker.py` (the known
+  pre-existing, unrelated Linux/Qt-offscreen teardown flake) passing cleanly this run.
+- **Known scope gap, not yet built**: the GUI does not yet have an action to reopen a previously
+  exported `Package Comparison Manifest.json` and reconstruct a `ComparisonResult` for display
+  without rerunning the comparison. The engine-level primitive this needs
+  (`compare_packages.compute_source_hash()`, used to detect whether either input changed since) is
+  implemented and tested; only the GUI "load saved comparison" action itself is missing. Documented
+  here as an explicit known limitation rather than left silent.
+
+All six milestones from the task spec are now functionally complete. Final phase remaining: the
+complete validation sweep across every test category, `CLAUDE DESIGN HANDOFF.md`, real Windows CI,
+portable-build validation, and the final completion report.
 
 ---
 

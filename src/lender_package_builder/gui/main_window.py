@@ -36,6 +36,7 @@ from . import dialogs
 from .formatting import format_bytes
 from .state import InputSelection, classify_input
 from .widgets.advanced_settings import AdvancedSettingsWidget
+from .widgets.compare_workspace import CompareWorkspace
 from .widgets.drop_zone import DropZone, SelectedInputCard
 from .widgets.package_identity_dialog import PackageIdentityDialog
 from .widgets.progress_view import ProgressView
@@ -118,8 +119,15 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self._build_header())
 
+        self.top_level_stack = QStackedWidget()
+        root.addWidget(self.top_level_stack, stretch=1)
+
+        build_page = QWidget()
+        build_layout = QVBoxLayout(build_page)
+        build_layout.setContentsMargins(0, 0, 0, 0)
+
         self.stack = QStackedWidget()
-        root.addWidget(self.stack, stretch=1)
+        build_layout.addWidget(self.stack)
 
         self.input_page = self._build_input_page()
         self.progress_view = ProgressView()
@@ -137,6 +145,19 @@ class MainWindow(QMainWindow):
         self.failure_view.try_again_requested.connect(self._on_try_again)
         self.progress_view.cancel_requested.connect(self._on_cancel_clicked)
 
+        self.compare_workspace = CompareWorkspace()
+        self.compare_workspace.back_button.clicked.connect(self._show_build_workspace)
+
+        self.top_level_stack.addWidget(build_page)
+        self.top_level_stack.addWidget(self.compare_workspace)
+        self.top_level_stack.setCurrentWidget(build_page)
+
+    def _show_compare_workspace(self) -> None:
+        self.top_level_stack.setCurrentWidget(self.compare_workspace)
+
+    def _show_build_workspace(self) -> None:
+        self.top_level_stack.setCurrentWidget(self.top_level_stack.widget(0))
+
     def _build_header(self) -> QWidget:
         header = QWidget()
         layout = QHBoxLayout(header)
@@ -153,6 +174,10 @@ class MainWindow(QMainWindow):
         layout.addLayout(text_col)
 
         layout.addStretch(1)
+
+        self.compare_packages_button = QPushButton("Compare Packages")
+        self.compare_packages_button.clicked.connect(self._show_compare_workspace)
+        layout.addWidget(self.compare_packages_button, alignment=Qt.AlignmentFlag.AlignTop)
 
         privacy_badge = QLabel("Local processing only")
         privacy_badge.setObjectName("PrivacyBadge")
@@ -405,6 +430,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         if self.is_processing:
             dialogs.warn_processing_in_progress(self)
+            event.ignore()
+            return
+        if self.compare_workspace.is_comparing:
+            dialogs.warn_comparison_in_progress(self)
             event.ignore()
             return
         event.accept()

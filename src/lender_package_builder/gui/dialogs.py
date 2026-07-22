@@ -71,6 +71,18 @@ def warn_processing_in_progress(parent: QWidget | None) -> None:
     box.exec()
 
 
+def warn_comparison_in_progress(parent: QWidget | None) -> None:
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Comparison in progress")
+    box.setText("A package comparison is currently running.")
+    box.setInformativeText(
+        "Please wait until it finishes before closing the application. Neither package being "
+        "compared is ever modified either way."
+    )
+    box.exec()
+
+
 def show_multiple_items_message(parent: QWidget | None, message: str) -> None:
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Information)
@@ -86,6 +98,59 @@ def show_insufficient_disk_space(parent: QWidget | None, message: str) -> None:
     box.setText("Processing cannot begin.")
     box.setInformativeText(message)
     box.exec()
+
+
+def choose_final_or_original_package(parent: QWidget | None, folder_name: str) -> str | None:
+    """Shown when a folder selected for Compare Packages contains BOTH
+    a Final Lender Package and an Original Lender Package (see
+    compare_packages.describe_folder_contents()) -- the choice is never
+    guessed. Returns "final", "original", or None if cancelled.
+    """
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle("Which package?")
+    box.setText(f'"{folder_name}" contains both a Final and an Original Lender Package.')
+    box.setInformativeText("Which one should be used for this comparison?")
+    final_button = box.addButton("Use Final (Lender Package)", QMessageBox.ButtonRole.AcceptRole)
+    original_button = box.addButton("Use Original Lender Package", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(final_button)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is final_button:
+        return "final"
+    if clicked is original_button:
+        return "original"
+    return None
+
+
+def show_no_pdfs_found(parent: QWidget | None, folder_name: str) -> None:
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("No PDFs found")
+    box.setText(f'No PDF files were found in "{folder_name}".')
+    box.exec()
+
+
+def confirm_cancel_comparison(parent: QWidget | None) -> bool:
+    """"Stop comparing these packages?" -- shown when Cancel Comparison
+    is clicked. Returns True only if the user explicitly confirmed.
+    Comparison is analysis-only, so cancelling never risks any output
+    file -- this confirmation exists only to avoid losing progress on
+    an accidental click for a comparison that may have taken a while.
+    """
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Stop comparing?")
+    box.setText("Stop comparing these packages?")
+    box.setInformativeText("Neither package is ever modified by a comparison, whether you stop it or not.")
+    continue_button = box.addButton("Continue Comparing", QMessageBox.ButtonRole.RejectRole)
+    stop_button = box.addButton("Stop Comparing", QMessageBox.ButtonRole.DestructiveRole)
+    box.setDefaultButton(continue_button)
+    box.exec()
+    return box.clickedButton() is stop_button
 
 
 def show_config_warning(parent: QWidget | None, message: str) -> None:

@@ -36,6 +36,7 @@ import difflib
 import hashlib
 import json
 from pathlib import Path
+from typing import Callable
 
 from . import naming
 from .cancellation import CancellationToken, check_cancelled
@@ -217,8 +218,19 @@ def compute_source_hash(old_files: list[Path], new_files: list[Path]) -> str:
 
 
 def compare_packages(
-    old_side: PackageSide, new_side: PackageSide, cancellation_token: CancellationToken | None = None
+    old_side: PackageSide,
+    new_side: PackageSide,
+    cancellation_token: CancellationToken | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> ComparisonResult:
+    def _report(message: str) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(message)
+            except Exception:
+                pass  # a misbehaving callback must never take down the comparison
+
+    _report(f"Aligning {old_side.page_count} old page(s) against {new_side.page_count} new page(s)...")
     old_hashes = [p.fingerprint.text_hash for p in old_side.pages]
     new_hashes = [p.fingerprint.text_hash for p in new_side.pages]
     matcher = difflib.SequenceMatcher(None, old_hashes, new_hashes, autojunk=False)
@@ -257,6 +269,8 @@ def compare_packages(
     # sequence (not just its local mismatched region), so a page moved
     # far from its original position is still found -- see
     # CATEGORY_MOVED_OR_REORDERED below.
+    if unresolved_old or unresolved_new:
+        _report(f"Resolving {len(unresolved_old) + len(unresolved_new)} unmatched page(s)...")
     for old_page in unresolved_old:
         check_cancelled(cancellation_token)
         findings.append(
@@ -269,6 +283,7 @@ def compare_packages(
         )
 
     findings.sort(key=lambda f: (f.old_overall_page if f.old_overall_page is not None else 10**9, f.new_overall_page or 0))
+    _report("Comparison complete.")
 
     return ComparisonResult(
         old_label=old_side.label,

@@ -130,6 +130,40 @@ def make_build_callable(
     return _run
 
 
+def make_compare_callable(
+    old_files: list[Path],
+    new_files: list[Path],
+    emit_progress: Callable[[str], None],
+    cancellation_token: CancellationToken | None = None,
+) -> Callable[[], object]:
+    """Build the zero-arg callable that runs a Compare Packages
+    comparison. Loading both sides (real file I/O) also happens inside
+    this callable so it runs on the background thread, not the GUI
+    thread that calls this factory function.
+    """
+
+    from .. import compare_packages
+    from ..cancellation import ProcessingCancelled
+
+    def _run():
+        try:
+            emit_progress("Loading Old / Reference Package...")
+            old_side = compare_packages.load_package_side("Old / Reference Package", old_files)
+            emit_progress("Loading New / Generated Package...")
+            new_side = compare_packages.load_package_side("New / Generated Package", new_files)
+            return compare_packages.compare_packages(
+                old_side, new_side, cancellation_token=cancellation_token, progress_callback=emit_progress
+            )
+        except ProcessingCancelled:
+            # Comparison is analysis-only -- there is nothing to clean up,
+            # unlike a cancelled build. Converted to ProcessingCancelledError
+            # so CallableWorker.run() routes it to the same "cancelled"
+            # signal (never treated as a failure).
+            raise ProcessingCancelledError("Comparison was cancelled before it finished.") from None
+
+    return _run
+
+
 def make_estimate_callable(input_path: Path) -> Callable[[], object]:
     from .. import archives
 
