@@ -184,7 +184,55 @@ documents are in Final.
   added; `tests/test_progress.py`'s exact stage-order assertion updated. Local suite: 295 engine +
   73 GUI = 368 total, all passing (up from 263/69).
 
-Milestone 5A (Compare Packages engine) is next.
+**MILESTONE 5A COMPLETE -- Compare Packages engine.** New `compare_packages.py` module (engine
+only, deliberately no GUI code -- see the plan's own instruction to commit 5A before starting 5B).
+Compares an Old/Reference package against a New/Generated package, entirely analysis-only: neither
+input is ever opened for writing.
+
+- **Reuses, rather than reimplements, the existing page comparator**: `content_dedup.compare_page()`
+  is called directly, so "meaningful difference" here means exactly what it means everywhere else in
+  this app -- a differing signature, date, dollar amount, name-like text, form value, or annotation
+  always vetoes a match regardless of text similarity (confirmed by a dedicated test using the
+  existing unsigned/e-signed fixture pair).
+- **Handles unbookmarked manual packages** (the spec's hardest supported-input case) by never
+  assuming document boundaries: both sides are flattened into one ordered page sequence across
+  however many files make up that side. A cheap `difflib` alignment on normalized-text hashes finds
+  the "nothing changed"/"moved as a block" backbone for free (`Exact Match`); only pages that
+  alignment couldn't place get the expensive pairwise `compare_page` treatment, searched across the
+  *entire* other side (not just the locally mismatched region) so a page moved far from its original
+  position is still found and reported as `Moved or Reordered` rather than a false
+  `Only in Old` + `Only in New` pair.
+- **All twelve required categories implemented**: Exact Match, Equivalent Content, Same Document/
+  Different Version, Meaningful Difference, Moved or Reordered, Likely Duplicate Removed (an old-side
+  page whose only counterpart is a near-duplicate of an already-matched page), Possible Missing
+  Document / Only in New (only after checking every other explanation first), and Extra Blank/Cover/
+  Index/Report Page (checked before ever concluding something is missing).
+  "Contained in Larger Document" and "Unrecognized Section" are modeled in the data (every category
+  constant exists and is exercised by the finding/report machinery) but not yet triggered by a
+  dedicated detector -- a known, documented v1 scope gap for a future iteration, not a silent gap.
+- **A real bug found and fixed while testing**: `_resolve_unmatched()` accepted an
+  `other_matched_indices` set (pages already claimed by another finding) but never actually checked
+  it, so two different unresolved pages could both claim the same already-matched page as their own
+  "moved" match, double-counting one real page as an explanation for two different gaps. Fixed by
+  skipping already-claimed candidates and marking a newly-confirmed move as claimed immediately (both
+  sides) so later resolution can build on it -- caught directly by
+  `test_duplicate_removed_correctly_not_reported_as_missing`, confirmed failing before the fix.
+- **Folder-content resolution** (`describe_folder_contents()`): separates an app-generated output
+  folder's PDFs into Final parts, Original Lender Package parts, and everything else (extracted
+  key-document files, Milestone 4) using the exact same naming constants Milestone 1 established --
+  never a whole-folder glob that could sweep an extracted key document or a report into a package
+  comparison as if it were a real part. Which set to use when both exist is left to the GUI
+  (Milestone 5B).
+- **Caching**: `compute_source_hash()` hashes both sides' exact file sets/content, so a saved
+  comparison can be safely reopened later only if neither input changed since.
+- `Package Comparison Report.txt` and `Package Comparison Manifest.json` writers, mirroring
+  `reporting.py`'s existing style.
+- 16 new tests (`tests/test_compare_packages.py`) covering every implemented category, protected
+  differences, reordering, cancellation, source-hash cache invalidation, natural part-number sorting,
+  and non-modification of inputs. Local suite: 311 engine + 73 GUI (unchanged, no GUI code this
+  milestone) = 384 total, all passing (up from 295/73).
+
+Milestone 5B/6 (Compare Packages GUI workspace) is next.
 
 ---
 
