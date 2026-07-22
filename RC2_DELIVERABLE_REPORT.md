@@ -12,6 +12,46 @@ actual real-world package that drove fixes #1-#5**: the user ran their real ~212
 lender package on the fix-#5 build and shared all five generated reports -- OVERALL RESULT: SUCCESS,
 all 27 integrity checks passed, in ~10.6 minutes (down from ~35 minutes before the performance fix).
 
+**"Document Merger" naming/workflow overhaul (six milestones, on top of the fix-#8 baseline)**: a
+follow-on task requested the app be user-visibly renamed to **Document Merger**, plus five new
+capabilities, all completed, tested, committed, and pushed one milestone at a time (see
+`CHECKPOINT.md` for full technical detail and exact test counts per milestone; see
+`CLAUDE DESIGN HANDOFF.md` for the design-facing summary of every affected screen):
+
+1. **Output folder/filename naming overhaul** -- a single main output folder named
+   `Last Name, First Name, Loan Number` (or `..., Adverse, ...` for a non-proceeding file),
+   confirmed by a human via a live-preview dialog before any file is written, never silently
+   overwritten (auto-versions to `..., v2`, `..., v3`, ...). The old five-folder layout (`OG`,
+   `Final`, `Reports`, `Unconverted_Files`, `Logs`) is now just `Final` (holds both the Lender
+   Package and the Original Lender Package plus any extracted key documents), `Reports`, and
+   `Unconverted Files` (created only when non-empty).
+2. **Safe abort ("Cancel Processing")** -- a visible button during processing, gated by an
+   explicit "Stop processing this package?" confirmation, cooperative cancellation checked
+   throughout every stage, and a guarantee that a cancelled run never leaves a partial file under
+   a real package filename and is never shown as anything but clearly Cancelled.
+3. **Product rename to "Document Merger"** -- a single centralized `PRODUCT_NAME` constant drives
+   every user-visible occurrence of the name (window title, header, `--version`, report headers);
+   the internal Python package name, CLI commands, config folder, and report schemas were
+   deliberately left unrenamed.
+4. **Key-document page locator and extraction** -- after the Final package is built, the app
+   locates the Closing Disclosure (flagging any wet-signed copy), Driver's Licenses, the Mortgage
+   Unity Privacy Policy specifically, and loan non-proceeding documentation, reporting exact page
+   locations in plain English and auto-extracting only Confirmed/Strong Match results as their own
+   files -- Possible Matches stay flagged for human review instead.
+5. **Compare Packages engine** -- an analysis-only comparator (never modifies either package) for
+   confirming a manually-compiled package preserved everything meaningful and removed only real
+   duplicates, reusing the same protected-difference/duplicate-detection logic as the rest of the
+   app rather than a separate, weaker comparison engine.
+6. **Compare Packages GUI workspace** -- a separate top-level "Compare Packages" workspace with
+   side selectors, non-freezing progress with its own cancellation, and a filterable/searchable
+   results view with a side-by-side detail panel and report export.
+
+Local suite grew from 269 (fix-#8 baseline) to **392 tests, all passing** (311 engine + 81 GUI).
+One known, explicitly documented scope gap carries forward: the GUI does not yet have an action to
+reopen a previously exported `Package Comparison Manifest.json` without rerunning the comparison
+(the engine-level `compute_source_hash()` primitive this needs is implemented and tested). See
+`CHECKPOINT.md` for the exact commit hashes and the real-Windows-CI re-validation of this work.
+
 **Post-release fix #8**: after fix #7 shipped, the release filename still embedded a short git commit
 SHA (`LP_Builder_RC2_ad00fd8_Windows_x64-Portable`) -- direct user feedback rejected this outright
 ("this naming needs to stop"). A hex commit fragment means nothing to a nontechnical user and reads as

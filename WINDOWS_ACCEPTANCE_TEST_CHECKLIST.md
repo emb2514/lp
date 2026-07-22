@@ -1,4 +1,4 @@
-# Windows Acceptance Test Checklist -- Lender Package Builder RC2
+# Windows Acceptance Test Checklist -- Document Merger RC2
 
 This checklist is for testing the portable Windows build on a real
 Windows 11 computer. You do not need any programming experience to
@@ -77,10 +77,21 @@ what's expected.
           open application window, or use "Browse File".
     - [ ] Click "Build Lender Packages".
 
-12. **Confirm OG, Final, reports, and placeholders match the documented expectation**
+12. **Confirm the Original Lender Package, Lender Package, reports, and placeholders match the
+    documented expectation**
     - [ ] Compare your results to
           `Sample_Test_Package_Expected_Results.txt`. They should match
           exactly (document counts, duplicate count, PASS/FAIL result).
+    - [ ] Confirm the output folder is named
+          `Last Name, First Name, Loan Number` (using whatever you
+          entered in the "Confirm package details" dialog before the
+          build started), with exactly three subfolders --
+          `Final`, `Reports`, and (only if something couldn't be
+          converted) `Unconverted Files`. There must be no separate
+          `OG` or `Logs` folder.
+    - [ ] Confirm both `..., Lender Package.pdf` and
+          `..., Original Lender Package.pdf` are inside `Final`
+          directly (no subfolder for either one).
 
 13. **Close and reopen the app several times**
     - [ ] Closed and relaunched at least 3 times without errors.
@@ -110,6 +121,66 @@ what's expected.
     - [ ] Expand "Advanced Settings" before building and confirm you
           can change the maximum pages/size per part and that the
           build respects your changed values.
+
+18a. **Test Cancel Processing**
+    - [ ] Start a build on a package with several documents (the
+          bundled `Sample_Test_Package.zip` is fine). While it is
+          processing, click "Cancel Processing."
+    - [ ] Confirm a "Stop processing this package?" popup appears with
+          "Continue Processing" and "Stop Processing" -- clicking
+          "Continue Processing" should NOT stop the run.
+    - [ ] Click Cancel Processing again and this time choose "Stop
+          Processing." Confirm the app clearly shows the run as
+          Cancelled -- not as a success, and not styled like a red
+          error.
+    - [ ] Confirm no `..., Lender Package.pdf` or
+          `..., Original Lender Package.pdf` file exists anywhere for
+          that cancelled run.
+    - [ ] Confirm your original source ZIP/folder is completely
+          unchanged.
+    - [ ] Without restarting the app, start a brand-new build and
+          confirm it completes normally.
+
+18b. **Test the key-document page locator and wet-signed status**
+    - [ ] After a successful build, look for a wet-signature status on
+          the result screen: either "No wet-signed documents were
+          found in the Final lender package," or a
+          "Wet-Signed Documents Found: N" section listing at least one
+          document.
+    - [ ] Confirm a separate "Wet-Signed Closing Disclosure" status is
+          shown whenever the Closing Disclosure specifically isn't
+          wet-signed -- this should appear even if some other document
+          in the package IS wet-signed.
+    - [ ] Open `Key Document Page Locations.txt` (in `Reports\`) and
+          confirm every listed match shows a document type, confidence
+          (Confirmed / Strong Match / Possible Match), the Final
+          package part filename, and a page range.
+    - [ ] If any Confirmed or Strong Match documents were found,
+          confirm matching extracted files exist directly inside
+          `Final` (e.g. `..., Closing Disclosure, ..., <loan
+          number>.pdf`).
+
+18c. **Test Compare Packages**
+    - [ ] Click the "Compare Packages" button in the header. Confirm it
+          switches to a separate workspace and that "Back to Build"
+          returns you to the normal build screen with your previous
+          selection intact.
+    - [ ] For "Old / Reference Package," use "Select Folder" and pick
+          the output folder from step 11's sample-package build; for
+          "New / Generated Package," pick the same folder again (a
+          package compared against itself is a fast, safe smoke test).
+    - [ ] If asked "Use Final (Lender Package)" vs. "Use Original
+          Lender Package," pick Final for both sides.
+    - [ ] Click "Compare Packages" and confirm it completes without
+          freezing the window, then shows a results screen with a
+          summary of matched/equivalent/different pages -- comparing a
+          package against itself should show all (or nearly all) pages
+          as "Exact Match."
+    - [ ] Confirm your source folders were not modified by the
+          comparison (check file modified-times, or just that nothing
+          looks different).
+    - [ ] Click "New Comparison" and confirm it returns you to a clean
+          input screen.
 
 19. **Test a real lender ZIP only as a local copy after the synthetic test passes**
     - [ ] Only after steps 11-12 pass, optionally test with a real

@@ -1,7 +1,7 @@
 # Stage 2 Windows Test Instructions (for a non-programmer)
 
 This guide explains how to try the new **desktop window** version of
-Lender Package Builder on your Windows 11 computer. It assumes you have
+Document Merger on your Windows 11 computer. It assumes you have
 never used Command Prompt, Python, or any developer tool before.
 
 If you already set up the project for Stage 1 (the command-line
@@ -69,7 +69,7 @@ application window should then appear.
 
 ### What the initial window should look like
 
-- A title at the top: **Lender Package Builder**, with a subtitle
+- A title at the top: **Document Merger**, with a subtitle
   underneath and a small **"Local processing only"** badge in the top
   right corner.
 - A large box in the middle with dashed borders that says
@@ -95,7 +95,7 @@ Before trying anything real, create a small, throwaway test ZIP:
 ## Step 5: Drag your test ZIP into the app
 
 1. Open the folder containing `test_docs.zip` in a normal Windows
-   Explorer window, side by side with the Lender Package Builder
+   Explorer window, side by side with the Document Merger
    window.
 2. Drag `test_docs.zip` and drop it onto the dashed box in the
    application.

@@ -1,28 +1,49 @@
-# Lender Package Builder (1.0.0 RC1)
+# Document Merger (RC2)
 
 A local, offline tool that turns a lender ZIP, nested ZIP, folder, or
-loose document collection into two organized PDF packages:
+loose document collection into two organized PDF packages inside one
+named output folder:
 
-- **OG** -- every source document, in original order, nothing removed.
-- **Final** -- the same, minus later occurrences of exact byte-for-byte
-  duplicate source files.
+- **Original Lender Package** -- every source document, in original
+  order, nothing removed.
+- **Lender Package** (the "Final" package) -- the same, minus later
+  occurrences of duplicate or redundant source content, detected safely
+  across several layered, content-aware checks (see "What RC2 adds" in
+  `RC2_DELIVERABLE_REPORT.md`).
 
 **The core safety rule: one source file equals one indivisible
 document.** Nothing in this application ever deletes, merges, or
-compares content at the page level. See `NON_NEGOTIABLE_SAFETY_RULE`
-below.
+compares content at the page level in a way that could split or
+reorder a source document. See `NON_NEGOTIABLE_SAFETY_RULE` below.
 
 Everything runs on your own computer. No file, filename, hash, or
 report is ever uploaded anywhere. There is no telemetry.
+
+Beyond building a package, Document Merger can also:
+
+- **Safely cancel a run in progress** ("Cancel Processing") without
+  ever leaving a partial file under a real package name, and without
+  ever touching your source files.
+- **Locate and extract key documents** from the completed Final
+  package -- the Closing Disclosure (flagging any wet-signed copy),
+  Driver's Licenses, the Mortgage Unity Privacy Policy specifically,
+  and loan non-proceeding documentation (adverse action, withdrawal,
+  denial, or cancellation notices) -- with page locations reported in
+  plain English and, for confidently-identified matches, extracted as
+  their own standalone files.
+- **Compare two packages** ("Compare Packages") -- an old/reference
+  package against a newly generated one -- to confirm nothing
+  meaningful went missing and nothing was wrongly duplicated, without
+  ever modifying either package.
 
 **Stage 1** is the command-line processing engine. **Stage 2** adds a
 polished PySide6 desktop window around that same engine -- no command
 line required. **Stage 3** packages both into a portable Windows
 `.exe` that needs no Python install, no admin rights, and no
 installer -- see **STAGE3_BUILD_AND_RELEASE.md** and
-**README_PORTABLE.txt**. This is currently release candidate
-`1.0.0 RC1`, pending manual Windows acceptance testing -- see
-**WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md**.
+**README_PORTABLE.txt**. This is currently release candidate `RC2` --
+see **WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md** for the manual acceptance
+checklist.
 
 ---
 
@@ -174,6 +195,46 @@ Highlights:
 - **Large-input confirmation** -- exceeding the configured hard safety
   limit requires an explicit "Process This Known Large Package" click
   before `allow_large_input=True` is ever passed to the engine.
+- **Cancel Processing** -- a visible button appears during processing;
+  clicking it asks "Stop processing this package?" (Continue
+  Processing / Stop Processing) before anything happens, so a single
+  accidental click never cancels a run. Cancellation is cooperative and
+  checked throughout every stage (inventory, archive extraction,
+  document conversion, fingerprinting, comparison, merging), never
+  force-kills the background thread, never modifies your source files,
+  and never leaves a partial file under a real `Lender Package.pdf` /
+  `Original Lender Package.pdf` name -- a cancelled run is always shown
+  as clearly Cancelled, never as success, and you can immediately start
+  a new package without restarting the app.
+- **Key-document page locator** -- once the Final package is built, the
+  app looks for a Closing Disclosure (flagging any wet-signed copy
+  specifically), Driver's Licenses (front/back, per borrower), the
+  Mortgage Unity Privacy Policy, and loan non-proceeding documentation
+  (adverse action, withdrawal, denial, or cancellation notices), and
+  reports exactly where each one is -- part filename, page range inside
+  that part, and overall package page range -- in plain English, in
+  `Key Document Page Locations.txt`, and in the completed-run screen.
+  Confidently-identified matches (Confirmed / Strong Match) are also
+  extracted as their own standalone files inside `Final`; anything less
+  certain (Possible Match) stays flagged for your own review rather
+  than being auto-extracted. The completed-run screen also always shows
+  a "Wet-Signed Documents Found" count and a separate "Wet-Signed
+  Closing Disclosure" status, since the CD not being wet-signed doesn't
+  mean nothing else in the package is.
+- **Compare Packages** -- a separate workspace (its own "Compare
+  Packages" button in the header) for comparing an old/reference
+  package against a newly generated one, useful when a package was
+  compiled by hand and may still contain duplicates. It never modifies
+  either package -- it only reports Exact Match, Equivalent Content,
+  Contained in Larger Document, Same Document/Different Version,
+  Meaningful Difference, Likely Duplicate Removed, Moved or Reordered,
+  Only in Old, Only in New, Possible Missing Document, Extra Blank/
+  Cover/Index/Report Page, Unrecognized Section, or Needs Review for
+  every page on both sides, with the same protected-difference rules
+  (signatures, dates, dollar amounts, names, form values, and so on)
+  the rest of this app already enforces -- nothing is ever called
+  "missing" without first checking whether it moved, was contained in a
+  larger document, or was a correctly-removed duplicate.
 
 ## Configuration
 
@@ -293,18 +354,45 @@ the script. Key observations from this machine's results:
 
 ## Output layout
 
+The GUI collects the borrower's last name, first name, loan number, and
+whether the file is adverse/withdrawn/denied/cancelled *before*
+processing starts, and shows a live preview of the exact output folder
+name -- nothing here is guessed from automatic recognition alone. The
+main output folder is created next to the input (or wherever you choose)
+using commas between every value, no underscores:
+
 ```
-<Input_Name>_Lender_Package_Output_<timestamp>/
-├── OG/            Full_Lender_Package_OG_Files_Part_001.pdf, ...
-├── Final/         Full_Lender_Package_Final_Part_001.pdf, ...
-├── Reports/       Processing_Report.txt, Duplicate_Removal_Log.txt, Processing_Manifest.json
-├── Unconverted_Files/   Original copies of anything that could not be converted
-└── Logs/          run.log
+Last Name, First Name, Loan Number/
+├── Final/                 Lender Package + Original Lender Package + any extracted key documents
+├── Reports/                Processing_Report.txt, Key Document Page Locations.txt,
+│                           Processing_Manifest.json, run.log, and every other report
+└── Unconverted Files/       Only created if a file genuinely could not be converted
 ```
 
-`Processing_Report.txt` is the main human-readable summary, including
-every one of the 22 integrity checks (18 required by the original spec, strengthened with 4 additional independent page-count re-verification checks) with an explicit
-PASS/FAIL. The CLI never reports overall success if any check fails.
+(An adverse/withdrawn/denied/cancelled file instead names the main
+folder `Last Name, First Name, Adverse, Loan Number`.) If a folder
+with that exact name already exists, it is never overwritten -- a new
+run automatically becomes `..., v2`, `..., v3`, and so on.
+
+There is no separate `OG` or `Logs` folder -- the Original Lender
+Package lives directly inside `Final`, alongside the deduplicated
+Lender Package and any extracted key documents, and `run.log` lives in
+`Reports`. Example filenames inside `Final` for borrower Michael True,
+loan `6192278785`:
+
+```
+True, Michael, Lender Package.pdf                       (single-part Final package)
+True, Michael, Original Lender Package.pdf               (single-part Original package)
+True, Michael, Original Lender Package, Part 001.pdf     (only when there is more than one part)
+True, Michael, Closing Disclosure, Signed, 6192278785.pdf              (extracted key document)
+True, Michael, Driver's License Front, E-Sign, 6192278785.pdf
+```
+
+`Processing_Report.txt` (in `Reports`) is the main human-readable
+summary, including every one of the 22 integrity checks (18 required
+by the original spec, strengthened with 4 additional independent
+page-count re-verification checks) with an explicit PASS/FAIL. The CLI
+never reports overall success if any check fails.
 
 ## Project structure
 
@@ -312,7 +400,12 @@ PASS/FAIL. The CLI never reports overall success if any check fails.
 src/lender_package_builder/
 ├── cli.py            Argument parsing + top-level pipeline orchestration
 ├── config.py          config.toml loading
-├── models.py           Core data classes (SourceOccurrence, OutputPart, ...)
+├── models.py           Core data classes (SourceOccurrence, OutputPart, PackageIdentity, ...)
+├── naming.py            Single source of every user-facing output name (folder, package, key-doc filenames)
+├── cancellation.py       CancellationToken / check_cancelled() cooperative cancellation
+├── key_documents.py       Key-document page locator + extraction (Closing Disclosure, Driver's
+│                          Licenses, MU Privacy Policy, loan non-proceeding documentation)
+├── compare_packages.py     Compare Packages engine (analysis-only, never modifies either package)
 ├── progress.py           ProgressStage / ProgressEvent structured progress API
 ├── inventory.py         Discovery, traversal order, natural sort
 ├── archives.py           ZIP safety: path sanitization, ignored-artifact detection, size estimation
@@ -322,20 +415,22 @@ src/lender_package_builder/
 ├── merging.py               Whole-document PDF merging into output parts
 ├── splitting.py               Whole-document output-splitting plan
 ├── validation.py                22 integrity checks (18 required + 4 strengthened re-verification checks)
-├── reporting.py                  Plain-text + JSON report generation
+├── reporting.py                  Plain-text + JSON report generation, key-document report
 ├── workspace.py                   Temporary workspace management
-├── exceptions.py                   Error types
+├── exceptions.py                   Error types, ProcessingCancelledError
 └── gui/                              Stage 2: PySide6 desktop application
     ├── app.py                          QApplication bootstrap
-    ├── main_window.py                  Top-level window, state, wiring
-    ├── worker.py                       Background QThread worker layer
+    ├── main_window.py                  Top-level window, state, wiring, top-level build/compare stack
+    ├── worker.py                       Background QThread worker layer (build + compare jobs)
     ├── theme.py                        Colors, fonts, stylesheet
     ├── state.py                        GUI-side data models (no Qt)
-    ├── dialogs.py                      Large-input confirm, close-warning dialogs
-    ├── os_actions.py                   Open-folder (QDesktopServices) actions
+    ├── dialogs.py                      Cancel/close/compare confirmation and disambiguation dialogs
+    ├── os_actions.py                   Open-folder / open-file (QDesktopServices) actions
     ├── formatting.py                   Byte-size / elapsed-time display helpers
     ├── assets/app_icon.svg               Local application icon
-    └── widgets/                          drop_zone, advanced_settings, progress_view, result_view
+    └── widgets/                          drop_zone, advanced_settings, progress_view, result_view,
+                                           package_identity_dialog, compare_side_selector,
+                                           compare_progress_view, compare_results_view, compare_workspace
 ```
 
 ## Testing
@@ -345,19 +440,11 @@ src/lender_package_builder/
 .venv/bin/python -m pytest tests -v              (macOS/Linux)
 ```
 
-119 automated tests: 78 engine tests (`tests/*.py`, including
-`tests/test_stage3_packaging.py`) covering all 22 Stage 1 scenarios,
-28 Stage 3 packaging/versioning/self-test/diagnostics/entry-point
-scenarios, and extra coverage (ignored system artifacts, non-
-overwriting duplicate ZIP filenames, report reconciliation, the
-pure-Python DOCX/XLSX fallback renderer, LibreOffice conversion when
-available, the structured progress API, and the maximum-constraint
-splitting behavior); and 41 GUI tests (`tests/gui/*.py`, using
-`pytest-qt` with the Qt `offscreen` platform) covering all 20 Stage 2
-scenarios plus 7 Stage 3 GUI scenarios (versioned window title, frozen-
-aware asset resolution, drag-onto-.exe preselection without
-auto-processing, the reused multiple-items dialog, the config-warning
-dialog, and the `--gui-smoke-test` entry point).
+392 automated tests: 311 engine tests (`tests/*.py`) and 81 GUI tests
+(`tests/gui/*.py`, using `pytest-qt` with the Qt `offscreen` platform),
+covering every Stage 1/2/3 scenario plus RC2's content-aware
+deduplication engine and the naming, cancellation, key-document
+locator/extraction, and Compare Packages milestones described above.
 
 **Environment note:** on the headless Linux container this project was
 built and tested in, `QT_QPA_PLATFORM=offscreen` is required (no real
@@ -427,8 +514,12 @@ describes conversion-fidelity and environment edge cases.
   safety check still applies and safely stops with a clear error --
   nothing is silently bypassed, but the friendlier confirmation dialog
   is skipped in that edge case.
-- No cancellation button exists, by design (see Stage 2 spec) -- closing
-  the window is blocked with a warning while a job is running instead.
+- The GUI does not yet have an action to reopen a previously exported
+  `Package Comparison Manifest.json` and redisplay a Compare Packages
+  result without rerunning the comparison -- the underlying source-hash
+  primitive (`compare_packages.compute_source_hash()`) exists and is
+  tested, but the GUI "load saved comparison" action itself has not
+  been built.
 
 **Stage 3 additions:**
 
