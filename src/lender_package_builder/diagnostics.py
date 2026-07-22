@@ -19,7 +19,7 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 
 from . import __version__, runtime_paths
-from ._version import RELEASE_LABEL, USER_VERSION, WINDOWS_FILE_VERSION
+from ._version import PRODUCT_NAME, RELEASE_LABEL, USER_VERSION, WINDOWS_FILE_VERSION
 from .config import load_config_safe
 
 # (distribution name for `importlib.metadata`, importable module name).
@@ -54,7 +54,7 @@ class DiagnosticsReport:
 
 def collect_diagnostics() -> DiagnosticsReport:
     lines: list[str] = []
-    lines.append("Lender Package Builder -- Diagnostics")
+    lines.append(f"{PRODUCT_NAME} -- Diagnostics")
     lines.append("=" * 60)
     lines.extend(_version_section())
     lines.append("")

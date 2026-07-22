@@ -12,11 +12,11 @@ def test_initial_state_shows_drop_zone_and_disabled_build_button(window):
 
 # TEST 20 - HEADLESS GUI STARTUP
 def test_application_and_main_window_construct_without_exception(qtbot):
-    from lender_package_builder._version import USER_VERSION
+    from lender_package_builder._version import PRODUCT_NAME, USER_VERSION
     from lender_package_builder.gui.main_window import MainWindow
 
     win = MainWindow()
     qtbot.addWidget(win)
     win.show()
-    assert win.windowTitle() == f"Lender Package Builder - v{USER_VERSION}"
+    assert win.windowTitle() == f"{PRODUCT_NAME} - v{USER_VERSION}"
     win.close()

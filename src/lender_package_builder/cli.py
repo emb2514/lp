@@ -30,6 +30,7 @@ from . import (
     validation,
     version_classification,
 )
+from ._version import PRODUCT_NAME
 from .cancellation import CancellationToken, ProcessingCancelled, check_cancelled
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
@@ -446,7 +447,7 @@ def _write_cancellation_report(
     cancelled_at_stage: ProgressStage,
 ) -> None:
     lines = [
-        "Lender Package Builder - Cancellation Report",
+        f"{PRODUCT_NAME} - Cancellation Report",
         "=" * 46,
         "",
         "This run was stopped via Cancel Processing before it finished.",

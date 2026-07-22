@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import archives, runtime_paths
-from .._version import USER_VERSION
+from .._version import PRODUCT_NAME, USER_VERSION
 from ..cancellation import CancellationToken
 from ..cli import _default_config_path
 from ..config import AppConfig, load_config_safe
@@ -77,7 +77,7 @@ class MainWindow(QMainWindow):
         self._last_identity: PackageIdentity | None = None
         self._cancel_token: CancellationToken | None = None
 
-        self.setWindowTitle(f"Lender Package Builder - v{USER_VERSION}")
+        self.setWindowTitle(f"{PRODUCT_NAME} - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        title = QLabel("Lender Package Builder")
+        title = QLabel(PRODUCT_NAME)
         title.setObjectName("AppTitle")
         text_col.addWidget(title)
         subtitle = QLabel(f"Build complete and deduplicated lender PDF packages  ·  v{USER_VERSION}")

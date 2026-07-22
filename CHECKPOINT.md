@@ -100,7 +100,30 @@ force-kills the worker thread.
   cancellation through the actual worker). Local suite: 256 engine + 68 GUI = 324 total, all
   passing (up from 244/62 after Milestone 1).
 
-Milestone 3 (rename the visible product to "Document Merger") is next.
+**MILESTONE 3 COMPLETE -- Rename the visible product to "Document Merger".** A branding change
+only: the internal Python package (`lender_package_builder`), CLI subcommand names, config folder
+names, report schemas/field names, and the `.exe` filename are all deliberately untouched --
+only user-visible text changes, all sourced from one new centralized constant,
+`_version.PRODUCT_NAME = "Document Merger"`.
+
+- **GUI**: the large visible header label and the window title now read "Document Merger"
+  (title format unchanged: `"Document Merger - v{USER_VERSION}"`).
+- **CLI**: `--version` and the help/usage text now start with "Document Merger" instead of
+  "Lender Package Builder".
+- **Generated reports/logs**: the diagnostics report (`--diagnostics`), the self-test report
+  (`--self-test`), the startup crash log, and the new `Cancellation_Report.txt` (Milestone 2) all
+  use the same constant for their header line.
+- Internal module docstrings, the Python package name, and developer-facing markdown docs were
+  deliberately left as "Lender Package Builder" -- renaming those would be exactly the
+  unnecessary internal renaming the spec says not to do, and they are never shown to the person
+  using the app.
+- 7 new engine-level tests (`tests/test_product_branding.py`) and 1 new GUI test
+  (`tests/gui/test_stage3_gui.py`), plus 2 existing GUI tests
+  (`test_window_title_and_subtitle_include_user_version`,
+  `test_application_and_main_window_construct_without_exception`) updated for the new title text.
+  Local suite: 263 engine + 69 GUI = 332 total, all passing (up from 256/68).
+
+Milestone 4 (key-document page locator and extraction) is next.
 
 ---
 

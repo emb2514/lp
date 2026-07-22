@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from . import __version__, runtime_paths
+from ._version import PRODUCT_NAME
 from .cli import build_package
 from .config import AppConfig, load_config_safe
 from .exceptions import LenderPackageBuilderError
@@ -46,7 +47,7 @@ class SelfTestResult:
 
     def render_report(self) -> str:
         lines = [
-            "Lender Package Builder -- Self-Test",
+            f"{PRODUCT_NAME} -- Self-Test",
             f"Version: {__version__}",
             "=" * 60,
         ]

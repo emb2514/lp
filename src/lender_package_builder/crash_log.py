@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import runtime_paths
-from ._version import USER_VERSION, __version__
+from ._version import PRODUCT_NAME, USER_VERSION, __version__
 
 
 def setup_crash_logging() -> Path:
@@ -36,7 +36,7 @@ def setup_crash_logging() -> Path:
     log_path = log_dir / f"startup_{timestamp}.log"
     try:
         with log_path.open("w", encoding="utf-8") as fh:
-            fh.write(f"Lender Package Builder {USER_VERSION} ({__version__}) starting.\n")
+            fh.write(f"{PRODUCT_NAME} {USER_VERSION} ({__version__}) starting.\n")
             fh.write(f"Frozen: {runtime_paths.is_frozen()}\n")
             fh.write(f"App root: {runtime_paths.app_root()}\n")
     except OSError:

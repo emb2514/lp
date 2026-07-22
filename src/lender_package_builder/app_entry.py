@@ -97,10 +97,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _help_text() -> str:
-    from ._version import USER_VERSION
+    from ._version import PRODUCT_NAME, USER_VERSION
 
     return (
-        f"Lender Package Builder {USER_VERSION}\n\n"
+        f"{PRODUCT_NAME} {USER_VERSION}\n\n"
         "Usage:\n"
         "  LenderPackageBuilder.exe                    Launch the desktop app.\n"
         "  LenderPackageBuilder.exe <path>              Launch and preselect one ZIP, folder, or file.\n"
@@ -112,9 +112,9 @@ def _help_text() -> str:
 
 
 def _run_version() -> int:
-    from ._version import USER_VERSION, __version__
+    from ._version import PRODUCT_NAME, USER_VERSION, __version__
 
-    print(f"Lender Package Builder {USER_VERSION} ({__version__})")
+    print(f"{PRODUCT_NAME} {USER_VERSION} ({__version__})")
     return 0
 
 

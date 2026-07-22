@@ -11,7 +11,7 @@ in tests/test_stage3_packaging.py.
 from __future__ import annotations
 
 from lender_package_builder import runtime_paths
-from lender_package_builder._version import USER_VERSION
+from lender_package_builder._version import PRODUCT_NAME, USER_VERSION
 from lender_package_builder.gui.main_window import MainWindow
 
 
@@ -19,10 +19,23 @@ from lender_package_builder.gui.main_window import MainWindow
 def test_window_title_and_subtitle_include_user_version(window):
     from PySide6.QtWidgets import QLabel
 
-    assert window.windowTitle() == f"Lender Package Builder - v{USER_VERSION}"
+    assert window.windowTitle() == f"{PRODUCT_NAME} - v{USER_VERSION}"
     subtitle = window.findChild(QLabel, "AppSubtitle")
     assert subtitle is not None
     assert USER_VERSION in subtitle.text()
+
+
+# MILESTONE 3 TEST - the large visible header shows the renamed product,
+# not the old "Lender Package Builder" branding (the internal Python
+# package/module name is deliberately untouched -- see naming.py's
+# PRODUCT_NAME docstring).
+def test_header_title_shows_renamed_product(window):
+    from PySide6.QtWidgets import QLabel
+
+    title = window.findChild(QLabel, "AppTitle")
+    assert title is not None
+    assert title.text() == PRODUCT_NAME
+    assert title.text() == "Document Merger"
 
 
 # STAGE 3 TEST 29 - APP ICON RESOLVES VIA THE FROZEN-AWARE RUNTIME PATH, NOT A HARDCODED ONE
