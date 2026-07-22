@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSpinBox,
     QToolButton,
@@ -23,7 +24,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ... import naming
+from ...models import PackageIdentity
 from ..state import AdvancedSettingsValues
+
+PACKAGE_DETAILS_HINT_TEXT = (
+    "Fill these in ahead of time so Build starts right away -- they name the output folder and "
+    "the package files. Automatic document recognition never supplies these on its own."
+)
 
 EXPLANATION_TEXT = (
     "These are upper boundaries, not exact target sizes. An output part is closed as soon as "
@@ -76,6 +84,57 @@ class AdvancedSettingsWidget(QWidget):
         content_layout.setContentsMargins(18, 16, 18, 16)
         content_layout.setSpacing(10)
 
+        package_details_heading = QLabel("Package Details")
+        package_details_heading.setObjectName("SectionHeading")
+        content_layout.addWidget(package_details_heading)
+
+        package_details_hint = QLabel(PACKAGE_DETAILS_HINT_TEXT)
+        package_details_hint.setObjectName("MutedLabel")
+        package_details_hint.setWordWrap(True)
+        content_layout.addWidget(package_details_hint)
+
+        identity_form = QFormLayout()
+        identity_form.setSpacing(8)
+        identity_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+
+        self.last_name_edit = QLineEdit()
+        self.last_name_edit.setPlaceholderText("Required, e.g. True")
+        identity_form.addRow("Last name:", self.last_name_edit)
+
+        self.first_name_edit = QLineEdit()
+        self.first_name_edit.setPlaceholderText("e.g. Michael")
+        identity_form.addRow("First name:", self.first_name_edit)
+
+        self.loan_number_edit = QLineEdit()
+        self.loan_number_edit.setPlaceholderText("e.g. 6192278785")
+        identity_form.addRow("Loan number:", self.loan_number_edit)
+
+        content_layout.addLayout(identity_form)
+
+        self.adverse_checkbox = QCheckBox(
+            "This is an adverse, withdrawn, denied, or cancelled (non-proceeding) file"
+        )
+        content_layout.addWidget(self.adverse_checkbox)
+
+        identity_preview_caption = QLabel("Output folder will be named:")
+        identity_preview_caption.setObjectName("MutedLabel")
+        content_layout.addWidget(identity_preview_caption)
+
+        self.identity_preview_label = QLabel()
+        self.identity_preview_label.setObjectName("SectionHeading")
+        self.identity_preview_label.setWordWrap(True)
+        content_layout.addWidget(self.identity_preview_label)
+
+        for edit in (self.last_name_edit, self.first_name_edit, self.loan_number_edit):
+            edit.textChanged.connect(self._update_identity_preview)
+        self.adverse_checkbox.toggled.connect(self._update_identity_preview)
+        self._update_identity_preview()
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Sunken)
+        content_layout.addWidget(divider)
+
         explanation = QLabel(EXPLANATION_TEXT)
         explanation.setObjectName("MutedLabel")
         explanation.setWordWrap(True)
@@ -83,6 +142,7 @@ class AdvancedSettingsWidget(QWidget):
 
         form = QFormLayout()
         form.setSpacing(8)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self.max_pages_spin = QSpinBox()
         self.max_pages_spin.setRange(0, 1_000_000)
@@ -152,7 +212,30 @@ class AdvancedSettingsWidget(QWidget):
             enable_content_aware_dedup=self.content_aware_dedup_checkbox.isChecked(),
         )
 
+    def get_identity(self) -> PackageIdentity:
+        return PackageIdentity(
+            last_name=self.last_name_edit.text(),
+            first_name=self.first_name_edit.text(),
+            loan_number=self.loan_number_edit.text(),
+            is_adverse=self.adverse_checkbox.isChecked(),
+        )
+
+    def set_identity(self, identity: PackageIdentity) -> None:
+        self.last_name_edit.setText(identity.last_name)
+        self.first_name_edit.setText(identity.first_name)
+        self.loan_number_edit.setText(identity.loan_number)
+        self.adverse_checkbox.setChecked(identity.is_adverse)
+
+    def _update_identity_preview(self) -> None:
+        self.identity_preview_label.setText(naming.main_folder_name(self.get_identity()))
+
     def validate(self) -> tuple[bool, str]:
+        if not naming.sanitize_component(self.last_name_edit.text()):
+            message = "Last name is required in Package Details -- it names the output folder and package files."
+            self.validation_label.setText(message)
+            self.validation_label.show()
+            self.toggle_button.setChecked(True)
+            return False, message
         if self.max_pages_spin.value() <= 0:
             message = "Maximum pages per output part must be a positive whole number."
             self.validation_label.setText(message)

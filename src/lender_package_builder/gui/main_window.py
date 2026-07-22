@@ -9,23 +9,24 @@ to the structured events/results they emit.
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import archives, runtime_paths
+from .. import archives, history, runtime_paths
 from .._version import PRODUCT_NAME, USER_VERSION
 from ..cancellation import CancellationToken
 from ..cli import _default_config_path
@@ -38,12 +39,40 @@ from .state import InputSelection, classify_input
 from .widgets.advanced_settings import AdvancedSettingsWidget
 from .widgets.compare_workspace import CompareWorkspace
 from .widgets.drop_zone import DropZone, SelectedInputCard
-from .widgets.package_identity_dialog import PackageIdentityDialog
+from .widgets.history_view import HistoryView
 from .widgets.progress_view import ProgressView
 from .widgets.result_view import FailureView, ResultView
 from .worker import CallableWorker, make_build_callable, make_estimate_callable, start_worker
 
 _ASSETS_DIR = runtime_paths.bundled_assets_root() / "gui" / "assets"
+
+
+class _CurrentPageStackedWidget(QStackedWidget):
+    """A `QStackedWidget` whose size hints reflect only the *current*
+    page, not the widest/tallest of every page it holds.
+
+    Plain `QStackedWidget` sizes itself to the max across ALL pages
+    (even ones never shown), which becomes an enforced floor once the
+    stack sits inside a `QScrollArea`: a much wider hidden page (e.g. a
+    completion screen's button row) would otherwise force a horizontal
+    scrollbar on the input form, which is the page actually visible.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        # setCurrentWidget() doesn't reliably propagate a size-hint
+        # change to the parent layout on its own -- forcing it
+        # explicitly is what actually makes the surrounding QScrollArea
+        # re-measure after switching pages.
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def sizeHint(self):  # noqa: N802 - Qt override
+        current = self.currentWidget()
+        return current.sizeHint() if current is not None else super().sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt override
+        current = self.currentWidget()
+        return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
 
 
 class MainWindow(QMainWindow):
@@ -82,8 +111,8 @@ class MainWindow(QMainWindow):
         icon_path = _ASSETS_DIR / "app_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.resize(900, 650)
-        self.setMinimumSize(760, 560)
+        self.resize(1020, 680)
+        self.setMinimumSize(820, 560)
 
         self._build_ui()
         self._center_on_screen()
@@ -113,29 +142,61 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(28, 22, 28, 22)
-        root.setSpacing(18)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        root.addWidget(self._build_header())
+        root.addWidget(self._build_sidebar())
 
-        self.top_level_stack = QStackedWidget()
-        root.addWidget(self.top_level_stack, stretch=1)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(28, 22, 28, 22)
+        content_layout.setSpacing(18)
+        content_layout.addWidget(self._build_header())
 
-        build_page = QWidget()
-        build_layout = QVBoxLayout(build_page)
-        build_layout.setContentsMargins(0, 0, 0, 0)
+        self.top_level_stack = _CurrentPageStackedWidget()
+        content_layout.addWidget(self.top_level_stack, stretch=1)
+        root.addWidget(content, stretch=1)
 
-        self.stack = QStackedWidget()
-        build_layout.addWidget(self.stack)
+        build_page = self._build_package_page()
+
+        self.compare_workspace = CompareWorkspace()
+        self.compare_workspace.back_button.clicked.connect(self._show_build_workspace)
+
+        self.history_view = HistoryView()
+
+        self.top_level_stack.addWidget(build_page)
+        self.top_level_stack.addWidget(self.compare_workspace)
+        self.top_level_stack.addWidget(self.history_view)
+        self.top_level_stack.setCurrentWidget(build_page)
+
+    def _build_package_page(self) -> QWidget:
+        page = QWidget()
+        row = QHBoxLayout(page)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(20)
+
+        # A scroll area, not a bare layout, so a tall center column
+        # (e.g. Advanced Settings expanded on a small window) scrolls
+        # instead of every row silently getting squeezed toward zero
+        # height -- confirmed by direct testing at the window's own
+        # minimum size before this fix.
+        center_scroll = QScrollArea()
+        center_scroll.setWidgetResizable(True)
+        center_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        center_content = QWidget()
+        center = QVBoxLayout(center_content)
+        center.setContentsMargins(0, 0, 4, 0)
+        self.stack = _CurrentPageStackedWidget()
+        center.addWidget(self.stack)
+        center_scroll.setWidget(center_content)
+        row.addWidget(center_scroll, stretch=1)
 
         self.input_page = self._build_input_page()
-        self.progress_view = ProgressView()
         self.result_view = ResultView()
         self.failure_view = FailureView()
 
         self.stack.addWidget(self.input_page)
-        self.stack.addWidget(self.progress_view)
         self.stack.addWidget(self.result_view)
         self.stack.addWidget(self.failure_view)
         self.stack.setCurrentWidget(self.input_page)
@@ -143,20 +204,74 @@ class MainWindow(QMainWindow):
         self.result_view.process_another_requested.connect(self._on_process_another)
         self.failure_view.change_input_requested.connect(self._on_process_another)
         self.failure_view.try_again_requested.connect(self._on_try_again)
+
+        # A persistent side panel (not a stacked page) -- always visible
+        # in the Package workspace, showing "Ready to build" before a
+        # run starts and live status while one is running. The center
+        # column above is what shows the outcome once a run finishes.
+        self.progress_view = ProgressView()
+        self.progress_view.setFixedWidth(280)
         self.progress_view.cancel_requested.connect(self._on_cancel_clicked)
+        row.addWidget(self.progress_view)
 
-        self.compare_workspace = CompareWorkspace()
-        self.compare_workspace.back_button.clicked.connect(self._show_build_workspace)
+        return page
 
-        self.top_level_stack.addWidget(build_page)
-        self.top_level_stack.addWidget(self.compare_workspace)
-        self.top_level_stack.setCurrentWidget(build_page)
+    def _build_sidebar(self) -> QWidget:
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(180)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(14, 24, 14, 20)
+        layout.setSpacing(4)
+
+        self.nav_package_button = QPushButton("Package")
+        self.nav_package_button.setObjectName("NavButton")
+        self.nav_package_button.setCheckable(True)
+        self.nav_package_button.setChecked(True)
+        self.nav_package_button.clicked.connect(self._show_build_workspace)
+        layout.addWidget(self.nav_package_button)
+
+        # Kept as `compare_packages_button` (not `nav_compare_button`)
+        # for exact continuity with the header button this replaces.
+        self.compare_packages_button = QPushButton("Compare")
+        self.compare_packages_button.setObjectName("NavButton")
+        self.compare_packages_button.setCheckable(True)
+        self.compare_packages_button.clicked.connect(self._show_compare_workspace)
+        layout.addWidget(self.compare_packages_button)
+
+        self.nav_history_button = QPushButton("History")
+        self.nav_history_button.setObjectName("NavButton")
+        self.nav_history_button.setCheckable(True)
+        self.nav_history_button.clicked.connect(self._show_history_workspace)
+        layout.addWidget(self.nav_history_button)
+
+        self._nav_buttons = (self.nav_package_button, self.compare_packages_button, self.nav_history_button)
+
+        layout.addStretch(1)
+
+        privacy_badge = QLabel("Local processing only")
+        privacy_badge.setObjectName("PrivacyBadge")
+        privacy_badge.setWordWrap(True)
+        layout.addWidget(privacy_badge)
+
+        return sidebar
+
+    def _set_active_nav(self, active: QPushButton) -> None:
+        for button in self._nav_buttons:
+            button.setChecked(button is active)
 
     def _show_compare_workspace(self) -> None:
+        self._set_active_nav(self.compare_packages_button)
         self.top_level_stack.setCurrentWidget(self.compare_workspace)
 
     def _show_build_workspace(self) -> None:
+        self._set_active_nav(self.nav_package_button)
         self.top_level_stack.setCurrentWidget(self.top_level_stack.widget(0))
+
+    def _show_history_workspace(self) -> None:
+        self._set_active_nav(self.nav_history_button)
+        self.history_view.refresh()
+        self.top_level_stack.setCurrentWidget(self.history_view)
 
     def _build_header(self) -> QWidget:
         header = QWidget()
@@ -174,14 +289,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(text_col)
 
         layout.addStretch(1)
-
-        self.compare_packages_button = QPushButton("Compare Packages")
-        self.compare_packages_button.clicked.connect(self._show_compare_workspace)
-        layout.addWidget(self.compare_packages_button, alignment=Qt.AlignmentFlag.AlignTop)
-
-        privacy_badge = QLabel("Local processing only")
-        privacy_badge.setObjectName("PrivacyBadge")
-        layout.addWidget(privacy_badge, alignment=Qt.AlignmentFlag.AlignTop)
         return header
 
     def _build_input_page(self) -> QWidget:
@@ -324,10 +431,7 @@ class MainWindow(QMainWindow):
                     return
                 allow_large_input = True
 
-        identity_dialog = PackageIdentityDialog(self, self._last_identity)
-        if identity_dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        identity = identity_dialog.identity()
+        identity = self.advanced_settings.get_identity()
 
         self._start_build(run_config, allow_large_input, identity)
 
@@ -341,7 +445,6 @@ class MainWindow(QMainWindow):
         self._cancel_token = CancellationToken()
         self._set_input_controls_enabled(False)
         self.progress_view.start()
-        self.stack.setCurrentWidget(self.progress_view)
 
         worker = CallableWorker()
         worker.set_callable(
@@ -389,11 +492,13 @@ class MainWindow(QMainWindow):
                 technical_details,
                 log_dir=run.output_path / "Reports",
             )
+            self._record_history("Failed", run.output_path, len(run.occurrences))
             self.stack.setCurrentWidget(self.failure_view)
             return
 
         is_warning = _has_warnings(run)
         self.result_view.set_result(run, is_warning, self._last_run_config, self._last_allow_large_input)
+        self._record_history("Warning" if is_warning else "Success", run.output_path, len(run.occurrences))
         self.stack.setCurrentWidget(self.result_view)
 
     def _on_build_failed(self, user_message: str, technical_details: str) -> None:
@@ -402,6 +507,7 @@ class MainWindow(QMainWindow):
         self.progress_view.stop()
         self._set_input_controls_enabled(True)
         self.failure_view.set_error(user_message, technical_details, log_dir=None)
+        self._record_history("Failed", None, 0)
         self.stack.setCurrentWidget(self.failure_view)
 
     def _on_build_cancelled(self, error) -> None:
@@ -410,7 +516,25 @@ class MainWindow(QMainWindow):
         self.progress_view.stop()
         self._set_input_controls_enabled(True)
         self.failure_view.set_cancelled(error)
+        self._record_history("Cancelled", getattr(error, "moved_to", None) or getattr(error, "output_path", None), 0)
         self.stack.setCurrentWidget(self.failure_view)
+
+    def _record_history(self, status: str, output_path: Path | None, document_count: int) -> None:
+        # A history-write failure must never surface to the user or
+        # affect the run it's recording -- it is a convenience log, not
+        # part of the processing/safety contract.
+        try:
+            history.append_history_entry(
+                history.HistoryEntry(
+                    identity=self._last_identity or PackageIdentity(),
+                    output_path=str(output_path) if output_path else "",
+                    status=status,
+                    timestamp=datetime.now().isoformat(timespec="seconds"),
+                    document_count=document_count,
+                )
+            )
+        except OSError:
+            pass
 
     def _on_process_another(self) -> None:
         self._on_change_input()

@@ -1,5 +1,103 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## FOLLOW-ON: Build-page redesign (sidebar nav, inline Package Details, History) -- POST all six
+## milestones, direct user request with a mockup screenshot
+
+After all six "Document Merger" milestones shipped (Windows CI run 29949759806, commit `00a1c21`),
+the user shared an annotated mockup screenshot of the desired first-page layout and asked for: a
+left sidebar (their mockup showed "Package"/"History"), a persistent progress panel showing "Ready
+to build" before a run starts, and an Advanced Settings section where they can pre-fill borrower
+details (last name/first name/loan number) ahead of time rather than confirming them in a popup
+after clicking Build. Two clarifying questions were offered (History screen scope; whether the
+identity popup should be removed or kept-but-prefilled) and declined -- proceeded using the
+recommended defaults from each question (build a real History list now; remove the popup entirely)
+per the user's explicit preference to just proceed.
+
+- **Sidebar navigation** replaces the old header "Compare Packages" button: `MainWindow` now has a
+  persistent left sidebar (`_build_sidebar()`) with three mutually-exclusive checkable nav buttons
+  -- **Package** (`nav_package_button`), **Compare** (`compare_packages_button`, kept that exact
+  attribute name for continuity with the header button it replaces so `test_compare_workspace.py`
+  needed zero changes), and **History** (`nav_history_button`) -- switching `top_level_stack` and
+  updating which button is checked (`_set_active_nav()`). Compare Packages' own "Back to Build"
+  button routes through the same handler, so it also correctly restores the sidebar's active state.
+- **Package Details moved inline, the modal dialog removed entirely.** `PackageIdentityDialog` (the
+  `gui/widgets/package_identity_dialog.py` module and its 5-test file) is deleted outright -- last
+  name/first name/loan number/adverse-checkbox fields, plus the live output-folder-name preview,
+  now live as the first section inside `AdvancedSettingsWidget` (`get_identity()`/`set_identity()`,
+  `_update_identity_preview()`). `_on_build_clicked()` reads identity straight from
+  `advanced_settings.get_identity()` -- no dialog `.exec()` in between. Last-name-required
+  validation moved into `AdvancedSettingsWidget.validate()` as the first check (before the
+  page/size ceiling checks), auto-expanding Advanced Settings and showing the same
+  `validation_label` styling those already use. Because the widget instance persists for the whole
+  session, filling in a borrower's details once and building several files for them no longer means
+  retyping anything -- exactly what "just to make it easier" was asking for.
+- **A persistent Progress side panel** replaces "progress" as a page inside the input/result/
+  failure stack: `self.progress_view` is now a fixed-width sibling of `self.stack` (not one of its
+  pages), visible at all times on the Package page. Idle state ("Ready to build", 0%, dashes for
+  current step/doc, "Est. time remaining: --" -- intentionally never fabricated) is entered on
+  construction and again whenever `stop()` runs, so the panel is immediately ready for the next
+  build the instant a run finishes; the center column's Result/Failure view is what communicates
+  the actual outcome. Added a small custom-painted `CircularProgressIndicator` widget (purely
+  visual -- the real progress data every existing test reads, `progress_bar`, stays a normal
+  (now-hidden) `QProgressBar` so `test_progress_worker.py` needed zero changes) plus an
+  "Est. time remaining" row and a two-column "Current step / Current doc" layout, all driven from
+  the same `handle_event()` logic as before.
+- **History**: a new `history.py` engine module (pure Python, no Qt) with `HistoryEntry`,
+  `load_history()`/`append_history_entry()` -- a local, append-only, atomically-written JSON log at
+  `runtime_paths.history_file_path()` (a sibling of the existing `Logs` app-data folder). Every
+  build completion (success, warning, failed, or cancelled) is recorded via
+  `MainWindow._record_history()`, wrapped in a `try/except OSError` so a history-write failure can
+  never surface to the user or affect the run it's recording -- a convenience log, never part of
+  the safety contract. New `HistoryView` widget lists entries newest-first (name, loan number,
+  date, status, Open Folder) with an empty-state message, refreshed each time the History nav
+  button is clicked.
+- **Two real layout bugs found and fixed while verifying the redesign visually** (via offscreen
+  screenshot renders, not just passing tests -- screenshots caught both; neither was visible from
+  test assertions alone):
+  1. **Advanced Settings content could get squeezed to zero visible height** at the app's own
+     declared minimum window size -- confirmed directly: the new Package Details fields were
+     completely invisible (not just clipped) in a screenshot at 900x650. Root cause: the center
+     column was a bare `QVBoxLayout` with no scroll fallback, so Qt's layout engine compressed rows
+     under vertical space pressure rather than reserving them. Fixed by wrapping the center column
+     in a `QScrollArea` (`setWidgetResizable(True)`), confirmed by a follow-up screenshot at the
+     same window size showing every field correctly.
+  2. **A hidden page's width silently forced a horizontal scrollbar onto the visible page.** After
+     the `QScrollArea` fix, a persistent horizontal scrollbar remained even with a
+     short input path. Root cause, found by directly querying `minimumSizeHint()` on each stack
+     page: `ResultView`'s six-button row (`Open Output Folder`/`Open Final Package`/`Open Final
+     Package Folder`/`Open Reports`/`Review Uncertain Matches`/`Process Another Package`) has a
+     combined minimum width of ~1222px, and plain `QStackedWidget` reports its size hint as the max
+     across ALL pages -- even ones never shown -- so the Input page (326px minimum on its own) was
+     being forced 1222px wide once wrapped in the new scroll area. This is a latent, pre-existing
+     characteristic of `ResultView` that was invisible before this session's redesign (nothing
+     previously enforced the stack's size hint as a hard floor). Fixed with a small
+     `_CurrentPageStackedWidget(QStackedWidget)` subclass overriding `sizeHint()`/
+     `minimumSizeHint()` to reflect only `currentWidget()`, plus a `currentChanged` ->
+     `updateGeometry()` connection so the surrounding scroll area re-measures on every page switch.
+     Applied to both `self.stack` and `self.top_level_stack`. Also bumped the default/minimum
+     window size modestly (900x650 -> 1020x680 default, 760x560 -> 820x560 minimum) to reduce how
+     often the remaining organic content width triggers scrolling in the common case.
+- 9 new engine tests (`tests/test_history.py`: round-trip, newest-first sort, corrupt-file/
+  corrupt-entry soft-fail, atomic write, retention cap, `display_name()` fallback), 5 new tests
+  ported from the deleted `test_package_identity_dialog.py` into `tests/gui/test_advanced_settings.py`
+  (live preview, `get_identity()`/`set_identity()` round-trip, missing-last-name validation,
+  identity flows straight into `_start_build` with no dialog in between), and a new
+  `tests/gui/test_main_window_layout.py` (9 tests: sidebar nav switching + active state, Compare's
+  Back button restoring Package as active, the progress panel not being a stack page, its idle/
+  running/idle-again states, History starting empty and refreshing, history entries recorded for
+  successful/cancelled builds, and a history-write failure never raising). Local suite: 320 engine
+  (was 311) + 90 GUI (was 81, net of -5 deleted +5 ported +9 new) = **410 total, all passing** --
+  confirmed both per-directory (320/320 engine, 90/90 GUI) and in one combined whole-suite run
+  (410/410) after one retry hit the same known, pre-existing, nondeterministic Qt-offscreen
+  interpreter-shutdown segfault documented elsewhere in this file (not a regression -- the
+  per-directory runs it interrupted both passed clean).
+- Updated `CLAUDE DESIGN HANDOFF.md` §4 (named screens/states) to describe the new sidebar,
+  persistent progress panel, inline Package Details, History screen, and the
+  `_CurrentPageStackedWidget` sizing fix; updated `README.md`'s feature list, output-layout
+  description, project-structure tree, and test counts.
+
+---
+
 ## NEW WORK IN PROGRESS: "Document Merger" naming/workflow overhaul (Milestones 1-6)
 
 A large new task spec (post-RC2, all of it on top of the validated RC2 baseline at commit

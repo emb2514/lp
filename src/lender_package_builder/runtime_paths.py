@@ -79,3 +79,13 @@ def default_log_root() -> Path:
     else:
         base_path = Path.home() / ".local" / "share"
     return base_path / "LenderPackageBuilder" / "Logs"
+
+
+def history_file_path() -> Path:
+    """Where the GUI's build-history log is stored -- a sibling of
+    `default_log_root()`'s `Logs` folder, so it lives in the same
+    per-user app-data location without depending on any per-job output
+    folder existing.
+    """
+
+    return default_log_root().parent / "history.json"

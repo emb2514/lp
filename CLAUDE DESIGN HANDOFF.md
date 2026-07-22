@@ -106,39 +106,72 @@ guessed from a flat scan), `E-Sign`, `Unsigned`, or omitted /
 
 ## 4. Named screens and states -- Build workflow
 
-`MainWindow` holds a `top_level_stack` (`QStackedWidget`) with two
-pages: the **build workflow** (page 0, described below) and the
-**Compare Packages workspace** (§5). A header "Compare Packages" button
-switches to page 1; the workspace's own "Back to Build" button returns.
-Switching pages never touches the other page's state -- a build in
-progress stays in progress if you switch away and back (switching away
-is not currently blocked while a build is running, but closing the
-whole app is -- see `closeEvent()`).
+`MainWindow` is a persistent left **sidebar** (`objectName="Sidebar"`,
+fixed width) plus a content column. The sidebar holds three checkable
+nav buttons (`objectName="NavButton"`, mutually exclusive via
+`_set_active_nav()`): **Package** (`self.nav_package_button`),
+**Compare** (`self.compare_packages_button` -- kept that attribute name
+for continuity with the pre-sidebar header button it replaced),
+and **History** (`self.nav_history_button`), plus the "Local processing
+only" privacy badge at the bottom. Clicking one switches
+`self.top_level_stack` (a `QStackedWidget` holding the Package page,
+the Compare Packages workspace (§5), and the History screen) and
+updates which nav button is checked. Compare Packages' own "Back to
+Build" button routes through the same `_show_build_workspace()` method,
+so it also correctly restores Package as the active nav item. Switching
+pages never touches another page's state -- a build in progress stays
+in progress if you switch away and back (switching away is not
+currently blocked while a build is running, but closing the whole app
+is -- see `closeEvent()`).
 
-The build workflow itself is a second `QStackedWidget` (`self.stack`)
-with these pages, in the states below:
+**The Package page is itself two columns**, not a single stacked page:
+a center column (`self.stack`, a `QStackedWidget` wrapped in a
+`QScrollArea` so a tall expanded Advanced Settings panel scrolls
+instead of squeezing rows toward zero height -- see the
+`_CurrentPageStackedWidget` note below) holding Input/Result/Failure,
+and a **persistent right-side Progress panel** (`self.progress_view`,
+fixed width, NOT one of `self.stack`'s pages) that is visible at all
+times on this page -- before a build starts (idle "Ready to build"
+state), while one runs, and immediately after (it reverts to idle the
+moment `stop()` is called, since the center column's Result/Failure
+view is what communicates a finished run's outcome).
 
-1. **Input page** (`self.input_page`) -- drop zone + Browse
-   File/Browse Folder, selected-input summary card, Advanced Settings
-   (collapsed by default: `max_pages_per_part` / `max_size_mb_per_part`),
-   and the **Build Lender Packages** button.
+1. **Input page** (`self.input_page`, one of `self.stack`'s pages) --
+   drop zone + Browse File/Browse Folder, selected-input summary card,
+   Advanced Settings (collapsed by default), and the **Build Lender
+   Packages** button.
    - Dropping/selecting more than one item shows
      `dialogs.show_multiple_items_message()` instead of silently
      picking one.
    - Exceeding the hard safety limit shows `LargeInputConfirmDialog`
      ("Process This Known Large Package" vs. "Go Back") before
      `allow_large_input=True` is ever set.
-   - Clicking Build opens `PackageIdentityDialog` ("Confirm package
-     details") -- last name (required), first name, loan number, an
-     adverse/non-proceeding checkbox, and a **live preview of the exact
-     output folder name** using the naming rules in §3. Continue is
-     disabled until a last name is entered. This dialog is the single
-     point where identity is confirmed by a human before any file is
-     written -- never invent or silently reuse a previous identity.
-2. **Progress page** (`self.progress_view`, `ProgressView`) -- current
-   stage label, current-item label, a running count, elapsed time, a
-   scrolling log, and a **Cancel Processing** button
-   (`progress_view.py`).
+   - **Package Details** now live inline, as the first section inside
+     Advanced Settings (`advanced_settings.py`) -- last name (required),
+     first name, loan number, an adverse/non-proceeding checkbox, and a
+     **live preview of the exact output folder name**
+     (`identity_preview_label`) using the naming rules in §3. There is
+     no modal dialog anymore (`PackageIdentityDialog` was removed) --
+     filling these in ahead of time, before an input is even selected,
+     is the whole point (a returning user re-processing for the same
+     borrower doesn't have to retype anything since the fields persist
+     across builds in one session). Clicking Build with no last name
+     entered auto-expands Advanced Settings and shows the same
+     `validation_label` error styling the page/size ceiling checks
+     already use -- last name is checked first, before those. Identity
+     is never invented or silently defaulted by anything other than a
+     human filling in this section.
+2. **Progress panel** (`self.progress_view`, `ProgressView`, persistent
+   side panel, not a stacked page) -- a circular percentage indicator
+   (`CircularProgressIndicator`, purely visual -- the real progress data
+   other code/tests read stays the plain `QProgressBar`, kept in the
+   tree but hidden), stage label, "N of M documents processed",
+   Current step / Current doc, Elapsed time / Est. time remaining (the
+   latter is intentionally always "--" -- there is no reliable estimate
+   to show, and showing a fabricated one would violate this app's
+   conservative-honesty pattern), a scrolling activity log, and a
+   **Cancel Processing** button that is hidden except while a build is
+   actually running.
    - Clicking Cancel Processing shows `dialogs.confirm_cancel_processing()`
      ("Stop processing this package?" / Continue Processing / Stop
      Processing) -- **never cancels on the first click**.
@@ -147,21 +180,27 @@ with these pages, in the states below:
      is cooperative, not instant, so there is a real gap here to show
      honestly, not to paper over with a spinner that implies it already
      finished.
-3. **Result page, success/warning** (`self.result_view`, `ResultView`)
-   -- a status banner (`StatusBanner`/`StatusBannerTitle`, colored via
-   `SUCCESS`/`WARNING` tokens), stats grid (documents processed,
-   duplicates removed, parts produced, **key-document stat rows**, and
-   **wet-signature stat rows** -- see §4a), Open Output Folder / Open
-   Final Package (`os_actions.open_file`) / Open Final Folder buttons,
-   and Process Another Package.
-4. **Result page, failure** (`self.failure_view`, `FailureView`) --
-   red banner, technical-details section, Try Again. Has a **distinct
-   cancelled state** (`set_cancelled(error)`) that must render visually
-   differently from a real failure (warning-colored banner, not
-   error-red -- `banner.property("status") == "warning"` is asserted by
-   a test) with reason text that explicitly says nothing was changed on
-   disk. **A cancelled run must never look like a red error and must
-   never look like a green success** -- it is its own third thing.
+3. **Result page, success/warning** (`self.result_view`, `ResultView`,
+   one of `self.stack`'s pages) -- a status banner
+   (`StatusBanner`/`StatusBannerTitle`, colored via `SUCCESS`/`WARNING`
+   tokens), stats grid (documents processed, duplicates removed, parts
+   produced, **key-document stat rows**, and **wet-signature stat
+   rows** -- see §4a), Open Output Folder / Open Final Package
+   (`os_actions.open_file`) / Open Final Folder buttons, and Process
+   Another Package. This view's button row is wide (six buttons) --
+   this is exactly why `self.stack` needed the
+   `_CurrentPageStackedWidget` size-hint override below; don't widen it
+   further without re-checking the Package page at the app's minimum
+   window size.
+4. **Result page, failure** (`self.failure_view`, `FailureView`, one of
+   `self.stack`'s pages) -- red banner, technical-details section, Try
+   Again. Has a **distinct cancelled state** (`set_cancelled(error)`)
+   that must render visually differently from a real failure
+   (warning-colored banner, not error-red -- `banner.property("status")
+   == "warning"` is asserted by a test) with reason text that explicitly
+   says nothing was changed on disk. **A cancelled run must never look
+   like a red error and must never look like a green success** -- it is
+   its own third thing.
 5. **Review Uncertain Matches** (`uncertain_review_dialog.py`, a modal,
    not a stack page) -- appears only when at least one comparison needs
    a human decision. Every match defaults to "Keep Both" (no
@@ -169,6 +208,30 @@ with these pages, in the states below:
    second, explicit confirmation naming the file before anything
    changes. This predates the six milestones in this handoff but shares
    the same workspace and should feel visually consistent with it.
+6. **History** (`self.history_view`, `HistoryView`, a `top_level_stack`
+   page, not part of the Package page) -- a table of past builds this
+   installation has run (newest first), each row showing name, loan
+   number, date, status, and an Open Folder action (disabled if that
+   folder no longer exists on disk). Read from a local JSON log
+   (`history.py`, `runtime_paths.history_file_path()`) that a
+   history-write failure never surfaces to the user -- it is a
+   convenience log, not part of the processing/safety contract. Refresh
+   happens automatically each time the History nav button is clicked
+   (`refresh()`). Empty state: "No packages built yet -- packages you
+   build will be listed here."
+
+**Why `_CurrentPageStackedWidget` exists**: a plain `QStackedWidget`
+reports a size hint equal to the max across ALL of its pages, even ones
+not currently shown -- once `self.stack` sits inside a `QScrollArea`
+(needed for the Advanced Settings scrolling fix above), that becomes an
+enforced floor, and Result's six-button row was wide enough to force a
+horizontal scrollbar onto the Input page too. `main_window.py`'s
+`_CurrentPageStackedWidget` subclass overrides `sizeHint()`/
+`minimumSizeHint()` to reflect only `currentWidget()`, and forces
+`updateGeometry()` on every page change so the surrounding scroll area
+re-measures. If you add a wide element to any Result/Failure/History
+page, re-check the Input page doesn't inherit a horizontal scrollbar
+from it.
 
 ### 4a. Key-document and wet-signature status display (Milestone 4)
 

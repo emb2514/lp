@@ -221,20 +221,30 @@ Highlights:
   a "Wet-Signed Documents Found" count and a separate "Wet-Signed
   Closing Disclosure" status, since the CD not being wet-signed doesn't
   mean nothing else in the package is.
-- **Compare Packages** -- a separate workspace (its own "Compare
-  Packages" button in the header) for comparing an old/reference
-  package against a newly generated one, useful when a package was
-  compiled by hand and may still contain duplicates. It never modifies
-  either package -- it only reports Exact Match, Equivalent Content,
-  Contained in Larger Document, Same Document/Different Version,
-  Meaningful Difference, Likely Duplicate Removed, Moved or Reordered,
-  Only in Old, Only in New, Possible Missing Document, Extra Blank/
-  Cover/Index/Report Page, Unrecognized Section, or Needs Review for
-  every page on both sides, with the same protected-difference rules
-  (signatures, dates, dollar amounts, names, form values, and so on)
-  the rest of this app already enforces -- nothing is ever called
-  "missing" without first checking whether it moved, was contained in a
-  larger document, or was a correctly-removed duplicate.
+- **Compare Packages** -- a separate workspace ("Compare" in the left
+  sidebar) for comparing an old/reference package against a newly
+  generated one, useful when a package was compiled by hand and may
+  still contain duplicates. It never modifies either package -- it only
+  reports Exact Match, Equivalent Content, Contained in Larger Document,
+  Same Document/Different Version, Meaningful Difference, Likely
+  Duplicate Removed, Moved or Reordered, Only in Old, Only in New,
+  Possible Missing Document, Extra Blank/Cover/Index/Report Page,
+  Unrecognized Section, or Needs Review for every page on both sides,
+  with the same protected-difference rules (signatures, dates, dollar
+  amounts, names, form values, and so on) the rest of this app already
+  enforces -- nothing is ever called "missing" without first checking
+  whether it moved, was contained in a larger document, or was a
+  correctly-removed duplicate.
+- **History** -- "History" in the left sidebar lists every package this
+  installation has built (newest first): name, loan number, date,
+  result, and an Open Folder button. It's a local, read-only convenience
+  log (`%LOCALAPPDATA%\LenderPackageBuilder\history.json` on Windows) --
+  a missing or corrupted log is never treated as an error, and nothing
+  about it affects processing, deduplication, or any output file.
+
+The left sidebar ("Package" / "Compare" / "History") switches between
+these top-level workspaces at any time; a build or comparison in
+progress keeps running if you switch away and back.
 
 ## Configuration
 
@@ -356,8 +366,11 @@ the script. Key observations from this machine's results:
 
 The GUI collects the borrower's last name, first name, loan number, and
 whether the file is adverse/withdrawn/denied/cancelled *before*
-processing starts, and shows a live preview of the exact output folder
-name -- nothing here is guessed from automatic recognition alone. The
+processing starts -- fill them in under Advanced Settings' "Package
+Details" section, any time before clicking Build (even before selecting
+an input, so returning for the same borrower doesn't mean retyping
+anything). A live preview shows the exact output folder name as you
+type -- nothing here is guessed from automatic recognition alone. The
 main output folder is created next to the input (or wherever you choose)
 using commas between every value, no underscores:
 
@@ -406,6 +419,7 @@ src/lender_package_builder/
 ├── key_documents.py       Key-document page locator + extraction (Closing Disclosure, Driver's
 │                          Licenses, MU Privacy Policy, loan non-proceeding documentation)
 ├── compare_packages.py     Compare Packages engine (analysis-only, never modifies either package)
+├── history.py               Local build-history log behind the GUI's History screen
 ├── progress.py           ProgressStage / ProgressEvent structured progress API
 ├── inventory.py         Discovery, traversal order, natural sort
 ├── archives.py           ZIP safety: path sanitization, ignored-artifact detection, size estimation
@@ -428,9 +442,10 @@ src/lender_package_builder/
     ├── os_actions.py                   Open-folder / open-file (QDesktopServices) actions
     ├── formatting.py                   Byte-size / elapsed-time display helpers
     ├── assets/app_icon.svg               Local application icon
-    └── widgets/                          drop_zone, advanced_settings, progress_view, result_view,
-                                           package_identity_dialog, compare_side_selector,
-                                           compare_progress_view, compare_results_view, compare_workspace
+    └── widgets/                          drop_zone, advanced_settings (incl. inline Package Details),
+                                           progress_view, circular_progress, result_view, history_view,
+                                           compare_side_selector, compare_progress_view,
+                                           compare_results_view, compare_workspace
 ```
 
 ## Testing
@@ -440,11 +455,12 @@ src/lender_package_builder/
 .venv/bin/python -m pytest tests -v              (macOS/Linux)
 ```
 
-392 automated tests: 311 engine tests (`tests/*.py`) and 81 GUI tests
+410 automated tests: 320 engine tests (`tests/*.py`) and 90 GUI tests
 (`tests/gui/*.py`, using `pytest-qt` with the Qt `offscreen` platform),
 covering every Stage 1/2/3 scenario plus RC2's content-aware
 deduplication engine and the naming, cancellation, key-document
-locator/extraction, and Compare Packages milestones described above.
+locator/extraction, Compare Packages, and sidebar/History milestones
+described above.
 
 **Environment note:** on the headless Linux container this project was
 built and tested in, `QT_QPA_PLATFORM=offscreen` is required (no real

@@ -232,4 +232,29 @@ def build_stylesheet() -> str:
         color: {ERROR};
         font-size: 9pt;
     }}
+
+    QFrame#Sidebar {{
+        background: {CARD_BACKGROUND};
+        border-right: 1px solid {CARD_BORDER};
+    }}
+
+    QPushButton#NavButton {{
+        text-align: left;
+        border: none;
+        border-radius: {RADIUS - 2}px;
+        padding: 9px 12px;
+        font-weight: 600;
+        color: {TEXT_SECONDARY};
+        background: transparent;
+    }}
+
+    QPushButton#NavButton:hover {{
+        background: {BACKGROUND};
+        color: {TEXT_PRIMARY};
+    }}
+
+    QPushButton#NavButton:checked {{
+        background: {ACCENT};
+        color: {TEXT_ON_ACCENT};
+    }}
     """

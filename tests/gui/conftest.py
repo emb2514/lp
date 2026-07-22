@@ -61,39 +61,32 @@ def _synchronous_background_workers(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _auto_confirm_package_identity_dialog(monkeypatch):
-    """Auto-accepts MainWindow's pre-build "confirm package details"
-    dialog with a default identity, so any test driving
-    `_on_build_clicked()` doesn't block on a real modal `.exec()`
-    waiting for a human. The dialog's own behavior (validation, live
-    preview, cancel) is tested directly against the real widget in
-    test_package_identity_dialog.py, which never goes through
-    `_on_build_clicked()` and so is unaffected by this patch.
+def _isolated_history_file(tmp_path, monkeypatch):
+    """Points the build-history log at a per-test tmp_path file instead
+    of the real per-user app-data location, so tests never read or
+    accumulate entries in a real user's actual history across runs.
     """
 
-    from PySide6.QtWidgets import QDialog
-
-    from lender_package_builder.models import PackageIdentity
-
-    class _AutoAcceptPackageIdentityDialog:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def exec(self):
-            return QDialog.DialogCode.Accepted
-
-        def identity(self):
-            return PackageIdentity(last_name="Test", first_name="Borrower", loan_number="0000000000")
-
-    monkeypatch.setattr(
-        "lender_package_builder.gui.main_window.PackageIdentityDialog", _AutoAcceptPackageIdentityDialog
-    )
+    history_path = tmp_path / "_gui_test_history.json"
+    monkeypatch.setattr("lender_package_builder.runtime_paths.history_file_path", lambda: history_path)
     yield
+
+
+#: The identity every `window` fixture instance starts pre-filled
+#: with, since Package Details now lives inline in Advanced Settings
+#: (no modal dialog to auto-accept anymore) -- any test driving
+#: `_on_build_clicked()` needs a valid last name already present or
+#: `advanced_settings.validate()` blocks it, exactly like a real user
+#: who hasn't filled it in yet would be blocked. Individual tests are
+#: free to overwrite `window.advanced_settings`'s identity fields
+#: directly when they need to test different or missing values.
+DEFAULT_TEST_IDENTITY_KWARGS = {"last_name": "Test", "first_name": "Borrower", "loan_number": "0000000000"}
 
 
 @pytest.fixture
 def window(qtbot):
     from lender_package_builder.gui.main_window import MainWindow
+    from lender_package_builder.models import PackageIdentity
 
     app = QApplication.instance()
     if app is not None:
@@ -101,6 +94,7 @@ def window(qtbot):
 
     win = MainWindow()
     qtbot.addWidget(win)
+    win.advanced_settings.set_identity(PackageIdentity(**DEFAULT_TEST_IDENTITY_KWARGS))
     win.show()
     qtbot.waitExposed(win)
     yield win
