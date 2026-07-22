@@ -369,6 +369,17 @@ fix #6" above for the one (report-accuracy-only) issue found by cross-checking t
 
 ## 7. Complete test counts and results
 
+**Current totals, after the six "Document Merger" milestones (naming/output-folder overhaul,
+Cancel Processing, product rename, key-document locator/extraction, Compare Packages engine +
+GUI)**: **392 automated tests, all passing** (311 engine + 81 GUI), confirmed both locally and,
+independently, on real Windows CI (§8) -- **389 passed, 3 expected skips, 0 failed** on Windows
+(392 collected total matches the local count exactly; the 3 fewer "passed" than collected is
+purely the same 3 expected, environment-specific skips documented below, not a discrepancy).
+
+The breakdown immediately below (212 engine / 269 total) describes the RC2 content-aware-
+deduplication baseline before those six milestones; it is kept for historical accuracy about what
+RC2's core detection engine itself added and how it was validated.
+
 **Engine test suite** (`pytest tests/ --ignore=tests/gui`): **212 passed, 0 failed.**
 
 Breakdown by area (approximate, by file):
@@ -396,26 +407,27 @@ CI runner below, which does not share this container's offscreen-platform quirk.
 
 ## 8. Windows CI / build results
 
-**Latest run** (includes the lxml.isoschematron packaging exclude and the clean `LP_Builder_v<N>_...`
-release naming -- "Post-release fix #8" above, superseding fix #7's SHA-suffixed naming):
-[`Build Windows Portable Release` #29608871958](https://github.com/emb2514/lp/actions/runs/29608871958)
-(workflow build **#18**) -- triggered via `workflow_dispatch` on branch
-`claude/lender-package-builder-stage-1-h9sa3n` at commit `55dbe55`. **Conclusion: SUCCESS**, runner
-`windows-latest`, total job time ~3.3 minutes (19:48:07-19:51:24 UTC).
+**Latest run** (includes all six "Document Merger" milestones -- output-folder/naming overhaul,
+Cancel Processing, product rename, key-document locator/extraction, and both Compare Packages
+submilestones, on top of the fix-#8 baseline):
+[`Build Windows Portable Release` #29949759806](https://github.com/emb2514/lp/actions/runs/29949759806)
+(workflow build **#19**) -- triggered via `workflow_dispatch` on branch
+`claude/lender-package-builder-stage-1-h9sa3n` at commit `13fd825`. **Conclusion: SUCCESS**, runner
+`windows-latest`, total job time ~3.9 minutes (19:09:19-19:13:13 UTC).
 
-Every one of the 16 steps passed -- verified individually, not inferred from the overall green
+Every one of the 16 real steps passed -- verified individually, not inferred from the overall green
 checkmark:
 
 | Step | Result |
 |---|---|
 | Check out repository / Set up Python 3.13 | PASS |
 | Install build dependencies | PASS |
-| **Run the full automated test suite on Windows** | PASS -- **266 passed, 3 skipped, 0 failed, 1 warning**, in 27.78s (269 collected total, matching the local count exactly -- includes the `test_spec_excludes_lxml_isoschematron` regression test, directly confirmed PASSED in the job log) |
+| **Run the full automated test suite on Windows** | PASS -- **389 passed, 3 skipped, 0 failed, 1 warning**, in 57.33s (392 collected total, matching the local count exactly -- includes all Milestone 1-5B/6 tests, e.g. every test in `test_naming.py`, `test_cancellation.py`, `tests/gui/test_cancellation_gui.py`, `test_key_documents.py`, `test_compare_packages.py`, and `tests/gui/test_compare_workspace.py`, directly confirmed PASSED in the job log running on the real Windows Qt platform, not the Linux `offscreen` platform) |
 | Generate the multi-resolution application icon | PASS |
 | Build the portable executable with PyInstaller | PASS |
 | Verify the build produced `LenderPackageBuilder.exe` | PASS |
-| Prove no external Python is required (`--version`/`--self-test`/`--diagnostics`/`--gui-smoke-test`, with `PYTHONHOME`/`PYTHONPATH` cleared and `PATH` reduced to only Windows system directories) | PASS |
-| Prove the app runs from a space-containing path | PASS |
+| Prove no external Python is required (`--version`/`--self-test`/`--diagnostics`/`--gui-smoke-test`, with `PYTHONHOME`/`PYTHONPATH` cleared and `PATH` reduced to only Windows system directories) | PASS -- `--version` printed `Document Merger RC2 (1.0.0rc2)`; `--self-test` ran the real packaged engine end to end (10/10 checks passed, OVERALL RESULT: PASS); `--diagnostics` printed the `Document Merger -- Diagnostics` header correctly |
+| Prove the app runs from a space-containing path | PASS (`--version`/`--self-test` again both PASS from `C:\Lender Package Builder Test Copy`) |
 | Assemble the release folder / collect licenses / write build manifest | PASS |
 | Zip the release and compute + immediately re-verify its SHA-256 | PASS |
 | Upload the portable release artifact | PASS |
@@ -428,30 +440,28 @@ specifically designed to run on non-Windows and correctly skips itself when actu
 Windows. The single warning is Python's own `zipfile` module surfacing an intentional test fixture (a
 ZIP built with a duplicate entry name), not an application defect.
 
-**Downloadable artifact (current, includes all eight post-release fixes -- clean build-number
-naming)**:
-- Name: `LP_Builder_v18_Windows_x64-Portable` (short product name + plain incrementing build number;
-  contains RC2's full feature set)
-- Contains: `LP_Builder_v18_Windows_x64_Portable.zip` (the actual portable release, SHA-256
-  `71827A8191F64F57BC80A6E3BCD31C4EC28430AFFD3745EDFF85B9CFA47E972A`) and its matching
+**Downloadable artifact (current, includes all six "Document Merger" milestones)**:
+- Name: `LP_Builder_v19_Windows_x64-Portable` (short product name + plain incrementing build number)
+- Contains: `LP_Builder_v19_Windows_x64_Portable.zip` (the actual portable release, SHA-256
+  `E31A9792F1A7A914D67D34A35DBCC1C35E10F9F41C8268FCC66B8B56181376C2`) and its matching
   `..._Portable_SHA256.txt` checksum file
-- Artifact size: 80,067,469 bytes (~76.4 MB)
-- Artifact ID: `8417997302`
-- Download URL: <https://github.com/emb2514/lp/actions/runs/29608871958/artifacts/8417997302>
-  (expires 2026-08-16, 30-day GitHub Actions retention -- download and store it somewhere durable
+- Artifact size: 80,132,839 bytes (~76.4 MB)
+- Artifact ID: `8541731220`
+- Download URL: <https://github.com/emb2514/lp/actions/runs/29949759806/artifacts/8541731220>
+  (expires 2026-08-21, 30-day GitHub Actions retention -- download and store it somewhere durable
   well before then if it needs to be kept)
 - Inside the release folder: `LenderPackageBuilder.exe` + `_internal/` (all bundled dependencies,
-  including the Windows PDFium binary for `pypdfium2`, and still WITHOUT the unused
-  `lxml/isoschematron/resources/` tree that caused the Explorer extraction failure), `config.toml`,
-  `RUN_DIAGNOSTICS.bat`, `README_PORTABLE.txt`, `RELEASE_NOTES_1.0.0_RC1.md`, `THIRD_PARTY_NOTICES.txt`,
-  `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` (now updated for RC2 -- see §6/§10),
-  `PACKAGING_TROUBLESHOOTING.md`, the synthetic `Sample_Test_Package.zip` +
+  including the Windows PDFium binary for `pypdfium2`), `config.toml`, `RUN_DIAGNOSTICS.bat`,
+  `README_PORTABLE.txt`, `RELEASE_NOTES_1.0.0_RC1.md`, `THIRD_PARTY_NOTICES.txt`,
+  `WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` (now updated for the Document Merger milestones -- see
+  §6/§10), `PACKAGING_TROUBLESHOOTING.md`, the synthetic `Sample_Test_Package.zip` +
   `Sample_Test_Package_Expected_Results.txt`, and `BUILD_MANIFEST.txt` (records the exact commit,
   CI run, and `pip freeze` lock for this specific build).
 
-**Previous runs (kept for history only -- do not use these artifacts; note the older
-`Lender_Package_Builder_1.0.0_RC1_...` and `LP_Builder_RC2_<sha>_...` naming on these, both superseded
-by the `LP_Builder_v<N>_...` naming above)**:
+**Previous runs (kept for history only -- do not use these artifacts)**:
+- [#29608871958](https://github.com/emb2514/lp/actions/runs/29608871958) at commit `55dbe55`
+  (build #18) (fix-#8 baseline, before the six "Document Merger" milestones), 266 passed/3
+  skipped/0 failed, artifact `LP_Builder_v18_Windows_x64-Portable` (ID `8417997302`).
 - [#29607844766](https://github.com/emb2514/lp/actions/runs/29607844766) at commit `ad00fd8` (build
   #17) (lxml.isoschematron exclude + `LP_Builder_RC2_<sha>_...` naming, superseded by fix #8's clean
   build-number naming), 266 passed/3 skipped/0 failed, artifact `LP_Builder_RC2_ad00fd8_Windows_x64-Portable`
@@ -526,9 +536,9 @@ above; `RELEASE_LABEL` is still recorded internally in `BUILD_MANIFEST.txt` and 
 ## 10. Installing and running (for a nontechnical Windows 11 user)
 
 1. Download the release from the Windows CI build artifact:
-   <https://github.com/emb2514/lp/actions/runs/29608871958/artifacts/8417997302> (requires being
-   signed in to GitHub with access to this repository; the artifact expires 2026-08-16). Inside is
-   `LP_Builder_v18_Windows_x64_Portable.zip` -- no account, license key, or installer is
+   <https://github.com/emb2514/lp/actions/runs/29949759806/artifacts/8541731220> (requires being
+   signed in to GitHub with access to this repository; the artifact expires 2026-08-21). Inside is
+   `LP_Builder_v19_Windows_x64_Portable.zip` -- no account, license key, or installer is
    required beyond that GitHub download step.
 2. Right-click the downloaded ZIP and choose **Extract All...**, then pick any folder (Desktop,
    Documents, or a USB drive all work).

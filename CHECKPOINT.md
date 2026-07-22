@@ -297,6 +297,57 @@ All six milestones from the task spec are now functionally complete. Final phase
 complete validation sweep across every test category, `CLAUDE DESIGN HANDOFF.md`, real Windows CI,
 portable-build validation, and the final completion report.
 
+**FINAL VALIDATION COMPLETE.** Full local suite re-run clean: 392 passed (311 engine + 81 GUI,
+including a whole-process combined run of all 392 in one `pytest` invocation with zero flake this
+time, and every GUI file individually green -- `test_progress_worker.py` included, no retry
+needed). Ran every named test category from the task spec explicitly and confirmed each passes on
+its own: naming (`test_naming.py`, 24), output-folder (`test_output_structure.py` +
+`test_output_path_safety.py`, 20), cancellation (`test_cancellation.py` +
+`tests/gui/test_cancellation_gui.py`, 18), page-locator/extraction (`test_key_documents.py` +
+`test_key_documents_pipeline.py` + `tests/gui/test_key_documents_gui.py`, 36), comparison
+(`test_compare_packages.py` + `tests/gui/test_compare_workspace.py`, 24), report
+(`test_reporting.py` + `test_reporting_v2.py`, 11), source-integrity (`test_validation.py`, 17),
+and doctor/self-test (`test_stage3_packaging.py`'s self-test/diagnostics/entry-point coverage, 35,
+plus a direct, ad hoc `run_self_test()`/`collect_diagnostics()` invocation against the source tree
+confirming 10/10 checks PASS and correct `Document Merger` branding in the diagnostics header
+outside of pytest too). Packaged-build ("packaged smoke test") confirmation happened for real on
+Windows CI, not simulated -- see immediately below.
+
+Wrote a final documentation pass (`13fd825`): `README.md` (product name, new output-folder
+structure/filenames, Cancel Processing/key-document-locator/Compare Packages feature
+descriptions, updated project structure and test counts), new `CLAUDE DESIGN HANDOFF.md` (every
+named screen/state, exact output-folder/filename naming, and cross-cutting visual behaviors the
+design pass must not break), a new milestone-summary section in `RC2_DELIVERABLE_REPORT.md`, and
+product-name/new-checklist-item updates to `STAGE2_WINDOWS_TEST_INSTRUCTIONS.md` and
+`WINDOWS_ACCEPTANCE_TEST_CHECKLIST.md` (new manual-test items for Cancel Processing, the
+key-document locator/wet-signed status, and Compare Packages).
+
+**Real Windows CI, triggered and monitored to completion**: [`Build Windows Portable Release`
+#29949759806](https://github.com/emb2514/lp/actions/runs/29949759806) (build **#19**) at commit
+`13fd825`. **SUCCESS**, all 16 real steps individually verified PASS, total job time ~3.9 minutes.
+Test step: **389 passed, 3 skipped (the same expected LibreOffice/non-Windows skips as every prior
+run), 0 failed, 1 warning**, in 57.33s -- 392 collected total, matching the local count exactly,
+and this run includes every Milestone 1-5B/6 test file running on the real Windows Qt platform
+(not Linux `offscreen`), including all 8 `tests/gui/test_compare_workspace.py` tests and all 6
+`tests/gui/test_cancellation_gui.py` tests, both confirmed PASSED directly in the job log. The
+packaged `.exe` itself (frozen=True) was separately exercised twice (once with
+`PYTHONHOME`/`PYTHONPATH` cleared and a minimized `PATH`, once again from a space-containing path):
+`--version` printed `Document Merger RC2 (1.0.0rc2)`; `--self-test` ran the real engine pipeline
+end to end against the packaged build (10/10 checks PASS, OVERALL RESULT: PASS); `--diagnostics`
+printed the correct `Document Merger -- Diagnostics` header; `--gui-smoke-test` PASS. Artifact:
+`LP_Builder_v19_Windows_x64-Portable` (ID `8541731220`), containing
+`LP_Builder_v19_Windows_x64_Portable.zip` (80,132,839 bytes, SHA-256
+`E31A9792F1A7A914D67D34A35DBCC1C35E10F9F41C8268FCC66B8B56181376C2`), download URL
+<https://github.com/emb2514/lp/actions/runs/29949759806/artifacts/8541731220>, expires
+2026-08-21 (30-day GitHub Actions retention).
+
+**Project status: all six requested milestones complete, fully tested (locally and on real
+Windows CI), documented, committed, and pushed.** One explicitly documented known gap remains
+(GUI "reopen a saved Compare Packages result from its exported manifest" -- the engine-level
+`compute_source_hash()` primitive it needs already exists and is tested; only the GUI entry point
+is missing). Next recommended step for a human or Claude Design: read `CLAUDE DESIGN HANDOFF.md`
+and do the visual pass it describes.
+
 ---
 
 **POST-RELEASE FIX #8 (release naming correction, direct user feedback)**: fix #7's
