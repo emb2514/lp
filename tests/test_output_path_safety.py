@@ -122,7 +122,7 @@ def test_shorten_for_filesystem_does_not_treat_arbitrary_dots_as_extensions():
 # shortens every path segment, including the filename, and preserves
 # extensions.
 def test_unique_destination_shortens_long_relative_path(tmp_path):
-    unconverted_dir = tmp_path / "Unconverted_Files"
+    unconverted_dir = tmp_path / "Unconverted Files"
     unconverted_dir.mkdir()
 
     long_relpath = _REAL_WORLD_LONG_NAME + ".docx"
@@ -134,7 +134,7 @@ def test_unique_destination_shortens_long_relative_path(tmp_path):
 
 
 def test_unique_destination_leaves_normal_relative_paths_unchanged(tmp_path):
-    unconverted_dir = tmp_path / "Unconverted_Files"
+    unconverted_dir = tmp_path / "Unconverted Files"
     unconverted_dir.mkdir()
     dest = _unique_destination(unconverted_dir, "subfolder/normal_file.txt", "DOC-000001")
     assert dest == unconverted_dir / "subfolder" / "normal_file.txt"
@@ -143,7 +143,7 @@ def test_unique_destination_leaves_normal_relative_paths_unchanged(tmp_path):
 # TEST 7 - _copy_extra_preserved_file (used for email attachments that
 # fail to convert) shortens an overly long relative name too.
 def test_copy_extra_preserved_file_shortens_long_name(tmp_path):
-    unconverted_dir = tmp_path / "Unconverted_Files"
+    unconverted_dir = tmp_path / "Unconverted Files"
     unconverted_dir.mkdir()
     source = tmp_path / "source_attachment.pdf"
     source.write_bytes(b"%PDF-1.4 fake attachment")

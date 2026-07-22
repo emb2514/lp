@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -28,12 +29,14 @@ from .. import archives, runtime_paths
 from .._version import USER_VERSION
 from ..cli import _default_config_path
 from ..config import AppConfig, load_config_safe
+from ..models import PackageIdentity
 from ..progress import ProgressEvent, ProgressStage
 from . import dialogs
 from .formatting import format_bytes
 from .state import InputSelection, classify_input
 from .widgets.advanced_settings import AdvancedSettingsWidget
 from .widgets.drop_zone import DropZone, SelectedInputCard
+from .widgets.package_identity_dialog import PackageIdentityDialog
 from .widgets.progress_view import ProgressView
 from .widgets.result_view import FailureView, ResultView
 from .worker import CallableWorker, make_build_callable, make_estimate_callable, start_worker
@@ -70,6 +73,7 @@ class MainWindow(QMainWindow):
         self._build_worker = None
         self._last_run_config: AppConfig | None = None
         self._last_allow_large_input = False
+        self._last_identity: PackageIdentity | None = None
 
         self.setWindowTitle(f"Lender Package Builder - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
@@ -292,11 +296,19 @@ class MainWindow(QMainWindow):
                     return
                 allow_large_input = True
 
-        self._start_build(run_config, allow_large_input)
+        identity_dialog = PackageIdentityDialog(self, self._last_identity)
+        if identity_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        identity = identity_dialog.identity()
 
-    def _start_build(self, run_config: AppConfig, allow_large_input: bool) -> None:
+        self._start_build(run_config, allow_large_input, identity)
+
+    def _start_build(
+        self, run_config: AppConfig, allow_large_input: bool, identity: PackageIdentity
+    ) -> None:
         self._last_run_config = run_config
         self._last_allow_large_input = allow_large_input
+        self._last_identity = identity
         self.is_processing = True
         self._set_input_controls_enabled(False)
         self.progress_view.start()
@@ -310,6 +322,7 @@ class MainWindow(QMainWindow):
                 run_config,
                 allow_large_input,
                 worker.progress.emit,
+                identity,
             )
         )
         worker.progress.connect(self._on_progress_event)
@@ -335,7 +348,7 @@ class MainWindow(QMainWindow):
                 "This output should not be treated as reliable -- see the technical details below "
                 "and the Reports folder.",
                 technical_details,
-                log_dir=run.output_path / "Logs",
+                log_dir=run.output_path / "Reports",
             )
             self.stack.setCurrentWidget(self.failure_view)
             return

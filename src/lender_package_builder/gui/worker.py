@@ -29,6 +29,7 @@ from ..exceptions import (
     LenderPackageBuilderError,
     OutputAlreadyExistsError,
 )
+from ..models import PackageIdentity
 from ..progress import ProgressCallback
 
 
@@ -90,6 +91,7 @@ def make_build_callable(
     config: AppConfig,
     allow_large_input: bool,
     emit_progress: ProgressCallback,
+    identity: PackageIdentity | None = None,
 ) -> Callable[[], object]:
     """Build the zero-arg callable that runs the real Stage 1 engine.
 
@@ -110,6 +112,7 @@ def make_build_callable(
             verbose=False,
             progress=False,
             progress_callback=emit_progress,
+            identity=identity,
         )
 
     return _run

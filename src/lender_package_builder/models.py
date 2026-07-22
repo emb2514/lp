@@ -294,6 +294,20 @@ class UncertainMatch:
 
 
 @dataclasses.dataclass
+class PackageIdentity:
+    """Borrower identity used to name the main output folder, the
+    Final/Original Lender Package files, and extracted key documents
+    (see naming.py). Entered or confirmed by the user before processing
+    -- automatic document recognition never controls these values.
+    """
+
+    last_name: str = ""
+    first_name: str = ""
+    loan_number: str = ""
+    is_adverse: bool = False
+
+
+@dataclasses.dataclass
 class RunResult:
     """Aggregate result of a full build run, used to drive reporting."""
 
@@ -302,6 +316,7 @@ class RunResult:
     start_time: str
     end_time: str = ""
     elapsed_seconds: float = 0.0
+    identity: PackageIdentity = dataclasses.field(default_factory=PackageIdentity)
 
     occurrences: list[SourceOccurrence] = dataclasses.field(default_factory=list)
     duplicate_groups: list[DuplicateGroup] = dataclasses.field(default_factory=list)

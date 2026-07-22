@@ -13,11 +13,12 @@ from pathlib import Path
 from PySide6.QtWidgets import QMessageBox
 
 from fixtures import builders
-from lender_package_builder import merging
+from lender_package_builder import merging, naming
 from lender_package_builder.config import AppConfig
 from lender_package_builder.gui.widgets.uncertain_review_dialog import UncertainReviewDialog
 from lender_package_builder.models import (
     IntegrityCheckResult,
+    PackageIdentity,
     ProcessingStatus,
     RunResult,
     SourceOccurrence,
@@ -43,8 +44,9 @@ def _occ(doc_id: str, pdf_path: Path, pages: int = 2, needs_review: bool = True)
 def _make_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate") -> RunResult:
     output_path = tmp_path / "output"
     (output_path / "Final").mkdir(parents=True, exist_ok=True)
-    (output_path / "OG").mkdir(parents=True, exist_ok=True)
     (output_path / "Reports").mkdir(parents=True, exist_ok=True)
+
+    identity = PackageIdentity(last_name="Test", first_name="Borrower")
 
     a_pdf = builders.make_pdf(tmp_path / "D1.pdf", pages=2, text_prefix="A")
     b_pdf = builders.make_pdf(tmp_path / "D2.pdf", pages=2, text_prefix="B")
@@ -52,11 +54,11 @@ def _make_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate"
     occ_b = _occ("D2", b_pdf)
 
     final_parts = merging.write_package(
-        [occ_a, occ_b], output_path / "Final", "Full_Lender_Package_Final_Part", "Final",
+        [occ_a, occ_b], output_path / "Final", identity, naming.FINAL_PACKAGE_KIND, "Final",
         config.max_pages_per_part, config.max_size_bytes_per_part,
     )
     og_parts = merging.write_package(
-        [occ_a, occ_b], output_path / "OG", "Full_Lender_Package_OG_Files_Part", "OG",
+        [occ_a, occ_b], output_path / "Final", identity, naming.OG_PACKAGE_KIND, "OG",
         config.max_pages_per_part, config.max_size_bytes_per_part,
     )
 
@@ -68,6 +70,7 @@ def _make_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate"
 
     return RunResult(
         input_path=tmp_path, output_path=output_path, start_time="t",
+        identity=identity,
         occurrences=[occ_a, occ_b], og_parts=og_parts, final_parts=final_parts,
         integrity_checks=[IntegrityCheckResult("x", True, "ok")],
         uncertain_matches=[match],

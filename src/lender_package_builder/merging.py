@@ -20,7 +20,8 @@ from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
-from .models import OutputPart, SourceOccurrence
+from . import naming
+from .models import OutputPart, PackageIdentity, SourceOccurrence
 from .splitting import plan_parts
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,20 @@ def _build_merged_pdf(docs: list[SourceOccurrence], dest_path: Path) -> None:
 def write_package(
     docs: list[SourceOccurrence],
     output_dir: Path,
-    file_prefix: str,
+    identity: PackageIdentity,
+    package_kind: str,
     package_label: str,
     max_pages_per_part: int,
     max_size_bytes_per_part: int,
 ) -> list[OutputPart]:
     """Write `docs` (in order) as one or more PDF parts under `output_dir`.
 
-    `file_prefix` is the filename stem before `_NNN.pdf`, e.g.
-    "Full_Lender_Package_OG_Files_Part".
+    `package_kind` is `naming.FINAL_PACKAGE_KIND` ("Lender Package") or
+    `naming.OG_PACKAGE_KIND` ("Original Lender Package") -- the actual
+    filenames (e.g. "True, Michael, Lender Package, Part 001.pdf") are
+    derived from `identity` and `package_kind` via `naming.py`.
+    `package_label` ("OG"/"Final") is used only for `OutputPart.package`
+    and log messages, not for any filename.
     """
 
     if not docs:
@@ -56,12 +62,19 @@ def write_package(
 
     parts = plan_parts(docs, max_pages_per_part, max_size_bytes_per_part)
 
+    # Part filenames depend on the FINAL total part count (single-part
+    # packages omit "Part NNN" entirely), which is not known until the
+    # size-check rebuild loop below settles -- so parts are written under
+    # temporary names first, then renamed to their real filenames once
+    # the part count is final.
+    temp_stem = f".tmp_{package_label.lower()}_part"
+
     i = 0
     while i < len(parts):
         while True:
-            dest = output_dir / f"{file_prefix}_{i + 1:03d}.pdf"
-            _build_merged_pdf(parts[i], dest)
-            actual_size = dest.stat().st_size
+            temp_dest = output_dir / f"{temp_stem}_{i + 1:03d}.pdf"
+            _build_merged_pdf(parts[i], temp_dest)
+            actual_size = temp_dest.stat().st_size
             if actual_size <= max_size_bytes_per_part or len(parts[i]) <= 1:
                 break
             logger.info(
@@ -79,9 +92,12 @@ def write_package(
                 parts.append([moved])
         i += 1
 
+    total_parts = len(parts)
     output_parts: list[OutputPart] = []
     for idx, part_docs in enumerate(parts, start=1):
-        dest = output_dir / f"{file_prefix}_{idx:03d}.pdf"
+        temp_dest = output_dir / f"{temp_stem}_{idx:03d}.pdf"
+        dest = output_dir / naming.package_part_filename(identity, package_kind, idx, total_parts)
+        temp_dest.replace(dest)
         size_bytes = dest.stat().st_size
         # Re-read the actual merged file rather than trusting the sum of
         # recorded per-document page counts, so this number is an

@@ -23,6 +23,7 @@ from . import (
     content_dedup,
     deduplication,
     merging,
+    naming,
     overlap_detection,
     reporting,
     runtime_paths,
@@ -41,7 +42,7 @@ from .exceptions import (
     OutputAlreadyExistsError,
 )
 from .inventory import InventoryBuilder
-from .models import ConversionOutcome, ProcessingStatus, RunResult
+from .models import ConversionOutcome, PackageIdentity, ProcessingStatus, RunResult
 from .progress import ProgressCallback, ProgressEvent, ProgressSeverity, ProgressStage
 from .workspace import Workspace
 
@@ -62,6 +63,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     build.add_argument("input_path", help="Path to a ZIP file, folder, or single supported document.")
     build.add_argument("--output", type=Path, default=None, help="Explicit output directory.")
+    build.add_argument(
+        "--last-name", default=None, help="Borrower last name, used to name the output folder/files."
+    )
+    build.add_argument(
+        "--first-name", default=None, help="Borrower first name, used to name the output folder/files."
+    )
+    build.add_argument(
+        "--loan-number", default=None, help="Loan number, used to name the output folder/files."
+    )
+    build.add_argument(
+        "--adverse",
+        action="store_true",
+        help="Mark this as an adverse/withdrawn/denied/cancelled (non-proceeding) file.",
+    )
     build.add_argument(
         "--max-pages-per-part",
         type=int,
@@ -124,6 +139,15 @@ def _run_build_command(args: argparse.Namespace) -> int:
     if args.disable_content_aware_dedup:
         config.enable_content_aware_dedup = False
 
+    identity = None
+    if args.last_name or args.first_name or args.loan_number or args.adverse:
+        identity = PackageIdentity(
+            last_name=args.last_name or "",
+            first_name=args.first_name or "",
+            loan_number=args.loan_number or "",
+            is_adverse=args.adverse,
+        )
+
     try:
         run = build_package(
             input_path=input_path,
@@ -133,6 +157,7 @@ def _run_build_command(args: argparse.Namespace) -> int:
             keep_temp=args.keep_temp,
             verbose=args.verbose,
             progress=not args.quiet,
+            identity=identity,
         )
     except LenderPackageBuilderError as exc:
         print(f"\nFAILED: {exc}", file=sys.stderr)
@@ -242,23 +267,30 @@ def build_package(
     verbose: bool = False,
     progress: bool = True,
     progress_callback: ProgressCallback | None = None,
+    identity: PackageIdentity | None = None,
 ) -> RunResult:
     if not input_path.exists():
         raise InvalidInputError(f"Input path does not exist: {input_path}")
 
-    resolved_output_dir = _compute_output_dir(input_path, output_dir)
+    resolved_identity = identity or PackageIdentity()
+    resolved_output_dir = _compute_output_dir(input_path, output_dir, identity)
     if resolved_output_dir.exists():
         raise OutputAlreadyExistsError(f"Output folder already exists: {resolved_output_dir}")
 
-    og_dir = resolved_output_dir / "OG"
+    # Only "Final" (both packages plus any extracted key documents) and
+    # "Reports" (every log/report/manifest) are always created. A
+    # separate OG folder and Logs folder are gone -- the Original Lender
+    # Package lives inside Final, and run.log lives inside Reports.
+    # "Unconverted Files" is created lazily, only if something is
+    # actually written there (see _preserve_unconverted_original /
+    # _copy_extra_preserved_file) -- an empty folder is never shipped.
     final_dir = resolved_output_dir / "Final"
     reports_dir = resolved_output_dir / "Reports"
-    unconverted_dir = resolved_output_dir / "Unconverted_Files"
-    logs_dir = resolved_output_dir / "Logs"
-    for d in (resolved_output_dir, og_dir, final_dir, reports_dir, unconverted_dir, logs_dir):
+    unconverted_dir = resolved_output_dir / naming.UNCONVERTED_FILES_FOLDER_NAME
+    for d in (resolved_output_dir, final_dir, reports_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    file_handler = _setup_logging(logs_dir, verbose)
+    file_handler = _setup_logging(reports_dir, verbose)
     start_dt = datetime.now()
     start_perf = time.perf_counter()
     reporter = _ProgressReporter(progress_callback, print_enabled=progress)
@@ -272,7 +304,6 @@ def build_package(
             run = _execute_pipeline(
                 input_path=input_path,
                 output_dir=resolved_output_dir,
-                og_dir=og_dir,
                 final_dir=final_dir,
                 reports_dir=reports_dir,
                 unconverted_dir=unconverted_dir,
@@ -281,6 +312,7 @@ def build_package(
                 workspace=workspace,
                 progress=progress,
                 reporter=reporter,
+                identity=resolved_identity,
             )
             run_succeeded = True
         finally:
@@ -317,9 +349,19 @@ def build_package(
         file_handler.close()
 
 
-def _compute_output_dir(input_path: Path, explicit: Path | None) -> Path:
+def _compute_output_dir(
+    input_path: Path, explicit: Path | None, identity: PackageIdentity | None = None
+) -> Path:
     if explicit is not None:
         return explicit.expanduser().resolve()
+
+    if identity is not None and (identity.last_name or identity.first_name or identity.loan_number):
+        base_name = naming.main_folder_name(identity)
+        base_name = _shorten_for_filesystem(base_name, len(str(input_path.parent)) + 1)
+        return naming.resolve_versioned_output_dir(input_path.parent, base_name)
+
+    # No borrower identity was given (e.g. a headless/library call) --
+    # fall back to the original input-filename-derived, timestamped name.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = input_path.stem if input_path.is_file() else input_path.name
     suffix = f"_Lender_Package_Output_{timestamp}"
@@ -368,11 +410,11 @@ def _shorten_for_filesystem(name: str, reserved_length: int) -> str:
     return name[:budget].rstrip(" _-")
 
 
-def _setup_logging(logs_dir: Path, verbose: bool) -> logging.Handler:
+def _setup_logging(reports_dir: Path, verbose: bool) -> logging.Handler:
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
 
-    file_handler = logging.FileHandler(logs_dir / "run.log", encoding="utf-8")
+    file_handler = logging.FileHandler(reports_dir / "run.log", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -442,7 +484,6 @@ def _preflight_checks(
 def _execute_pipeline(
     input_path: Path,
     output_dir: Path,
-    og_dir: Path,
     final_dir: Path,
     reports_dir: Path,
     unconverted_dir: Path,
@@ -451,6 +492,7 @@ def _execute_pipeline(
     workspace: Workspace,
     progress: bool,
     reporter: _ProgressReporter,
+    identity: PackageIdentity,
 ) -> RunResult:
     reporter.emit(ProgressStage.DISCOVERING_FILES, f"[1/10] Discovering source files in: {input_path}")
     inventory_builder = InventoryBuilder(config, workspace, allow_large_input)
@@ -553,8 +595,9 @@ def _execute_pipeline(
     og_docs = [o for o in occurrences if o.included_in_og]
     og_parts = merging.write_package(
         og_docs,
-        og_dir,
-        "Full_Lender_Package_OG_Files_Part",
+        final_dir,
+        identity,
+        naming.OG_PACKAGE_KIND,
         "OG",
         config.max_pages_per_part,
         config.max_size_bytes_per_part,
@@ -573,7 +616,8 @@ def _execute_pipeline(
     final_parts = merging.write_package(
         final_docs,
         final_dir,
-        "Full_Lender_Package_Final_Part",
+        identity,
+        naming.FINAL_PACKAGE_KIND,
         "Final",
         config.max_pages_per_part,
         config.max_size_bytes_per_part,
@@ -587,6 +631,7 @@ def _execute_pipeline(
         input_path=input_path,
         output_path=output_dir,
         start_time="",
+        identity=identity,
         occurrences=occurrences,
         duplicate_groups=duplicate_groups,
         content_duplicate_groups=content_duplicate_groups,

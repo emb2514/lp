@@ -60,6 +60,37 @@ def _synchronous_background_workers(request, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _auto_confirm_package_identity_dialog(monkeypatch):
+    """Auto-accepts MainWindow's pre-build "confirm package details"
+    dialog with a default identity, so any test driving
+    `_on_build_clicked()` doesn't block on a real modal `.exec()`
+    waiting for a human. The dialog's own behavior (validation, live
+    preview, cancel) is tested directly against the real widget in
+    test_package_identity_dialog.py, which never goes through
+    `_on_build_clicked()` and so is unaffected by this patch.
+    """
+
+    from PySide6.QtWidgets import QDialog
+
+    from lender_package_builder.models import PackageIdentity
+
+    class _AutoAcceptPackageIdentityDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def identity(self):
+            return PackageIdentity(last_name="Test", first_name="Borrower", loan_number="0000000000")
+
+    monkeypatch.setattr(
+        "lender_package_builder.gui.main_window.PackageIdentityDialog", _AutoAcceptPackageIdentityDialog
+    )
+    yield
+
+
 @pytest.fixture
 def window(qtbot):
     from lender_package_builder.gui.main_window import MainWindow

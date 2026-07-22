@@ -23,7 +23,7 @@ def test_large_input_requires_explicit_confirmation_before_allow_large_input(win
 
     captured_calls = []
 
-    def fake_start_build(run_config, allow_large_input):
+    def fake_start_build(run_config, allow_large_input, identity):
         captured_calls.append(allow_large_input)
 
     monkeypatch.setattr(window, "_start_build", fake_start_build)
@@ -76,7 +76,9 @@ def test_small_input_does_not_trigger_confirmation_dialog(window, tmp_path, qtbo
         lambda *a, **k: dialog_shown.append(True),
     )
     captured_calls = []
-    monkeypatch.setattr(window, "_start_build", lambda run_config, allow_large_input: captured_calls.append(allow_large_input))
+    monkeypatch.setattr(
+        window, "_start_build", lambda run_config, allow_large_input, identity: captured_calls.append(allow_large_input)
+    )
 
     window._on_build_clicked()
 

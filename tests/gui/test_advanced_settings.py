@@ -121,7 +121,7 @@ def test_disabling_content_aware_dedup_checkbox_flows_into_run_config(window, tm
 
     captured = {}
     monkeypatch.setattr(
-        window, "_start_build", lambda run_config, allow_large_input: captured.update(cfg=run_config)
+        window, "_start_build", lambda run_config, allow_large_input, identity: captured.update(cfg=run_config)
     )
 
     window._on_build_clicked()

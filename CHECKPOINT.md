@@ -1,5 +1,63 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## NEW WORK IN PROGRESS: "Document Merger" naming/workflow overhaul (Milestones 1-6)
+
+A large new task spec (post-RC2, all of it on top of the validated RC2 baseline at commit
+`04ee3b1` / Windows CI run 29608871958 documented below) requests six milestones: (1) output
+folder/filename naming overhaul, (2) safe Cancel Processing, (3) rename the visible product to
+"Document Merger", (4) a key-document page locator/extraction feature, (5) a Compare Packages
+engine, (6) a Compare Packages GUI workspace. Working through these autonomously, one milestone
+at a time, each committed and pushed separately so progress is never lost mid-flight.
+
+**MILESTONE 1 COMPLETE -- Output folder structure and naming.** New `naming.py` module is now the
+single source of every user-facing output name, driven by a new `PackageIdentity` (last name,
+first name, loan number, adverse flag) dataclass in `models.py`:
+
+- **Main output folder**: `Last Name, First Name, Loan Number` (e.g. `True, Michael,
+  6192278785`), or `Last Name, First Name, Adverse, Loan Number` for a non-proceeding file. No
+  underscores, no awkward double commas when a field is blank. Collisions are never overwritten --
+  `naming.resolve_versioned_output_dir()` appends `, v2`, `, v3`, ... automatically.
+- **Folder consolidation**: the old five-folder layout (`OG`, `Final`, `Reports`,
+  `Unconverted_Files`, `Logs`) is now just `Final` and `Reports`, plus `Unconverted Files`
+  (space, not underscore) created lazily only when a file actually could not be converted -- an
+  empty folder is never shipped. The Original Lender Package now lives directly inside `Final`
+  alongside the deduplicated Final package; `run.log` now lives inside `Reports`. No separate `OG`
+  or `Logs` folder is ever created.
+- **Package filenames**: `Last Name, First Name, Lender Package.pdf` (single part) or `..., Part
+  001.pdf` (three-digit, only added when there is more than one part) for Final; `..., Original
+  Lender Package.pdf` / `..., Original Lender Package, Part 001.pdf` for OG. `merging.write_package()`
+  now writes to temporary filenames first (since the final name depends on the settled total part
+  count) and renames once part planning settles, rather than rebuilding the PDF twice.
+- **Key-document filename convention** (`naming.key_document_filename()`) is implemented and
+  tested now, ready for Milestone 4's extraction engine to call: `Last Name, First Name, Document
+  Name, Signature Status, Loan Number.pdf`, with `person_name_override` for a second borrower's own
+  document (e.g. a co-borrower's Driver's License) and `copy_suffix` for `, Copy 2` etc.
+- **`review_decisions._rebuild_final_and_reports()`** was fixed to delete only the exact Final
+  part files it is about to replace (via `run.final_parts`), never a `*.pdf` glob over the shared
+  Final folder -- a glob would now also delete the Original Lender Package and any future extracted
+  key documents sitting alongside Final in the same folder.
+- **GUI**: a new `PackageIdentityDialog` ("Confirm package details") appears after Advanced
+  Settings validation and any large-input confirmation, before a build starts -- collects last
+  name (required), first name, loan number, and an adverse/non-proceeding checkbox, with a live
+  preview of the exact output folder name. Continue is disabled until a last name is entered.
+- **CLI**: `--last-name`, `--first-name`, `--loan-number`, `--adverse` flags feed the same
+  `PackageIdentity` path for headless/scripted use.
+- **Backward-compatible fallback**: a caller that supplies no identity at all (a headless/library
+  `build_package()` call with no borrower info) keeps the original input-filename-derived,
+  timestamped folder name rather than erroring -- the GUI always supplies an identity, so this only
+  affects programmatic callers that opt out of it.
+- 24 new naming-unit tests (`tests/test_naming.py`), 8 new pipeline-level folder-structure tests
+  (`tests/test_output_structure.py`), 5 new dialog tests (`tests/gui/test_package_identity_dialog.py`).
+  Updated `tests/test_review_decisions.py`, `tests/gui/test_uncertain_review_dialog.py`, and the
+  GUI large-input/advanced-settings tests for the new `write_package()`/`_start_build()` signatures,
+  plus an autouse GUI-test fixture (`tests/gui/conftest.py`) that auto-confirms the new pre-build
+  dialog so existing tests don't block on a real modal. Local suite: 244 engine + 62 GUI = 306
+  total, all passing (up from 212/57 at the RC2 baseline).
+
+Milestone 2 (safe Cancel Processing) is next.
+
+---
+
 **POST-RELEASE FIX #8 (release naming correction, direct user feedback)**: fix #7's
 `LP_Builder_RC2_<shortsha>_...` naming still wasn't right -- the user explicitly rejected the
 7-character git-commit-hash suffix (e.g. `ad00fd8`) as meaningless clutter in a user-facing filename.

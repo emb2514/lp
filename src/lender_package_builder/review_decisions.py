@@ -48,7 +48,7 @@ from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
-from . import __version__, merging, reporting, validation
+from . import __version__, merging, naming, reporting, validation
 from .config import AppConfig
 from .models import RunResult, SourceOccurrence
 
@@ -160,8 +160,14 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
     final_dir = run.output_path / "Final"
     reports_dir = run.output_path / "Reports"
 
-    for existing in final_dir.glob("*.pdf"):
-        existing.unlink()
+    # Final and the Original Lender Package now share the same "Final"
+    # folder (see naming.py), so only the exact files this run
+    # previously wrote for Final are removed here -- never a glob over
+    # every PDF in the folder, which would also delete the Original
+    # Lender Package and any extracted key documents sitting alongside it.
+    for part in run.final_parts:
+        if part.file_path.exists():
+            part.file_path.unlink()
 
     occ_by_id = {o.document_id: o for o in run.occurrences}
     for occ in run.occurrences:
@@ -175,7 +181,8 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
         final_parts = merging.write_package(
             final_docs,
             final_dir,
-            "Full_Lender_Package_Final_Part",
+            run.identity,
+            naming.FINAL_PACKAGE_KIND,
             "Final",
             config.max_pages_per_part,
             config.max_size_bytes_per_part,

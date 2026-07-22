@@ -13,10 +13,11 @@ from pathlib import Path
 
 from fixtures.builders import make_pdf
 
-from lender_package_builder import content_dedup, merging, review_decisions
+from lender_package_builder import content_dedup, merging, naming, review_decisions
 from lender_package_builder.config import AppConfig
 from lender_package_builder.models import (
     IntegrityCheckResult,
+    PackageIdentity,
     ProcessingStatus,
     RunResult,
     SourceOccurrence,
@@ -42,19 +43,20 @@ def _occ(doc_id: str, pdf_path: Path, pages: int = 2) -> SourceOccurrence:
 def _build_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate") -> RunResult:
     output_path = tmp_path / "output"
     (output_path / "Final").mkdir(parents=True)
-    (output_path / "OG").mkdir(parents=True)
     (output_path / "Reports").mkdir(parents=True)
+
+    identity = PackageIdentity(last_name="Test", first_name="Borrower")
 
     a_pdf = make_pdf(tmp_path / "D1.pdf", pages=2, text_prefix="A")
     b_pdf = make_pdf(tmp_path / "D2.pdf", pages=2, text_prefix="B")
     occ_a, occ_b = _occ("D1", a_pdf), _occ("D2", b_pdf)
 
     final_parts = merging.write_package(
-        [occ_a, occ_b], output_path / "Final", "Full_Lender_Package_Final_Part", "Final",
+        [occ_a, occ_b], output_path / "Final", identity, naming.FINAL_PACKAGE_KIND, "Final",
         config.max_pages_per_part, config.max_size_bytes_per_part,
     )
     og_parts = merging.write_package(
-        [occ_a, occ_b], output_path / "OG", "Full_Lender_Package_OG_Files_Part", "OG",
+        [occ_a, occ_b], output_path / "Final", identity, naming.OG_PACKAGE_KIND, "OG",
         config.max_pages_per_part, config.max_size_bytes_per_part,
     )
     for part in og_parts:
@@ -69,6 +71,7 @@ def _build_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate
 
     return RunResult(
         input_path=tmp_path, output_path=output_path, start_time="t",
+        identity=identity,
         occurrences=[occ_a, occ_b], og_parts=og_parts, final_parts=final_parts,
         integrity_checks=[IntegrityCheckResult("x", True, "ok")],
         uncertain_matches=[match],
@@ -230,10 +233,11 @@ def test_stale_final_parts_are_removed_on_rebuild(tmp_path):
     review_decisions.apply_review_decision(run, config, "UM-0001", "excluded", excluded_document_id="D2")
 
     files_after = set(final_dir.glob("*.pdf"))
-    # Every file currently in Final must correspond to a part actually
-    # recorded on the run -- no orphaned/stale file from before the
-    # rebuild should remain.
-    expected_names = {p.file_path.name for p in run.final_parts}
+    # Every file currently in the shared Final/Original folder must
+    # correspond to either a Final part or an (untouched) OG part
+    # actually recorded on the run -- no orphaned/stale Final file from
+    # before the rebuild should remain.
+    expected_names = {p.file_path.name for p in run.final_parts} | {p.file_path.name for p in run.og_parts}
     actual_names = {f.name for f in files_after}
     assert actual_names == expected_names
 
@@ -337,8 +341,13 @@ def test_manual_exclusion_rescues_orphaned_content_duplicate(tmp_path):
 
     # D3 belongs in OG regardless of its Final status, exactly as it
     # would from a real build -- add its own OG part.
+    # A distinct identity is used here purely so this second, separate
+    # write_package() call produces a differently-named file than the
+    # D1/D2 OG part above -- a real build only ever calls write_package()
+    # once for the complete OG document list.
     y_og_parts = merging.write_package(
-        [occ_y], run.output_path / "OG", "Extra_OG_Part_For_D3", "OG",
+        [occ_y], run.output_path / "Final", PackageIdentity(last_name="Test", first_name="Borrower-D3"),
+        naming.OG_PACKAGE_KIND, "OG",
         config.max_pages_per_part, config.max_size_bytes_per_part,
     )
     next_index = len(run.og_parts) + 1
