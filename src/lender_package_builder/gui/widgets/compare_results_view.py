@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from ... import compare_packages
 from .. import os_actions
+from .flow_layout import FlowLayout
 
 _ALL_CATEGORIES = "All categories"
 
@@ -77,8 +78,7 @@ class CompareResultsView(QWidget):
         detail_layout.addWidget(self.detail_label)
         layout.addWidget(detail_card)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
+        button_row = FlowLayout(spacing=8)
 
         self.previous_button = QPushButton("Previous Finding")
         self.previous_button.clicked.connect(self._select_previous)
@@ -99,8 +99,6 @@ class CompareResultsView(QWidget):
         self.export_button = QPushButton("Export Report")
         self.export_button.clicked.connect(self._export_report)
         button_row.addWidget(self.export_button)
-
-        button_row.addStretch(1)
 
         self.new_comparison_button = QPushButton("New Comparison")
         self.new_comparison_button.setObjectName("PrimaryButton")

@@ -187,11 +187,17 @@ view is what communicates a finished run's outcome).
    produced, **key-document stat rows**, and **wet-signature stat
    rows** -- see §4a), Open Output Folder / Open Final Package
    (`os_actions.open_file`) / Open Final Folder buttons, and Process
-   Another Package. This view's button row is wide (six buttons) --
-   this is exactly why `self.stack` needed the
-   `_CurrentPageStackedWidget` size-hint override below; don't widen it
-   further without re-checking the Package page at the app's minimum
-   window size.
+   Another Package. This view's button row is wide (six buttons) -- it
+   uses `FlowLayout` (`gui/widgets/flow_layout.py`), not `QHBoxLayout`,
+   specifically so a narrow window wraps the row onto more rows instead
+   of clipping button text (a real user-reported bug: button labels were
+   visibly truncated, e.g. "pen Output Fold", "ss Another Pa"). Any
+   button row anywhere in this app should use `FlowLayout` for the same
+   reason -- `QHBoxLayout` only ever shrinks its children, it never
+   wraps. This is also exactly why `self.stack` needed the
+   `_CurrentPageStackedWidget` size-hint override below (a `FlowLayout`
+   row's height changes with width, and that height change must
+   propagate to the surrounding `QScrollArea`).
 4. **Result page, failure** (`self.failure_view`, `FailureView`, one of
    `self.stack`'s pages) -- red banner, technical-details section, Try
    Again. Has a **distinct cancelled state** (`set_cancelled(error)`)

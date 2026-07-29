@@ -12,7 +12,6 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 from .. import os_actions
 from ..formatting import format_elapsed
 from ...models import ProcessingStatus, RunResult
+from .flow_layout import FlowLayout
 from .uncertain_review_dialog import UncertainReviewDialog
 
 
@@ -64,8 +64,11 @@ class ResultView(QWidget):
         self._stats_layout.setVerticalSpacing(6)
         layout.addWidget(stats_card)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
+        # A FlowLayout, not QHBoxLayout -- six buttons never fit on one
+        # row at the app's normal window sizes, and QHBoxLayout only
+        # ever shrinks its children (silently clipping button text)
+        # rather than wrapping them onto a new row.
+        button_row = FlowLayout(spacing=10)
 
         self.open_output_button = QPushButton("Open Output Folder")
         self.open_output_button.clicked.connect(self._open_output_folder)
@@ -86,8 +89,6 @@ class ResultView(QWidget):
         self.review_uncertain_button = QPushButton("Review Uncertain Matches")
         self.review_uncertain_button.clicked.connect(self._open_uncertain_review_dialog)
         button_row.addWidget(self.review_uncertain_button)
-
-        button_row.addStretch(1)
 
         self.process_another_button = QPushButton("Process Another Package")
         self.process_another_button.setObjectName("PrimaryButton")
@@ -259,8 +260,7 @@ class FailureView(QWidget):
         self.details_text.setMinimumHeight(150)
         layout.addWidget(self.details_text)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
+        button_row = FlowLayout(spacing=10)
 
         self.copy_button = QPushButton("Copy Error Details")
         self.copy_button.clicked.connect(self._copy_details)
@@ -270,8 +270,6 @@ class FailureView(QWidget):
         self.open_logs_button.clicked.connect(self._open_logs)
         self.open_logs_button.setEnabled(False)
         button_row.addWidget(self.open_logs_button)
-
-        button_row.addStretch(1)
 
         self.change_input_button = QPushButton("Change Input")
         self.change_input_button.clicked.connect(self.change_input_requested.emit)

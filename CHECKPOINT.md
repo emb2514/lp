@@ -1,5 +1,46 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## UI FIX: result-screen buttons truncating their text (real user screenshot) + investigated
+## whether Compare Packages has a separate performance bottleneck (it doesn't)
+
+Direct follow-up to the 600 DPI performance fix below: the user shared a screenshot of the
+completed-run screen with visibly clipped button labels ("pen Output Fold", "ss Another Pa") and
+asked for buttons that "actually fit in there no matter the size of the page." Root cause:
+`ResultView`'s six-button row, `FailureView`'s four-button row, and `CompareResultsView`'s
+five-button action row all used `QHBoxLayout`, which only ever shrinks its children -- it has no
+concept of wrapping, so once a row's buttons need more width than is available, Qt just clips
+their text with no ellipsis. Fixed by adding `gui/widgets/flow_layout.py` (`FlowLayout`, a
+plain-Python, dependency-free port of the standard Qt "Flow Layout" pattern) and swapping all three
+button rows to it -- buttons now wrap onto additional rows instead of ever being drawn narrower
+than their own text needs. `addStretch()`-based right-alignment of the primary button in each row
+was dropped (`FlowLayout` has no stretch concept); each row's buttons now simply flow left to
+right, wrapping as needed. 4 new tests (`tests/gui/test_flow_layout.py`): full text preserved at
+several widths, wrapping onto multiple rows when narrow, staying on one row when wide, and
+`heightForWidth()` growing as width shrinks (what makes the surrounding `QScrollArea` correctly
+reserve room for wrapped rows instead of clipping the last one).
+
+Also investigated, per "same with the comparing section of it": profiled `compare_packages.py`'s
+`_resolve_unmatched()` (the O(unresolved_old x unresolved_new) exhaustive search across the entire
+other side, needed to still find far-moved pages) directly with synthetic large packages (300x250
+completely-unmatched pages, both trivial and realistic ~400-word-per-page text) -- found the
+algorithm itself is not the bottleneck (2.5s-5.5s at that scale, `compare_page()`'s cheap hard-veto
+checks already reject most non-matching candidates before the expensive text/image similarity
+calls ever run). `load_package_side()` calls the exact same `build_document_fingerprint()` the 600
+DPI fix targeted, so Compare Packages was almost certainly slow for the identical reason as
+building, not a separate bug -- confirmed no additional compare-specific fix was needed; noted this
+finding rather than changing correctness-critical search logic without concrete evidence it was
+the actual bottleneck.
+
+**A caution worth recording**: while testing `FlowLayout`, the full `tests/gui/` directory hit the
+existing pre-documented nondeterministic offscreen-Qt crash/hang more often than usual across a few
+consecutive runs. Investigated directly with an A/B comparison (`git stash` to the pre-`FlowLayout`
+code, same repeated-run test) -- the baseline WITHOUT `FlowLayout` also hit an unexplained hang on
+a repeat run, confirming this is the same pre-existing container-level flakiness already documented
+throughout this file (not something `FlowLayout` introduced). Separately stress-tested with 200
+direct construct/show/destroy cycles of `ResultView`/`FailureView`/`CompareResultsView` with no
+crash. Every per-file and per-directory run in this session was green. Local suite: 324 engine
+(unchanged, no engine code this fix) + 94 GUI (was 90) = 418 total, all passing.
+
 ## PERFORMANCE FIX: 600 DPI scans still slow on "Analyzing document content" (real user report,
 ## direct follow-on to POST-RELEASE FIX #3 below)
 
