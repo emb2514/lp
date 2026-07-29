@@ -1,5 +1,64 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## PERFORMANCE + RESPONSIVENESS FIX: still 45min-1hr per package after the 600 DPI fix, plus
+## "Cancelling..." hanging for minutes, plus no visual sign the app was still alive
+
+Direct follow-up to the 600 DPI fix below, after a real user reported it was still "really really
+slow" and separately that Cancel Processing could sit on "Cancelling..." for 5+ minutes. Investigated
+all three properly rather than guessing:
+
+**1. A redundant full-resolution resize, doubling the cost of the exact stage already fixed.**
+Direct profiling of `_classify_image_blank` found `_prepare_analysis_image` (the BOX-resize
+downsample) was being computed TWICE per embedded image at 600 DPI: once in
+`_extract_embedded_images` for the dHash/average-color signals, and again from scratch inside
+`_classify_image_blank` itself, which had no way to know that downsampled copy already existed.
+Measured directly: the resize itself (not the statistics computed from it) is the expensive part of
+this whole pass at 600 DPI (~0.2s/image), so doing it twice meant the "fixed" pipeline was still
+paying close to its full pre-fix cost. Fixed by threading the already-computed downsampled copy
+through as `_classify_image_blank(image, precomputed_quick=analysis_image)` -- a pure
+de-duplication of an already-safe computation, zero change to the decision logic. Confirmed via
+direct A/B timing: reusing the precomputed copy is ~20x faster than recomputing it (2 new tests in
+`tests/test_content_fingerprinting.py`: a timing regression test and a call-count test proving
+`_prepare_analysis_image` now runs exactly once per embedded image, not twice).
+
+**2. `build_fingerprints` (the "Analyzing document content" stage) emitted exactly ONE progress
+event at the very start and one at the very end, however long the stage actually took.** This is why
+the progress panel looked frozen for the slowest stage in the whole pipeline regardless of how fast
+the underlying work actually was -- there was nothing to show it was moving. Fixed by having
+`content_dedup.build_fingerprints` accept an optional `progress_callback(current, total,
+relative_path)` called once per document as it finishes, wired into `cli.py` exactly the way
+`CONVERTING_DOCUMENTS` already reports per-file progress (new test in `tests/test_progress.py`).
+
+**3. The circular progress indicator was completely static while "indeterminate."** A fixed
+quarter-arc and a static "…" -- no visual difference between "working" and "frozen." Added a real
+spin animation (`gui/widgets/circular_progress.py`, a `QTimer` advancing `_spin_angle` every 40ms
+while indeterminate and visible, stopping the moment real progress data arrives) -- purely
+decorative, never read by other code, so it carries no risk to the real progress-tracking contract
+(`ProgressView.progress_bar` stays the source of truth). 5 new tests in
+`tests/gui/test_circular_progress.py`.
+
+**4. Cancel Processing could not interrupt the two most time-consuming operations in the pipeline,**
+each capable of running for minutes with zero cancellation checkpoints in between:
+  - `_convert_with_libreoffice` used a single blocking `subprocess.run(..., timeout=180)` call --
+    pressing Cancel while one was in flight did nothing until that specific file's conversion
+    finished or hit the 3-minute timeout. Rewritten to `subprocess.Popen` with a 0.2s poll loop that
+    kills the process the moment cancellation is requested (new tests: a monkeypatched slow stand-in
+    process proves the kill fires in well under 5s instead of waiting 30s/180s; a real-LibreOffice
+    test proves normal, uncancelled conversions still work identically).
+  - `build_document_fingerprint` had no cancellation checkpoint at all inside one document -- a
+    single large multi-hundred-page document (a real package is often ONE already-merged closing
+    PDF, not many small files) could block cancellation for as long as that one document took to
+    fingerprint. Now checks per page.
+  - `content_dedup._pairwise_grouping` and `version_classification.build_document_families` each run
+    an O(bucket_size^2) comparison loop but only checked cancellation once per whole bucket (up to
+    ~1,225 pairs for a 50-document bucket). Now check per pair/per outer-loop iteration.
+  - Every `ProcessingCancelled` raised from inside these deeper checkpoints had to be threaded back
+    out without being swallowed by a generic `except Exception` along the way (the conversion
+    dispatcher's per-converter crash guard, and content_dedup's per-document fingerprinting crash
+    guard) -- both now re-raise `ProcessingCancelled` explicitly before their generic handler.
+
+Local suite: 329 engine (was 327) + 99 GUI (was 94) = 428 total, all passing.
+
 ## CI FIX: Windows-only test failure caught by real Windows CI (platform-specific path string)
 
 Real Windows CI (triggered to validate the two fixes below) caught a genuine cross-platform bug on

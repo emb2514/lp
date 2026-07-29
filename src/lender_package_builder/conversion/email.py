@@ -30,6 +30,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, Preformatted, SimpleDocTemplate, Spacer
 
+from ..cancellation import check_cancelled
 from ..hashing import sha256_of_file
 from ..models import ConversionOutcome, ConversionResult, SourceOccurrence
 from .base import failed_result, make_placeholder_pdf, validate_pdf
@@ -57,7 +58,7 @@ class _EmailData:
     attachments: list[tuple[str, bytes]]
 
 
-def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionResult:
+def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_token=None) -> ConversionResult:
     source = occurrence.extracted_path
     if source is None or not source.exists():
         return failed_result("Original email bytes were not available to convert.")
@@ -89,6 +90,7 @@ def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionRe
     _append_pdf_pages(writer, header_pdf)
 
     for i, (att_name, att_bytes) in enumerate(data.attachments, start=1):
+        check_cancelled(cancellation_token)
         safe_name = Path(att_name).name or f"attachment_{i}"
 
         divider_pdf = work_dir / f"{i:03d}_divider.pdf"
@@ -115,7 +117,7 @@ def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionRe
         from . import convert_occurrence  # local import: breaks package import cycle
 
         att_dest = work_dir / f"{i:03d}_converted.pdf"
-        att_result = convert_occurrence(synthetic, att_dest, config, workspace)
+        att_result = convert_occurrence(synthetic, att_dest, config, workspace, cancellation_token)
 
         if att_result.outcome == ConversionOutcome.FAILED:
             placeholder_pdf = work_dir / f"{i:03d}_placeholder.pdf"

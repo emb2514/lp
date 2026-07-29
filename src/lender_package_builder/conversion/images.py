@@ -23,7 +23,7 @@ def can_handle(extension: str) -> bool:
     return extension in _EXTENSIONS
 
 
-def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionResult:
+def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_token=None) -> ConversionResult:
     source = occurrence.extracted_path
     if source is None or not source.exists():
         return failed_result("Original image bytes were not available to convert.")

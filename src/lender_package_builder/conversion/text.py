@@ -52,7 +52,7 @@ def _wrap_preserving_breaks(text: str, width: int) -> str:
     return "\n".join(out_lines)
 
 
-def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionResult:
+def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_token=None) -> ConversionResult:
     source = occurrence.extracted_path
     if source is None or not source.exists():
         return failed_result("Original text bytes were not available to convert.")

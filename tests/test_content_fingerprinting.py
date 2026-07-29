@@ -371,3 +371,80 @@ def test_prepare_analysis_image_preserves_aspect_ratio():
 
     assert resized.size[0] == pdf_content._ANALYSIS_MAX_DIMENSION
     assert resized.size[1] == pdf_content._ANALYSIS_MAX_DIMENSION // 2
+
+
+# TEST 21 - PERFORMANCE REGRESSION (real user report, second follow-on to
+# TEST 17): even with the 600 DPI downsampling fix in place, a user still
+# reported the app taking 45+ minutes on real packages. Root cause: the
+# BOX-resize `_prepare_analysis_image` performs was being computed TWICE
+# per embedded image -- once by `_extract_embedded_images` for the dHash/
+# average-color signals, and a second time inside `_classify_image_blank`
+# itself, which recomputed the identical downsampled copy from scratch
+# instead of reusing it. Direct measurement showed the resize itself (not
+# the statistics computed from it) is the expensive part of this whole
+# pass at 600 DPI, so doing it twice meant the "fixed" pipeline was still
+# paying close to its full, pre-fix cost. Fixed by threading the
+# already-computed downsampled image through as `precomputed_quick`.
+def test_classify_image_blank_reuses_a_precomputed_downsampled_copy():
+    import time
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (5100, 6600), color=250)
+    ImageDraw.Draw(img).rectangle([(500, 500), (4600, 6100)], fill=40)
+    analysis_image = pdf_content._prepare_analysis_image(img)
+
+    # Correctness: reusing a precomputed quick image must never change
+    # the verdict -- it is the exact same downsampled copy either way,
+    # only computed once instead of twice.
+    assert pdf_content._classify_image_blank(img, precomputed_quick=analysis_image) == (
+        pdf_content._classify_image_blank(img)
+    )
+
+    start = time.perf_counter()
+    for _ in range(20):
+        pdf_content._classify_image_blank(img, precomputed_quick=analysis_image)
+    reused_elapsed = time.perf_counter() - start
+
+    start = time.perf_counter()
+    for _ in range(20):
+        pdf_content._classify_image_blank(img)
+    recomputed_elapsed = time.perf_counter() - start
+
+    # Reusing the precomputed copy should be dramatically cheaper than
+    # recomputing it (measured directly: ~20x) -- a generous 3x margin
+    # comfortably catches a regression back to always recomputing without
+    # being flaky on a slower CI runner.
+    assert reused_elapsed * 3 < recomputed_elapsed, (
+        f"reusing a precomputed downsampled image ({reused_elapsed:.3f}s for 20 calls) was not "
+        f"meaningfully faster than recomputing it each time ({recomputed_elapsed:.3f}s) -- likely "
+        f"regressed back to always resizing twice"
+    )
+
+
+# TEST 22 - the same de-duplication end to end: extracting embedded
+# images from a real 600-DPI-scale page must compute the downsampled
+# analysis copy only ONCE per image, not once for the dHash/average-color
+# signals and again for blank classification.
+def test_extract_embedded_images_downsamples_each_image_only_once(tmp_path: Path, monkeypatch):
+    path = builders.make_scanned_like_pdf(
+        tmp_path / "big_scan.pdf", pages=1, image_seed=1, size=(5100, 6600)
+    )
+    fp = pdf_content.build_document_fingerprint("D1", path)
+    assert len(fp.pages[0].images) == 1  # sanity check the fixture embeds one image
+
+    call_count = 0
+    original = pdf_content._prepare_analysis_image
+
+    def _counting_prepare(image):
+        nonlocal call_count
+        call_count += 1
+        return original(image)
+
+    monkeypatch.setattr(pdf_content, "_prepare_analysis_image", _counting_prepare)
+    pdf_content.build_document_fingerprint("D2", path)
+
+    assert call_count == 1, (
+        f"_prepare_analysis_image was called {call_count} time(s) for one embedded image -- "
+        f"expected exactly 1 (reused for dHash/average-color AND blank classification), not 2"
+    )

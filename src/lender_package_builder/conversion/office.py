@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -36,6 +37,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from ..cancellation import CancellationToken
 from ..models import ConversionOutcome, ConversionResult
 from .base import failed_result, validate_pdf
 
@@ -44,6 +46,10 @@ _XLSX_EXT = {".xlsx"}
 _LEGACY_EXT = {".doc", ".xls"}
 
 _LIBREOFFICE_TIMEOUT_SECONDS = 180
+
+# How often to poll a running LibreOffice process for cancellation while
+# waiting for it to finish -- see `_convert_with_libreoffice`'s docstring.
+_CANCELLATION_POLL_INTERVAL_SECONDS = 0.2
 
 _WINDOWS_LIBREOFFICE_CANDIDATES = [
     r"C:\Program Files\LibreOffice\program\soffice.exe",
@@ -55,7 +61,9 @@ def can_handle(extension: str) -> bool:
     return extension in _DOCX_EXT | _XLSX_EXT | _LEGACY_EXT
 
 
-def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionResult:
+def convert(
+    occurrence, dest_path: Path, config, workspace=None, cancellation_token: CancellationToken | None = None
+) -> ConversionResult:
     source = occurrence.extracted_path
     if source is None or not source.exists():
         return failed_result("Original office document bytes were not available to convert.")
@@ -70,7 +78,7 @@ def convert(occurrence, dest_path: Path, config, workspace=None) -> ConversionRe
             if not soffice:
                 attempts.append("libreoffice: not found on this machine")
                 continue
-            result = _convert_with_libreoffice(soffice, source, dest_path)
+            result = _convert_with_libreoffice(soffice, source, dest_path, cancellation_token)
             if result is not None:
                 return result
             attempts.append("libreoffice: conversion attempt failed")
@@ -109,7 +117,23 @@ def _find_libreoffice() -> str | None:
     return None
 
 
-def _convert_with_libreoffice(soffice: str, source: Path, dest_path: Path) -> ConversionResult | None:
+def _convert_with_libreoffice(
+    soffice: str, source: Path, dest_path: Path, cancellation_token: CancellationToken | None = None
+) -> ConversionResult | None:
+    """Runs LibreOffice headless conversion, polling for cancellation
+    instead of blocking on a single `subprocess.run(..., timeout=...)`
+    call.
+
+    A real user report: pressing "Cancel Processing" while one of these
+    was in flight left the app showing "Cancelling..." for minutes,
+    because the old implementation used `subprocess.run` with a 180
+    second timeout and no way to notice a cancellation request until
+    that call returned. This polls the running process every
+    `_CANCELLATION_POLL_INTERVAL_SECONDS` instead, so a cancellation
+    request is noticed (and the process killed) almost immediately
+    rather than only after this one file happens to finish or time out.
+    """
+
     with tempfile.TemporaryDirectory(prefix="lpb_soffice_") as tmp_out:
         profile_dir = Path(tempfile.gettempdir()) / f"lpb_soffice_profile_{uuid.uuid4().hex}"
         cmd = [
@@ -125,14 +149,26 @@ def _convert_with_libreoffice(soffice: str, source: Path, dest_path: Path) -> Co
             str(source),
         ]
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=_LIBREOFFICE_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError:
+            shutil.rmtree(profile_dir, ignore_errors=True)
             return None
+
+        try:
+            deadline = time.monotonic() + _LIBREOFFICE_TIMEOUT_SECONDS
+            while True:
+                try:
+                    proc.wait(timeout=_CANCELLATION_POLL_INTERVAL_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancellation_token is not None and cancellation_token.is_requested():
+                        proc.kill()
+                        proc.wait()
+                        return None
+                    if time.monotonic() >= deadline:
+                        proc.kill()
+                        proc.wait()
+                        return None
         finally:
             shutil.rmtree(profile_dir, ignore_errors=True)
 

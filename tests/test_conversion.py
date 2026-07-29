@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import threading
+import time
 
 import pytest
 
@@ -19,7 +22,9 @@ from fixtures.builders import (
     read_pdf_page_count,
 )
 
+from lender_package_builder.cancellation import CancellationToken
 from lender_package_builder.config import AppConfig
+from lender_package_builder.conversion import office
 from lender_package_builder.models import ProcessingStatus
 
 
@@ -280,3 +285,61 @@ def test_legacy_doc_and_xls_convert_via_libreoffice(tmp_path, run_build):
     assert doc_occ.conversion_backend == "libreoffice"
     assert xls_occ.status == ProcessingStatus.CONVERTED
     assert xls_occ.conversion_backend == "libreoffice"
+
+
+# CANCELLATION RESPONSIVENESS (real user report): pressing "Cancel
+# Processing" while a LibreOffice conversion was running used to leave
+# the app showing "Cancelling..." for minutes, because the old
+# `subprocess.run(..., timeout=180)` call had no way to notice a
+# cancellation request until the whole call returned. `_convert_with_
+# libreoffice` now polls the running process every
+# `_CANCELLATION_POLL_INTERVAL_SECONDS` and kills it as soon as
+# cancellation is requested. `subprocess.Popen` is monkeypatched to spawn
+# a long-running, harmless stand-in process instead of the real `cmd`
+# passed to it, so this proves the kill-on-cancel behavior directly and
+# deterministically without depending on a real LibreOffice install or
+# racing how fast an actual conversion happens to run.
+def test_libreoffice_conversion_is_killed_promptly_once_cancelled(tmp_path, monkeypatch):
+    source = tmp_path / "source.docx"
+    source.write_bytes(b"not a real docx -- the stand-in process never reads it")
+    dest = tmp_path / "converted.pdf"
+
+    original_popen = subprocess.Popen
+
+    def _fake_popen(cmd, **kwargs):
+        return original_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+
+    monkeypatch.setattr(office.subprocess, "Popen", _fake_popen)
+
+    token = CancellationToken()
+    threading.Timer(0.3, token.request).start()
+
+    start = time.perf_counter()
+    result = office._convert_with_libreoffice("soffice-stand-in", source, dest, token)
+    elapsed = time.perf_counter() - start
+
+    assert result is None
+    assert elapsed < 5.0, (
+        f"took {elapsed:.1f}s to notice cancellation -- expected well under the 30s the stand-in "
+        f"process sleeps for, and far under the old 180s timeout"
+    )
+
+
+@pytest.mark.skipif(
+    shutil.which("soffice") is None and shutil.which("libreoffice") is None,
+    reason="LibreOffice not installed on this machine",
+)
+def test_libreoffice_conversion_completes_normally_without_cancellation(tmp_path):
+    # Proves the Popen-based polling rewrite still produces a correct
+    # result for a normal, quick, never-cancelled conversion.
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    source = tmp_path / "real.docx"
+    make_docx(source, ["Title", "Some paragraph text."])
+    dest = tmp_path / "converted.pdf"
+
+    token = CancellationToken()  # never requested
+    result = office._convert_with_libreoffice(soffice, source, dest, token)
+
+    assert result is not None
+    assert result.outcome.value == "success"
+    assert dest.exists()

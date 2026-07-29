@@ -665,7 +665,7 @@ def _execute_pipeline(
             extra_preserved: list[tuple[str, Path]] = []
         else:
             dest = workspace.new_convert_path(occ.document_id)
-            result = convert_occurrence(occ, dest, config, workspace)
+            result = convert_occurrence(occ, dest, config, workspace, cancellation_token)
             result_outcome_failed = result.outcome == ConversionOutcome.FAILED
             failure_reason = result.failure_reason
             warnings = result.warnings
@@ -820,7 +820,19 @@ def _run_content_aware_analysis(
 
     check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/11] Analyzing document content...")
-    fingerprints = content_dedup.build_fingerprints(occurrences, cancellation_token)
+
+    def _fingerprint_progress(current: int, total: int, current_item: str) -> None:
+        reporter.emit(
+            ProgressStage.FINGERPRINTING_CONTENT,
+            f"      [{current}/{total}] Analyzed {current_item}",
+            current=current,
+            total=total,
+            current_item=current_item,
+        )
+
+    fingerprints = content_dedup.build_fingerprints(
+        occurrences, cancellation_token, progress_callback=_fingerprint_progress
+    )
     reporter.emit(
         ProgressStage.FINGERPRINTING_CONTENT,
         f"      Fingerprinted {len(fingerprints)} document(s) for content-aware comparison.",
@@ -853,7 +865,7 @@ def _run_content_aware_analysis(
     check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.CLASSIFYING_VERSIONS, "[8/11] Classifying document versions...")
     document_families = version_classification.build_document_families(
-        occurrences, fingerprints, content_duplicate_groups, overlap_findings
+        occurrences, fingerprints, content_duplicate_groups, overlap_findings, cancellation_token
     )
     reporter.emit(
         ProgressStage.CLASSIFYING_VERSIONS, f"      {len(document_families)} document family/families identified."

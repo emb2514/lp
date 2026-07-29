@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..cancellation import CancellationToken, ProcessingCancelled
 from ..models import ConversionOutcome, ConversionResult, SourceOccurrence
 from . import email as email_conv
 from . import html as html_conv
@@ -48,7 +49,11 @@ def is_supported(extension: str) -> bool:
 
 
 def convert_occurrence(
-    occurrence: SourceOccurrence, dest_path: Path, config, workspace
+    occurrence: SourceOccurrence,
+    dest_path: Path,
+    config,
+    workspace,
+    cancellation_token: CancellationToken | None = None,
 ) -> ConversionResult:
     extension = occurrence.original_extension.lower()
 
@@ -60,7 +65,14 @@ def convert_occurrence(
     for module in _MODULES:
         if module.can_handle(extension):
             try:
-                return module.convert(occurrence, dest_path, config, workspace)
+                return module.convert(occurrence, dest_path, config, workspace, cancellation_token)
+            except ProcessingCancelled:
+                # A cancellation request raised from deep inside a
+                # converter (e.g. an email's attachment loop) must reach
+                # the pipeline's own cancellation handling in cli.py, not
+                # be swallowed into an ordinary "conversion failed"
+                # result the way any other exception is below.
+                raise
             except Exception as exc:  # a converter must never crash the whole job
                 return failed_result(
                     f"Unexpected error in {module.NAME if hasattr(module, 'NAME') else module.__name__} "

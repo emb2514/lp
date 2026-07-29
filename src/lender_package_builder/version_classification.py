@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import difflib
 
+from .cancellation import CancellationToken, check_cancelled
 from .models import ContentDuplicateGroup, DocumentFamily, OverlapFinding, SourceOccurrence
 from .pdf_content import DocumentFingerprint
 
@@ -122,6 +123,7 @@ def build_document_families(
     fingerprints: dict[str, DocumentFingerprint],
     content_duplicate_groups: list[ContentDuplicateGroup],
     overlap_findings: list[OverlapFinding],
+    cancellation_token: CancellationToken | None = None,
 ) -> list[DocumentFamily]:
     """Clusters related occurrences and labels each member's version.
     Mutates `document_family_id`/`version_classification` on matching
@@ -141,6 +143,7 @@ def build_document_families(
         buckets.setdefault(_relatedness_key(fingerprints[doc_id]), []).append(doc_id)
     for members in buckets.values():
         for i in range(len(members)):
+            check_cancelled(cancellation_token)
             for j in range(i + 1, len(members)):
                 similarity = _first_page_text_similarity(fingerprints[members[i]], fingerprints[members[j]])
                 if similarity >= _FAMILY_RELATEDNESS_THRESHOLD:

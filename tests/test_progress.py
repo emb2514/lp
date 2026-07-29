@@ -95,6 +95,31 @@ def test_progress_events_carry_current_total_and_item_during_conversion(tmp_path
         assert event.current_item in ("one.txt", "two.txt", "three.txt")
 
 
+def test_progress_events_carry_current_total_and_item_during_fingerprinting(tmp_path, run_build):
+    # Real user reports (45+ minutes on "Analyzing document content" with
+    # no visible movement): `build_fingerprints` used to emit exactly one
+    # event at the start of this stage and one at the end, however long it
+    # actually took, so the progress panel looked frozen for the entire
+    # slowest stage in the pipeline. It must now report per-document
+    # progress the same way CONVERTING_DOCUMENTS already does.
+    folder = tmp_path / "input"
+    make_pdf(folder / "a.pdf", pages=3)
+    make_pdf(folder / "b.pdf", pages=2)
+    make_pdf(folder / "c.pdf", pages=1)
+
+    events: list[ProgressEvent] = []
+    run_build(folder, progress_callback=events.append)
+
+    fingerprint_events = [
+        e for e in events if e.stage == ProgressStage.FINGERPRINTING_CONTENT and e.current_item is not None
+    ]
+    assert len(fingerprint_events) == 3
+    for i, event in enumerate(fingerprint_events, start=1):
+        assert event.current == i
+        assert event.total == 3
+        assert event.current_item in ("a.pdf", "b.pdf", "c.pdf")
+
+
 def test_progress_callback_is_optional_and_backward_compatible(tmp_path, run_build):
     folder = tmp_path / "input"
     make_txt(folder / "solo.txt", "content\n")

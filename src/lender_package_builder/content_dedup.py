@@ -29,9 +29,10 @@ from __future__ import annotations
 import dataclasses
 import difflib
 from pathlib import Path
+from typing import Callable
 
 from . import pdf_render
-from .cancellation import CancellationToken, check_cancelled
+from .cancellation import CancellationToken, ProcessingCancelled, check_cancelled
 from .models import ContentDuplicateGroup, ProcessingStatus, SourceOccurrence
 from .pdf_content import DocumentFingerprint, PageFingerprint, build_document_fingerprint, hamming_distance
 
@@ -114,7 +115,9 @@ class _UnionFind:
 
 
 def build_fingerprints(
-    occurrences: list[SourceOccurrence], cancellation_token: CancellationToken | None = None
+    occurrences: list[SourceOccurrence],
+    cancellation_token: CancellationToken | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, DocumentFingerprint]:
     """Fingerprints every occurrence eligible for content-aware analysis.
 
@@ -125,25 +128,44 @@ def build_fingerprints(
     unconverted placeholder's "content" is just an explanation of a
     conversion failure, never real document content, and must never be
     compared against anything or treated as a candidate duplicate.
+
+    `progress_callback`, when given, is called as
+    `progress_callback(current, total, original_relative_path)` once per
+    eligible occurrence as it finishes -- this is the slowest single
+    stage in the whole pipeline on a real package (a real user report:
+    the app appeared "stuck" for 45+ minutes with no visible movement
+    here, because this used to emit only one event at the very start and
+    one at the very end, however long the stage actually took). Never
+    called for occurrences skipped by the exclusions above -- those are
+    free and would only make the progress bar appear to stall on them.
     """
 
+    eligible = [
+        occ
+        for occ in occurrences
+        if not occ.is_ignored_artifact and not occ.is_duplicate and occ.status == ProcessingStatus.CONVERTED and occ.converted_pdf_path
+    ]
+    total = len(eligible)
     fingerprints: dict[str, DocumentFingerprint] = {}
-    for occ in occurrences:
+    for i, occ in enumerate(eligible, start=1):
         check_cancelled(cancellation_token)
-        if occ.is_ignored_artifact or occ.is_duplicate:
-            continue
-        if occ.status != ProcessingStatus.CONVERTED:
-            continue
-        if not occ.converted_pdf_path:
-            continue
         try:
-            fingerprints[occ.document_id] = build_document_fingerprint(occ.document_id, occ.converted_pdf_path)
+            fingerprints[occ.document_id] = build_document_fingerprint(
+                occ.document_id, occ.converted_pdf_path, cancellation_token
+            )
+        except ProcessingCancelled:
+            # Must reach cli.py's own cancellation handling, never be
+            # treated as "this one document failed to fingerprint" the
+            # way a genuinely unreadable PDF is below.
+            raise
         except Exception:
             # A single unreadable converted PDF must never crash the
             # whole run -- it simply never participates in content-aware
             # comparison. It remains fully present in OG and Final,
             # exactly as it always was before RC2.
-            continue
+            pass
+        if progress_callback is not None:
+            progress_callback(i, total, occ.original_relative_path)
     return fingerprints
 
 
@@ -470,6 +492,7 @@ def _pairwise_grouping(
     doc_ids: list[str],
     fingerprints: dict[str, DocumentFingerprint],
     occurrences_by_id: dict[str, SourceOccurrence],
+    cancellation_token: CancellationToken | None = None,
 ) -> tuple[list[ContentDuplicateGroup], list[tuple[str, str, float]]]:
     uf_same = _UnionFind()
     best_by_pair: dict[frozenset, PairComparison] = {}
@@ -477,6 +500,11 @@ def _pairwise_grouping(
 
     for i in range(len(doc_ids)):
         for j in range(i + 1, len(doc_ids)):
+            # Checked once per pair, not once per bucket -- a bucket can
+            # hold up to `DEFAULT_MAX_BUCKET_SIZE` documents (up to
+            # ~1,225 pairs), and a cancellation request must not have to
+            # wait for the whole bucket to finish comparing.
+            check_cancelled(cancellation_token)
             id_a, id_b = doc_ids[i], doc_ids[j]
             occ_a, occ_b = occurrences_by_id[id_a], occurrences_by_id[id_b]
             comparison = _best_comparison(
@@ -596,7 +624,9 @@ def detect_content_duplicates(
             )
             groups.extend(_hash_only_grouping(doc_ids, fingerprints, occurrences_by_id))
             continue
-        bucket_groups, bucket_uncertain_pairs = _pairwise_grouping(doc_ids, fingerprints, occurrences_by_id)
+        bucket_groups, bucket_uncertain_pairs = _pairwise_grouping(
+            doc_ids, fingerprints, occurrences_by_id, cancellation_token
+        )
         groups.extend(bucket_groups)
         uncertain_pairs.extend(bucket_uncertain_pairs)
 

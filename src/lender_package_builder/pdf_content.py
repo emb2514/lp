@@ -29,6 +29,8 @@ from PIL import Image, ImageStat
 from pypdf import PdfReader
 from pypdf.generic import IndirectObject
 
+from .cancellation import CancellationToken, check_cancelled
+
 # The resolution class the blank/color/hash thresholds below were
 # actually designed and performance-tested against: a 200 DPI letter
 # scan (1700x2200, ~3.7 megapixels) -- see
@@ -321,7 +323,7 @@ def _looks_blank_at_resolution(image) -> bool:
     return variance <= _BLANK_IMAGE_MAX_VARIANCE
 
 
-def _classify_image_blank(image) -> bool:
+def _classify_image_blank(image, precomputed_quick=None) -> bool:
     """Conservative check for whether a decoded raster image is itself
     blank (e.g. a scanned blank sheet). See the threshold constants'
     docstring above for why this uses a dark-pixel ratio rather than a
@@ -357,9 +359,19 @@ def _classify_image_blank(image) -> bool:
     can never return a different "blank" verdict than the unoptimized
     version would have, only reach a "not blank" verdict faster for the
     (common, in a real package) case of an obviously non-blank page.
+
+    `precomputed_quick`, when given, must be `_prepare_analysis_image(image)`
+    already computed by the caller -- `_extract_embedded_images` needs
+    that same downsampled copy for the dHash/average-color signals
+    anyway, and re-running the BOX-resize a second time here was, at 600
+    DPI, measured to cost as much as the rest of this whole function
+    combined (the resize itself, not the statistics computed from it, is
+    the expensive part at that resolution). Passing it in is a pure
+    de-duplication of that already-safe computation; the decision logic
+    below is unchanged either way.
     """
 
-    quick = _prepare_analysis_image(image)
+    quick = precomputed_quick if precomputed_quick is not None else _prepare_analysis_image(image)
     if quick is not image and not _looks_blank_at_resolution(quick):
         return False
     return _looks_blank_at_resolution(image)
@@ -386,7 +398,14 @@ def _extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...]:
             analysis_image = _prepare_analysis_image(pil_image) if width > 1 and height > 1 else pil_image
             phash = _dhash(analysis_image) if width > 1 and height > 1 else None
             avg_color = _average_color(analysis_image) if width >= 1 and height >= 1 else None
-            is_blank = _classify_image_blank(pil_image) if width > 1 and height > 1 else False
+            # Reuse the same downsampled copy for the blank-classification
+            # quick check instead of recomputing it -- see
+            # `_classify_image_blank`'s docstring on `precomputed_quick`.
+            is_blank = (
+                _classify_image_blank(pil_image, precomputed_quick=analysis_image)
+                if width > 1 and height > 1
+                else False
+            )
             signals.append(
                 EmbeddedImageSignal(
                     byte_sha256=byte_hash,
@@ -569,9 +588,23 @@ def extract_page_fingerprint(reader: PdfReader, page_index: int) -> PageFingerpr
     )
 
 
-def build_document_fingerprint(document_id: str, pdf_path) -> DocumentFingerprint:
+def build_document_fingerprint(
+    document_id: str, pdf_path, cancellation_token: CancellationToken | None = None
+) -> DocumentFingerprint:
+    """`cancellation_token`, when given, is checked once per page -- a
+    real user report found that pressing "Cancel Processing" while a
+    single large multi-hundred-page document (e.g. an already-merged
+    closing package) was being fingerprinted left the app appearing
+    stuck for minutes, because cancellation used to only be checked
+    between whole documents, never between the pages of one.
+    """
+
     reader = PdfReader(str(pdf_path))
-    pages = tuple(extract_page_fingerprint(reader, i) for i in range(len(reader.pages)))
+    pages = []
+    for i in range(len(reader.pages)):
+        check_cancelled(cancellation_token)
+        pages.append(extract_page_fingerprint(reader, i))
+    pages = tuple(pages)
 
     doc_hash_input = "|".join(p.text_hash for p in pages)
     normalized_document_hash = _sha256_text(doc_hash_input)
