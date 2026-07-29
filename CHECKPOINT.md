@@ -1,5 +1,21 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## CI FIX: Windows-only test failure caught by real Windows CI (platform-specific path string)
+
+Real Windows CI (triggered to validate the two fixes below) caught a genuine cross-platform bug on
+its first run: `tests/gui/test_main_window_layout.py::test_cancelled_build_recorded_to_history`
+hardcoded `output_path=Path("/tmp/some-cancelled-output")` and then asserted the recorded history
+entry's `output_path` equaled the literal POSIX string `"/tmp/some-cancelled-output"`. On Windows,
+`str(Path("/tmp/some-cancelled-output"))` renders with backslashes
+(`\tmp\some-cancelled-output`), so the exact-string assertion failed even though `history.py`'s
+actual recorded value was correct for that platform -- a test bug, not a functional one (all 414
+other tests passed on Windows). Fixed by capturing the `Path(...)` once and comparing against
+`str(cancelled_output_path)` instead of a hardcoded literal, making the test platform-agnostic.
+Checked the rest of the session's new test files for the same pattern; the one other hardcoded
+`"/tmp/output"` string (`tests/test_history.py`) is safe since it's a plain string passed straight
+into `HistoryEntry(output_path=...)` and never normalized through `Path()`. Re-triggered Windows CI
+after the fix -- green, all steps including the full test suite passed.
+
 ## UI FIX: result-screen buttons truncating their text (real user screenshot) + investigated
 ## whether Compare Packages has a separate performance bottleneck (it doesn't)
 
