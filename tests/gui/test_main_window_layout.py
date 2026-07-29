@@ -156,10 +156,15 @@ def test_successful_build_recorded_to_history(window, tmp_path):
 def test_cancelled_build_recorded_to_history(window):
     from lender_package_builder.exceptions import ProcessingCancelledError
 
+    # Platform-appropriate path (not a hardcoded POSIX string) -- str(Path(...))
+    # uses backslashes on Windows, so comparing against a literal
+    # "/tmp/..." string fails there even though the recorded path is
+    # correct for that platform. Caught by real Windows CI.
+    cancelled_output_path = Path("/tmp/some-cancelled-output")
     error = ProcessingCancelledError(
         "Processing was cancelled before it finished.",
         stage="converting_documents",
-        output_path=Path("/tmp/some-cancelled-output"),
+        output_path=cancelled_output_path,
     )
     window._last_identity = window.advanced_settings.get_identity()
     window._on_build_cancelled(error)
@@ -167,7 +172,7 @@ def test_cancelled_build_recorded_to_history(window):
     entries = history.load_history()
     assert len(entries) == 1
     assert entries[0].status == "Cancelled"
-    assert entries[0].output_path == "/tmp/some-cancelled-output"
+    assert entries[0].output_path == str(cancelled_output_path)
 
 
 # TEST - a history-write failure never raises out of the completion
