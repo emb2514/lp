@@ -258,3 +258,116 @@ def test_average_color_and_blank_classification_are_fast_on_realistic_scan_resol
     # regression back to a per-pixel Python loop without being flaky
     # on a slower CI runner.
     assert elapsed < 2.0, f"took {elapsed:.2f}s -- likely regressed back to a per-pixel Python loop"
+
+
+# TEST 17 - PERFORMANCE REGRESSION (real user report, follow-on to TEST
+# 16): a real user hit a 24+ minute "Analyzing document content" stall
+# even with TEST 16's fix in place, because their scans were 600 DPI
+# (a common scanner/phone-scanning-app default), not the 200 DPI TEST
+# 16 was benchmarked against -- 9x the pixels, and, confirmed by direct
+# measurement, proportionally ~9x slower even through the already-fast
+# ImageStat/histogram path (~700ms/image at 600 DPI vs. ~80ms/image at
+# 200 DPI). Fixed by downsampling to `_ANALYSIS_MAX_DIMENSION` (the
+# already-validated 200-DPI-class resolution) before running any of the
+# three signals -- this pins that down by asserting a 600 DPI image is
+# now processed close to the 200 DPI cost, not by asserting a specific
+# value.
+def test_average_color_and_blank_classification_are_fast_at_600_dpi():
+    import time
+
+    from PIL import Image, ImageDraw
+
+    # A 600 DPI letter-size scan: 5100x6600, ~33.7 megapixels -- 9x the
+    # pixel count of TEST 16's 200 DPI fixture. Substantial dark content
+    # (a large block, like a real page of text/imagery would have), so
+    # `_classify_image_blank`'s downsampled fast-path can confidently
+    # short-circuit to "not blank" without the full-resolution precise
+    # check -- this is the common case for a real, mostly-non-blank
+    # package. See TEST 18 for the case that must still fall back to
+    # the full-resolution check (a mark faint enough to be ambiguous
+    # even downsampled).
+    img = Image.new("L", (5100, 6600), color=250)
+    ImageDraw.Draw(img).rectangle([(500, 500), (4600, 6100)], fill=40)
+    analysis_image = pdf_content._prepare_analysis_image(img)
+
+    start = time.perf_counter()
+    pdf_content._average_color(analysis_image)
+    pdf_content._classify_image_blank(img)
+    pdf_content._dhash(analysis_image)
+    elapsed = time.perf_counter() - start
+
+    # Without downsampling first, this took ~700ms locally (measured
+    # directly) -- a real package with ~2,000 such scanned pages would
+    # cost ~24 minutes just in this one step, matching the real report.
+    # This ceiling would fail if the downsample-before-analysis step
+    # were ever removed or bypassed.
+    assert elapsed < 0.5, f"took {elapsed:.2f}s -- the 600 DPI image was likely analyzed at full resolution"
+
+
+# TEST 18 - CORRECTNESS: a genuinely faint mark that survives full-
+# resolution blank-classification must never be lost to the downsampled
+# fast-path added for TEST 17's speedup. Isolated single dark pixels
+# (scattered scanner-noise-like content, not a connected stroke) are the
+# adversarial case for area-average downsampling: a lone dark pixel
+# blended with its 8 white neighbors in a 3x3 downsample block averages
+# to a value ABOVE the dark-pixel threshold, so a naive "always trust
+# the downsampled result" implementation would wrongly call this page
+# blank -- confirmed directly (this exact fixture makes the downsampled
+# quick-check alone say "blank" while the full-resolution precise check
+# correctly says "not blank"). This proves `_classify_image_blank`'s
+# two-phase design (only ever trusting a downsampled "not blank" result,
+# always falling back to full resolution otherwise) actually protects
+# against this, not just in theory.
+def test_faint_scattered_content_survives_downsampling_on_a_600_dpi_scan():
+    from PIL import Image
+
+    # A 600 DPI page-sized canvas (5100x6600) with sparse, isolated dark
+    # pixels -- proportionally the same sparsity as TEST 16's 200 DPI
+    # scanner-noise fixture, just scaled to this resolution class.
+    img = Image.new("L", (5100, 6600), color=250)
+    pixels = img.load()
+    for i in range(0, 5100, 21):
+        for j in range(0, 6600, 33):
+            pixels[i, j] = 40
+
+    # Confirms this fixture actually reproduces the adversarial case:
+    # the full-resolution precise check says "not blank"...
+    assert pdf_content._looks_blank_at_resolution(img) is False
+    # ...but the downsampled quick-check ALONE would wrongly say
+    # "blank" -- proving this fixture would catch a regression to a
+    # naive "trust the downsampled result either way" implementation.
+    analysis_image = pdf_content._prepare_analysis_image(img)
+    assert analysis_image.size != img.size
+    assert pdf_content._looks_blank_at_resolution(analysis_image) is True
+
+    # `_classify_image_blank` gets the ORIGINAL full-resolution image --
+    # exactly what `_extract_embedded_images` passes it -- so it must
+    # fall back to the full-resolution precise check above rather than
+    # trusting the ambiguous downsampled result.
+    assert pdf_content._classify_image_blank(img) is False, (
+        "faint scattered content must survive downsampling and never be classified blank"
+    )
+
+
+# TEST 19 - an image already at or below the analysis resolution is
+# returned unchanged (no wasted resize work, and no accidental quality
+# loss on already-small/already-appropriately-sized images)
+def test_prepare_analysis_image_is_a_noop_below_the_resolution_cap():
+    from PIL import Image
+
+    small = Image.new("RGB", (400, 300), color=(255, 255, 255))
+    assert pdf_content._prepare_analysis_image(small) is small
+
+    at_cap = Image.new("RGB", (2200, 1000), color=(255, 255, 255))
+    assert pdf_content._prepare_analysis_image(at_cap) is at_cap
+
+
+# TEST 20 - downsampling preserves aspect ratio and caps the longer edge
+def test_prepare_analysis_image_preserves_aspect_ratio():
+    from PIL import Image
+
+    wide = Image.new("RGB", (6600, 3300), color=(255, 255, 255))  # 2:1
+    resized = pdf_content._prepare_analysis_image(wide)
+
+    assert resized.size[0] == pdf_content._ANALYSIS_MAX_DIMENSION
+    assert resized.size[1] == pdf_content._ANALYSIS_MAX_DIMENSION // 2

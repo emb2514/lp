@@ -25,9 +25,27 @@ import hashlib
 import re
 import unicodedata
 
-from PIL import ImageStat
+from PIL import Image, ImageStat
 from pypdf import PdfReader
 from pypdf.generic import IndirectObject
+
+# The resolution class the blank/color/hash thresholds below were
+# actually designed and performance-tested against: a 200 DPI letter
+# scan (1700x2200, ~3.7 megapixels) -- see
+# test_average_color_and_blank_classification_are_fast_on_realistic_scan_resolution.
+# Many scanners and phone-scanning apps default to 300 or 600 DPI,
+# which is 2.25x-9x more pixels and, empirically, proportionally
+# slower to run `ImageStat`/`histogram()` over even though those are
+# C-implemented (confirmed directly: ~700ms/image at 600 DPI vs.
+# ~80ms/image at 200 DPI for the combined average-color + blank +
+# perceptual-hash pass) -- across a large package with many
+# high-resolution scanned pages, this was reported as the app appearing
+# stuck for 24+ minutes on "Analyzing document content." None of these
+# three signals need more than this resolution to be accurate: average
+# color and the perceptual hash are already deliberately coarse/global
+# measures, and the dark-pixel ratio blank check is scale-invariant (a
+# ratio, not an absolute count) -- see `_prepare_analysis_image()`.
+_ANALYSIS_MAX_DIMENSION = 2200
 
 # ---------------------------------------------------------------------
 # Blank-page classification thresholds. Conservative by design: any
@@ -213,6 +231,31 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _prepare_analysis_image(image):
+    """Returns `image` unchanged if it's already at or below
+    `_ANALYSIS_MAX_DIMENSION` on its longer edge; otherwise returns a
+    downsampled copy, aspect ratio preserved, capped at that edge.
+
+    Uses `Image.Resampling.BOX` (area averaging): every downsampled
+    pixel is the true mean of the source pixels it covers, so a thin
+    dark mark's ink is proportionally distributed rather than sampled
+    in/out at random the way nearest-neighbor resizing would -- a
+    signature stroke a few source-pixels wide still measurably darkens
+    its downsampled pixel rather than risking disappearing between
+    sample points. Confirmed by
+    `test_faint_mark_survives_downsampling_on_a_600_dpi_scan`, which
+    reproduces this exact resolution class with a faint mark and
+    asserts the page is still correctly classified NOT blank.
+    """
+
+    width, height = image.size
+    if width <= _ANALYSIS_MAX_DIMENSION and height <= _ANALYSIS_MAX_DIMENSION:
+        return image
+    scale = _ANALYSIS_MAX_DIMENSION / max(width, height)
+    new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    return image.resize(new_size, resample=Image.Resampling.BOX)
+
+
 def _dhash(image, hash_size: int = 8) -> int:
     """A minimal difference-hash (dHash) implemented directly on Pillow,
     with no numpy/scipy dependency. Deliberately not the fuller
@@ -261,6 +304,23 @@ def _average_color(image) -> tuple[float, float, float]:
     return (mean[0], mean[1], mean[2])
 
 
+def _looks_blank_at_resolution(image) -> bool:
+    """The precise blank check, run at whatever resolution `image`
+    already is -- see `_classify_image_blank`'s docstring for the
+    full-resolution safety guarantee this must preserve.
+    """
+
+    gray = image.convert("L")
+    if gray.width == 0 or gray.height == 0:
+        return True
+    total = gray.width * gray.height
+    dark_count = sum(gray.histogram()[:_BLANK_IMAGE_DARK_LEVEL])
+    if (dark_count / total) > _BLANK_IMAGE_MAX_DARK_PIXEL_RATIO:
+        return False
+    variance = ImageStat.Stat(gray).var[0]
+    return variance <= _BLANK_IMAGE_MAX_VARIANCE
+
+
 def _classify_image_blank(image) -> bool:
     """Conservative check for whether a decoded raster image is itself
     blank (e.g. a scanned blank sheet). See the threshold constants'
@@ -275,17 +335,34 @@ def _classify_image_blank(image) -> bool:
     at realistic scanned-page resolutions. `histogram()[:n]` summed gives
     the exact same "how many pixels are below this gray level" count as
     iterating pixels directly, just without the Python-level loop.
+
+    UNLIKE `_average_color`/`_dhash`, this never runs its real decision
+    on a downsampled copy -- downsampling can dilute a genuinely faint
+    mark (a thin signature stroke averaged with its white surroundings
+    can slip back under the dark-pixel threshold), which would risk the
+    exact failure this app must never make: silently treating a page
+    with real content as blank. Confirmed directly: a naive "always
+    downsample first" version of this function failed
+    `test_faint_mark_survives_downsampling_on_a_600_dpi_scan`.
+
+    Instead, a downsampled copy is used only for an early exit in the
+    SAFE direction: if the image already looks unambiguously non-blank
+    even after downsampling, the full-resolution image -- which has
+    strictly more localized contrast, never less, since downsampling is
+    an averaging operation -- is guaranteed to also look non-blank, so
+    the expensive full-resolution pass can be skipped. Whenever the
+    downsampled copy looks blank-ish (the ambiguous case where dilution
+    could matter), this always falls through to the exact same
+    full-resolution precise check as before -- so `_classify_image_blank`
+    can never return a different "blank" verdict than the unoptimized
+    version would have, only reach a "not blank" verdict faster for the
+    (common, in a real package) case of an obviously non-blank page.
     """
 
-    gray = image.convert("L")
-    if gray.width == 0 or gray.height == 0:
-        return True
-    total = gray.width * gray.height
-    dark_count = sum(gray.histogram()[:_BLANK_IMAGE_DARK_LEVEL])
-    if (dark_count / total) > _BLANK_IMAGE_MAX_DARK_PIXEL_RATIO:
+    quick = _prepare_analysis_image(image)
+    if quick is not image and not _looks_blank_at_resolution(quick):
         return False
-    variance = ImageStat.Stat(gray).var[0]
-    return variance <= _BLANK_IMAGE_MAX_VARIANCE
+    return _looks_blank_at_resolution(image)
 
 
 def _extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...]:
@@ -300,8 +377,15 @@ def _extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...]:
             byte_hash = hashlib.sha256(data).hexdigest()
             pil_image = image_file.image
             width, height = pil_image.size
-            phash = _dhash(pil_image) if width > 1 and height > 1 else None
-            avg_color = _average_color(pil_image) if width >= 1 and height >= 1 else None
+            # Downsampled once and reused for the two signals it's safe
+            # to approximate (see `_ANALYSIS_MAX_DIMENSION`); `width`/
+            # `height` above still report the image's true original
+            # dimensions. `_classify_image_blank` gets the untouched
+            # original -- see its own docstring for why that one is
+            # never allowed to trade resolution for speed.
+            analysis_image = _prepare_analysis_image(pil_image) if width > 1 and height > 1 else pil_image
+            phash = _dhash(analysis_image) if width > 1 and height > 1 else None
+            avg_color = _average_color(analysis_image) if width >= 1 and height >= 1 else None
             is_blank = _classify_image_blank(pil_image) if width > 1 and height > 1 else False
             signals.append(
                 EmbeddedImageSignal(

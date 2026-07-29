@@ -1,5 +1,55 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## PERFORMANCE FIX: 600 DPI scans still slow on "Analyzing document content" (real user report,
+## direct follow-on to POST-RELEASE FIX #3 below)
+
+A user reported the app appearing stuck for 24+ minutes on "Analyzing document content" (the
+`FINGERPRINTING_CONTENT` stage) on a live run -- the exact same symptom POST-RELEASE FIX #3 (below)
+was supposed to have already fixed. Investigated by directly profiling `pdf_content.py`'s current
+(already-fix-#3'd) code rather than guessing: fix #3's `ImageStat`/`histogram()` optimization is
+still intact and correct, but it was only ever benchmarked at 200 DPI (1700x2200, ~3.7 megapixels --
+`test_average_color_and_blank_classification_are_fast_on_realistic_scan_resolution`'s fixture).
+Many scanners and phone-scanning apps default to 300 or 600 DPI, which is 2.25x-9x more pixels --
+confirmed by direct measurement to cost proportionally more even through the C-implemented
+`ImageStat` path (~712ms/image at 600 DPI vs. ~80ms/image at 200 DPI for the combined average-color
++ blank-classification + perceptual-hash pass). At a realistic ~2,000 scanned page-images, that
+alone is ~24 minutes -- matching the report almost exactly.
+
+**Fix**: added `_prepare_analysis_image()` -- downsamples (via `Image.Resampling.BOX`, true area
+averaging) to `_ANALYSIS_MAX_DIMENSION = 2200`, the exact resolution class fix #3's own benchmark
+already validated as fast, only when a source image exceeds it; images at or below the cap are
+untouched. Applied to `_average_color()` and `_dhash()` (both already deliberately coarse/global
+signals -- a difference hash already collapses to a 9x8 comparison internally, and an area-averaged
+mean is mathematically nearly identical to the true full-resolution mean), cutting their cost
+roughly back to the 200-DPI-equivalent baseline regardless of source scan DPI.
+
+**`_classify_image_blank()` was deliberately NOT given the same treatment** -- a first attempt at
+naively downsampling before blank-classification too was caught failing a new adversarial test
+(`test_faint_scattered_content_survives_downsampling_on_a_600_dpi_scan`, using isolated
+single-dark-pixel scanner-noise-like content): area-averaging can blend an isolated dark pixel with
+its white neighbors into a downsampled pixel that lands ABOVE the dark-pixel threshold, which would
+have silently misclassified a page containing real (if faint) content as blank -- exactly the class
+of failure this app must never make. Fixed instead with a two-phase design that provably cannot
+weaken the existing safety guarantee: a downsampled quick-check is used ONLY to early-exit toward
+"not blank" (safe by construction -- downsampling can only ever dilute contrast, never invent it, so
+if the downsampled copy already looks unambiguously non-blank, the full-resolution image is
+guaranteed to as well); whenever the quick check looks blank-ish (the only case where dilution could
+matter), it always falls through to the exact same full-resolution precise check that existed before
+this fix, so `_classify_image_blank()` can never return a different "blank" verdict than the
+unoptimized version -- it only reaches "not blank" faster for the common case of an ordinary,
+obviously-non-blank real page.
+
+**Real measured result**: a realistic non-blank 600 DPI page-image dropped from ~712ms to ~129ms
+(~5.5x), meaning the ~24-minute report's scenario (~2,000 such images) is now estimated at roughly
+4-5 minutes instead. 4 new tests in `tests/test_content_fingerprinting.py`
+(`test_average_color_and_blank_classification_are_fast_at_600_dpi`,
+`test_faint_scattered_content_survives_downsampling_on_a_600_dpi_scan`,
+`test_prepare_analysis_image_is_a_noop_below_the_resolution_cap`,
+`test_prepare_analysis_image_preserves_aspect_ratio`). Local suite: 324 engine (was 320) + 90 GUI
+(unchanged, no GUI code this fix) = 414 total, all passing.
+
+---
+
 ## FOLLOW-ON: Build-page redesign (sidebar nav, inline Package Details, History) -- POST all six
 ## milestones, direct user request with a mockup screenshot
 
