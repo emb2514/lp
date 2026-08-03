@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 
 from . import runtime_paths
+from .atomic_replace import replace_with_retry
 from .models import PackageIdentity
 
 _MAX_ENTRIES = 500
@@ -105,4 +106,4 @@ def append_history_entry(entry: HistoryEntry, path: Path | None = None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".json.tmp")
     tmp.write_text(json.dumps([_entry_to_dict(e) for e in existing], indent=2), encoding="utf-8")
-    tmp.replace(target)
+    replace_with_retry(tmp, target)

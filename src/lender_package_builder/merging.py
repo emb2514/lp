@@ -21,6 +21,7 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 from . import naming
+from .atomic_replace import replace_with_retry
 from .cancellation import CancellationToken, check_cancelled
 from .models import OutputPart, PackageIdentity, SourceOccurrence
 from .splitting import plan_parts
@@ -101,7 +102,10 @@ def write_package(
         check_cancelled(cancellation_token)
         temp_dest = output_dir / f"{temp_stem}_{idx:03d}.pdf"
         dest = output_dir / naming.package_part_filename(identity, package_kind, idx, total_parts)
-        temp_dest.replace(dest)
+        # Not a plain .replace() -- see atomic_replace.py's docstring for
+        # the real Windows crash (antivirus/cloud-sync/indexing briefly
+        # locking a freshly-written PDF) this retry exists to survive.
+        replace_with_retry(temp_dest, dest)
         size_bytes = dest.stat().st_size
         # Re-read the actual merged file rather than trusting the sum of
         # recorded per-document page counts, so this number is an

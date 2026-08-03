@@ -1,5 +1,38 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## CRASH FIX (real Windows crash report): PermissionError [WinError 32] renaming a merged PDF part
+
+A real user hit a crash with this exact traceback on a real package in their Downloads folder:
+
+```
+PermissionError: [WinError 32] The process cannot access the file because it is being used by
+another process: '...\Final\.tmp_final_part_001.pdf' -> '...\Final\Carey, Brian, Lender Package,
+Part 001.pdf'
+```
+
+Root cause: `merging.write_package` writes each output part under a temporary name, then calls
+`Path.replace()` to atomically rename it to its real filename once the final part count is known.
+On Windows, `Path.replace()` (`MoveFileExW`) fails with this exact error if anything else has the
+file transiently open at that instant -- overwhelmingly likely here: antivirus real-time scanning,
+OneDrive/cloud-sync, Windows Search indexing, or Explorer thumbnail generation, all of which
+routinely open a freshly-written file (especially in a user-facing folder like Downloads) within
+milliseconds of its creation. These locks are normally released within a second or two. POSIX
+`rename()` has no equivalent failure mode, so this was invisible in all local/Linux testing and
+only surfaced on a real Windows machine.
+
+**Fix**: added `atomic_replace.py` -- `replace_with_retry(src, dest)`, a short bounded retry (15
+attempts, 0.3s apart, ~4.5s worst case) that only catches `PermissionError` (never masks an
+unrelated failure) and re-raises the original exception unchanged if the lock never clears, so a
+genuinely stuck file is never silently dropped. Wired into both real call sites of `Path.replace()`
+in the engine: `merging.write_package` (the reported crash) and `history.append_history_entry`'s
+atomic write (same exact race is theoretically possible there too, though far less likely for a
+small local JSON file). 4 new tests in `tests/test_atomic_replace.py` (immediate success, recovery
+after a few transient failures, re-raise after exhausting all attempts with the source file left
+intact, and unrelated `OSError` subtypes never retried), plus a full pipeline regression test in
+`tests/test_merging.py` proving a real `run_build()` survives a `Path.replace()` monkeypatched to
+fail exactly once during the real rename call. Local suite: 334 engine (was 329) + 99 GUI
+(unchanged) = 433 total, all passing.
+
 ## PERFORMANCE + RESPONSIVENESS FIX: still 45min-1hr per package after the 600 DPI fix, plus
 ## "Cancelling..." hanging for minutes, plus no visual sign the app was still alive
 

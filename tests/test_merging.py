@@ -14,6 +14,8 @@ inside a separate merged package.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fixtures.builders import make_merged_pdf, make_pdf, make_pdf_portfolio, make_txt
 
 
@@ -84,6 +86,41 @@ def test_og_contains_every_non_ignored_occurrence_regardless_of_final_exclusion_
     og_page_total = sum(p.page_count for p in run.og_parts)
     expected_og_pages = sum(o.converted_page_count or 0 for o in non_ignored)
     assert og_page_total == expected_og_pages
+
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
+
+
+# REAL CRASH REGRESSION: a merged PDF part written to a user's Downloads
+# folder hit `PermissionError: [WinError 32] The process cannot access
+# the file because it is being used by another process` during the
+# rename from its temporary name to its final filename in
+# `merging.write_package` -- almost certainly antivirus/cloud-sync/
+# indexing briefly holding the freshly-written file open (see
+# atomic_replace.py). This proves the whole build survives that exact
+# failure mode end to end, not just the isolated retry helper.
+def test_build_survives_a_transient_lock_during_the_final_part_rename(tmp_path, run_build, monkeypatch):
+    folder = tmp_path / "input"
+    make_pdf(folder / "a.pdf", pages=2, text_prefix="Document A")
+    make_pdf(folder / "b.pdf", pages=2, text_prefix="Document B")
+
+    real_replace = Path.replace
+    calls = {"count": 0}
+
+    def _flaky_replace(self, target):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _flaky_replace)
+    monkeypatch.setattr("lender_package_builder.atomic_replace.time.sleep", lambda _seconds: None)
+
+    run = run_build(folder)
+
+    assert run.success is True
+    assert calls["count"] >= 2  # the flaky first attempt, then a real retry
+    assert any((run.output_path / "Final").glob("*.pdf"))
 
     for check in run.integrity_checks:
         assert check.passed, f"{check.name}: {check.detail}"
