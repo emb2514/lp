@@ -6,7 +6,14 @@ document types the reports/GUI surface separately:
 - Closing Disclosures, with a conservative signature-status
   classification (Signed / E-Sign / Unsigned / Revised / Signature
   Unknown).
-- Driver's Licenses (front/back/combined, one borrower or several).
+- Government-issued photo ID (Driver's License front/back/combined,
+  Passport, State ID Card, or an unspecified-but-clearly-ID-shaped
+  document), one borrower or several. Requires an actual embedded
+  scanned/photographed image on the page -- text merely mentioning
+  "driver's license" (a checklist item, a disclosure listing acceptable
+  ID types, a cover letter) is never enough on its own. See
+  `_find_government_ids`'s docstring: this was a real, confirmed
+  false-positive risk in the original text-only design.
 - The Mortgage Unity Privacy Policy specifically (never a generic
   privacy notice from another lender).
 - Loan non-proceeding documentation (Adverse Action Notice, Withdrawal
@@ -73,7 +80,7 @@ def locate_key_documents(run: RunResult) -> list[KeyDocumentMatch]:
 
         for finder in (
             _find_closing_disclosures,
-            _find_drivers_licenses,
+            _find_government_ids,
             _find_mu_privacy_policy,
             _find_non_proceeding_documents,
         ):
@@ -221,47 +228,84 @@ def _classify_signature_status(pages: tuple[PageFingerprint, ...]) -> str:
 
 
 # ---------------------------------------------------------------------
-# Driver's License
+# Government-issued photo ID (Driver's License, Passport, State ID Card)
 # ---------------------------------------------------------------------
 
-_DL_STRONG_PHRASES = (
+_DL_PHRASES = (
     "driver license",
     "driver's license",
     "drivers license",
     "operator license",
     "commercial driver license",
 )
-_DL_FIELD_MARKERS = ("dob", "date of birth", "class", "hgt", "eyes", "rstr", "endorsements", "issued", "expires")
+_PASSPORT_PHRASES = ("passport",)
+_STATE_ID_PHRASES = ("state identification card", "state id card")
+_GOV_ID_FIELD_MARKERS = ("dob", "date of birth", "class", "hgt", "eyes", "rstr", "endorsements", "issued", "expires")
 _DL_BACK_MARKERS = ("barcode", "pdf417", "organ donor", "reverse side")
 
 
-def _find_drivers_licenses(
+def _find_government_ids(
     occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
 ) -> list[KeyDocumentMatch]:
+    """A real government-issued photo ID (driver's license, passport,
+    state ID card) is always a photographed or scanned raster image --
+    never a page of ordinary vector text. The original text-only design
+    here classified ANY page mentioning "driver's license" as a match,
+    confirmed as a real false-positive risk: a loan-package checklist
+    item ("Please provide a copy of your driver's license"), a
+    disclosure listing acceptable ID types, or a cover letter would all
+    match with no actual ID ever having been scanned. Requiring at least
+    one embedded image on the page before any text scoring even runs
+    closes that gap completely -- no image, no match, regardless of what
+    words appear or how many field-label markers (DOB, CLASS, HGT, ...)
+    are present.
+    """
+
     matches: list[KeyDocumentMatch] = []
     for index, page in enumerate(fp.pages):
-        text = page.normalized_text.casefold()
-        has_strong = any(phrase in text for phrase in _DL_STRONG_PHRASES)
-        field_count = sum(1 for marker in _DL_FIELD_MARKERS if marker in text)
+        if not page.images:
+            continue
 
-        if has_strong and field_count >= 2:
-            band, confidence = CONFIRMED, 1.0
-        elif has_strong:
-            band, confidence = STRONG_MATCH, 0.75
+        text = page.normalized_text.casefold()
+        has_dl_phrase = any(phrase in text for phrase in _DL_PHRASES)
+        has_state_id_phrase = any(phrase in text for phrase in _STATE_ID_PHRASES)
+        has_passport_phrase = any(phrase in text for phrase in _PASSPORT_PHRASES)
+        field_count = sum(1 for marker in _GOV_ID_FIELD_MARKERS if marker in text)
+
+        if has_dl_phrase:
+            id_type = "Driver's License"
+        elif has_state_id_phrase:
+            id_type = "State ID Card"
+        elif has_passport_phrase:
+            id_type = "Passport"
         elif field_count >= 3:
-            band, confidence = POSSIBLE_MATCH, 0.4
+            id_type = None  # ID-card-like fields on a real scan, but no named document type
         else:
             continue
 
-        image_count = len(page.images)
-        if any(marker in text for marker in _DL_BACK_MARKERS):
-            side = "Back"
-        elif image_count >= 2:
-            side = "Front and Back"
-        elif image_count == 1:
-            side = "Front"
+        if id_type is not None and field_count >= 2:
+            band, confidence = CONFIRMED, 1.0
+        elif id_type is not None:
+            band, confidence = STRONG_MATCH, 0.75
         else:
-            side = "Side Unknown"
+            band, confidence = POSSIBLE_MATCH, 0.4
+
+        if id_type == "Driver's License":
+            image_count = len(page.images)
+            if any(marker in text for marker in _DL_BACK_MARKERS):
+                side = "Back"
+            elif image_count >= 2:
+                side = "Front and Back"
+            else:
+                side = "Front"
+            subtype = side
+            reason_id = f"Driver's License ({side})"
+        elif id_type is not None:
+            subtype = id_type
+            reason_id = id_type
+        else:
+            subtype = "Government ID"
+            reason_id = None
 
         detected_name = next(iter(page.structured_tokens.name_hints), None)
         borrower_name = None
@@ -275,17 +319,18 @@ def _find_drivers_licenses(
         matches.append(
             KeyDocumentMatch(
                 match_id="",
-                category="drivers_license",
-                subtype=side,
+                category="government_id",
+                subtype=subtype,
                 confidence_band=band,
                 confidence=confidence,
                 document_id=occ.document_id,
                 original_filename=occ.original_filename,
                 borrower_name=borrower_name,
                 reason=(
-                    f"Driver's License ({side}) markers found ({reason_person})."
-                    if has_strong
-                    else f"Several ID-card-like fields found without an explicit license phrase ({reason_person})."
+                    f"{reason_id} markers found on a scanned page ({reason_person})."
+                    if reason_id
+                    else f"Several ID-card-like fields found on a scanned page without an explicit "
+                    f"document type ({reason_person})."
                 ),
                 document_page_range=(index + 1, index + 1),
                 signature_status=None,
@@ -456,12 +501,24 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
         if match.category == "non_proceeding":
             document_name = match.subtype or document_name
 
+        # Driver's License keeps its side ("Front"/"Back"/"Front and
+        # Back") as a separate filename segment, exactly as before; the
+        # other government-ID subtypes ("Passport", "State ID Card",
+        # "Government ID") name the document type directly, with no
+        # separate segment needed.
+        subtype_segment = None
+        if match.category == "closing_disclosure":
+            subtype_segment = match.signature_status
+        elif match.category == "government_id":
+            if match.subtype in ("Front", "Back", "Front and Back"):
+                subtype_segment = match.subtype
+            else:
+                document_name = match.subtype or document_name
+
         base_filename = naming.key_document_filename(
             run.identity,
             document_name,
-            signature_status=match.signature_status if match.category == "closing_disclosure" else match.subtype
-            if match.category == "drivers_license"
-            else None,
+            signature_status=subtype_segment,
             person_name_override=match.person_name_override,
         )
         count = used_names.get(base_filename, 0) + 1
@@ -472,9 +529,7 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
             else naming.key_document_filename(
                 run.identity,
                 document_name,
-                signature_status=match.signature_status if match.category == "closing_disclosure" else match.subtype
-                if match.category == "drivers_license"
-                else None,
+                signature_status=subtype_segment,
                 person_name_override=match.person_name_override,
                 copy_suffix=f"Copy {count}",
             )
@@ -493,6 +548,6 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
 
 _DOCUMENT_NAME_BY_CATEGORY = {
     "closing_disclosure": "Closing Disclosure",
-    "drivers_license": "Driver License",
+    "government_id": "Driver License",
     "mu_privacy_policy": "MU Privacy Policy",
 }

@@ -26,11 +26,14 @@ Beyond building a package, Document Merger can also:
   ever touching your source files.
 - **Locate and extract key documents** from the completed Final
   package -- the Closing Disclosure (flagging any wet-signed copy),
-  Driver's Licenses, the Mortgage Unity Privacy Policy specifically,
-  and loan non-proceeding documentation (adverse action, withdrawal,
-  denial, or cancellation notices) -- with page locations reported in
-  plain English and, for confidently-identified matches, extracted as
-  their own standalone files.
+  government-issued photo ID (Driver's License, Passport, or State ID
+  Card -- always requires an actual scanned/photographed image on the
+  page, never just text mentioning the document type), the Mortgage
+  Unity Privacy Policy specifically, and loan non-proceeding
+  documentation (adverse action, withdrawal, denial, or cancellation
+  notices) -- with page locations reported in plain English and, for
+  confidently-identified matches, extracted as their own standalone
+  files.
 - **Compare two packages** ("Compare Packages") -- an old/reference
   package against a newly generated one -- to confirm nothing
   meaningful went missing and nothing was wrongly duplicated, without
@@ -208,11 +211,14 @@ Highlights:
   a new package without restarting the app.
 - **Key-document page locator** -- once the Final package is built, the
   app looks for a Closing Disclosure (flagging any wet-signed copy
-  specifically), Driver's Licenses (front/back, per borrower), the
-  Mortgage Unity Privacy Policy, and loan non-proceeding documentation
-  (adverse action, withdrawal, denial, or cancellation notices), and
-  reports exactly where each one is -- part filename, page range inside
-  that part, and overall package page range -- in plain English, in
+  specifically), government-issued photo ID (Driver's License
+  front/back, Passport, or State ID Card, per borrower -- requires an
+  actual scanned/photographed image on the page, never just text
+  mentioning "driver's license" or "passport"), the Mortgage Unity
+  Privacy Policy, and loan non-proceeding documentation (adverse
+  action, withdrawal, denial, or cancellation notices), and reports
+  exactly where each one is -- part filename, page range inside that
+  part, and overall package page range -- in plain English, in
   `Key Document Page Locations.txt`, and in the completed-run screen.
   Confidently-identified matches (Confirmed / Strong Match) are also
   extracted as their own standalone files inside `Final`; anything less
@@ -398,7 +404,8 @@ True, Michael, Lender Package.pdf                       (single-part Final packa
 True, Michael, Original Lender Package.pdf               (single-part Original package)
 True, Michael, Original Lender Package, Part 001.pdf     (only when there is more than one part)
 True, Michael, Closing Disclosure, Signed, 6192278785.pdf              (extracted key document)
-True, Michael, Driver's License Front, E-Sign, 6192278785.pdf
+True, Michael, Driver License, Front, 6192278785.pdf
+True, Michael, Passport, 6192278785.pdf
 ```
 
 `Processing_Report.txt` (in `Reports`) is the main human-readable

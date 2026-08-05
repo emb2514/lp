@@ -1,5 +1,38 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## SAFETY FIX: government-ID detection required an actual scanned image, not just text mentioning it
+
+A real user requirement: driver's-license/government-ID detection must only match an actual scanned
+or photographed ID, never a page that merely contains the WORDS "driver's license" somewhere (a
+loan-package checklist item, a disclosure listing acceptable ID types, a cover letter). Investigated
+`key_documents._find_drivers_licenses` and confirmed this was a real, live gap -- it was
+text-only: `has_strong = any(phrase in text for phrase in _DL_STRONG_PHRASES)` triggered on the
+PHRASE alone, and `image_count` (whether the page actually had a scanned image on it) was only ever
+used to pick the "Front"/"Back"/"Side Unknown" label, never as a requirement for matching at all. A
+dedicated existing test (`test_drivers_license_unknown_side`) proved this directly: DOB/CLASS/HGT/
+EYES-style text with ZERO embedded images already produced a "Side Unknown" Possible Match under the
+old code.
+
+**Fix**: added a hard gate -- `if not page.images: continue` -- as the very first check, before any
+text scoring runs. A page with no embedded image can never be classified as a government ID, at any
+confidence tier, no matter what words or field-label markers it contains. This removed the "Side
+Unknown" tier entirely (it existed specifically for the no-image case, which is now impossible).
+
+**Also broadened per the same requirement ("or a scanned form of Government ID")**: the detector
+(renamed `_find_drivers_licenses` -> `_find_government_ids`, category `"drivers_license"` ->
+`"government_id"` throughout models.py/reporting.py/key_documents.py) now also recognizes a scanned
+**Passport** or **State ID Card** page (still requires the same embedded-image gate), and falls back
+to a low-confidence generic "Government ID" Possible Match for a real scanned ID-shaped page with
+several ID-like fields but no explicitly named document type. Driver's License front/back/combined
+detection and filenames are otherwise unchanged (`"True, Michael, Driver License, Front, ....pdf"`);
+Passport/State ID Card name the document type directly (`"True, Michael, Passport, ....pdf"`).
+
+9 new/rewritten tests in `tests/test_key_documents.py`: text-only "driver's license"/"passport"
+mentions with zero images never match; the same DOB/CLASS/HGT/EYES field-label text with zero images
+never matches (the exact prior false-positive, now closed); the same text WITH a real image still
+produces the generic "Government ID" Possible Match; Passport and State ID Card each confirm with a
+real scanned image. Local suite: 339 engine (was 334) + 99 GUI (unchanged) = 438 total, all passing.
+
 ## CRASH FIX (real Windows crash report): PermissionError [WinError 32] renaming a merged PDF part
 
 A real user hit a crash with this exact traceback on a real package in their Downloads folder:

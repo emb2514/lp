@@ -161,7 +161,7 @@ def test_revised_closing_disclosure(tmp_path):
 
 
 # ---------------------------------------------------------------------
-# Driver's License
+# Government-issued photo ID (Driver's License, Passport, State ID Card)
 # ---------------------------------------------------------------------
 
 _DL_FRONT_TEXT = "STATE OF EXAMPLE\nDRIVER LICENSE\nDOB 01/01/1990\nCLASS C\nEXPIRES 01/01/2030\nHGT 5-10 EYES BRN"
@@ -173,19 +173,22 @@ def test_multiple_drivers_licenses_two_documents(tmp_path):
     pdf_b = _make_pdf_with_text_and_images(tmp_path / "dl_b.pdf", [(_DL_FRONT_TEXT, 1)])
     occ_a = _occ("D1", pdf_a, 1)
     occ_b = _occ("D2", pdf_b, 1)
-    matches_a = key_documents._find_drivers_licenses(occ_a, _fp("D1", pdf_a), _IDENTITY)
-    matches_b = key_documents._find_drivers_licenses(occ_b, _fp("D2", pdf_b), _IDENTITY)
+    matches_a = key_documents._find_government_ids(occ_a, _fp("D1", pdf_a), _IDENTITY)
+    matches_b = key_documents._find_government_ids(occ_b, _fp("D2", pdf_b), _IDENTITY)
     assert len(matches_a) == 1
     assert len(matches_b) == 1
     assert matches_a[0].document_id != matches_b[0].document_id
 
 
 def test_drivers_license_separate_front_and_back_pages(tmp_path):
+    # The back of a real ID is still a scanned/photographed page (a
+    # barcode/magnetic-stripe area, restrictions text, etc.) -- it must
+    # carry its own embedded image too, exactly like the front.
     pdf = _make_pdf_with_text_and_images(
-        tmp_path / "dl.pdf", [(_DL_FRONT_TEXT, 1), (_DL_BACK_TEXT + "\nDRIVER LICENSE", 0)]
+        tmp_path / "dl.pdf", [(_DL_FRONT_TEXT, 1), (_DL_BACK_TEXT + "\nDRIVER LICENSE", 1)]
     )
     occ = _occ("D1", pdf, 2)
-    matches = key_documents._find_drivers_licenses(occ, _fp("D1", pdf), _IDENTITY)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 2
     assert matches[0].subtype == "Front"
     assert matches[1].subtype == "Back"
@@ -194,31 +197,96 @@ def test_drivers_license_separate_front_and_back_pages(tmp_path):
 def test_drivers_license_combined_front_and_back(tmp_path):
     pdf = _make_pdf_with_text_and_images(tmp_path / "dl.pdf", [(_DL_FRONT_TEXT, 2)])
     occ = _occ("D1", pdf, 1)
-    matches = key_documents._find_drivers_licenses(occ, _fp("D1", pdf), _IDENTITY)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
     assert matches[0].subtype == "Front and Back"
 
 
-def test_drivers_license_unknown_side(tmp_path):
-    # DL-like fields without the explicit license phrase and without an
-    # image or a back-of-card marker -- side cannot be determined.
+# REAL SAFETY REQUIREMENT: a page that merely mentions "driver's
+# license" in ordinary text -- a loan-package checklist item, a
+# disclosure listing acceptable ID types, a cover letter -- must NEVER
+# be classified as a driver's license (or any government ID) unless
+# there is an actual scanned/photographed image on that page. This is
+# the core false-positive the detector previously allowed (see the
+# original, since-removed "Side Unknown" behavior).
+def test_text_only_mention_of_drivers_license_is_never_a_match(tmp_path):
     pdf = _make_pdf_with_text_and_images(
-        tmp_path / "dl.pdf", [("DOB 01/01/1990\nCLASS C\nHGT 5-10\nEYES BRN", 0)]
+        tmp_path / "checklist.pdf",
+        [("Please provide a copy of your driver's license and a recent pay stub.", 0)],
     )
     occ = _occ("D1", pdf, 1)
-    matches = key_documents._find_drivers_licenses(occ, _fp("D1", pdf), _IDENTITY)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
+    assert matches == []
+
+
+def test_id_like_field_labels_without_an_image_are_never_a_match(tmp_path):
+    # The same DOB/CLASS/HGT/EYES field-label text that used to produce
+    # a "Side Unknown" possible match, now with zero embedded images --
+    # must never match at all, no matter how many ID-shaped fields
+    # appear in ordinary text.
+    pdf = _make_pdf_with_text_and_images(
+        tmp_path / "no_image.pdf", [("DOB 01/01/1990\nCLASS C\nHGT 5-10\nEYES BRN", 0)]
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
+    assert matches == []
+
+
+def test_id_like_field_labels_with_a_real_scanned_image_is_a_possible_match(tmp_path):
+    # The same field-label text as above, but now backed by a real
+    # embedded image (a genuine scan of some kind of ID-shaped document
+    # without an explicit, named document-type phrase) -- low
+    # confidence, but a real Possible Match, never silently dropped.
+    pdf = _make_pdf_with_text_and_images(
+        tmp_path / "unnamed_id.pdf", [("DOB 01/01/1990\nCLASS C\nHGT 5-10\nEYES BRN", 1)]
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
     assert matches[0].confidence_band == POSSIBLE_MATCH
-    assert matches[0].subtype == "Side Unknown"
+    assert matches[0].subtype == "Government ID"
 
 
 def test_drivers_license_detects_name_hint(tmp_path):
     pdf = _make_pdf_with_text_and_images(tmp_path / "dl.pdf", [("DRIVER LICENSE\nJane Smith\n" + _DL_FRONT_TEXT, 1)])
     occ = _occ("D1", pdf, 1)
-    matches = key_documents._find_drivers_licenses(occ, _fp("D1", pdf), _IDENTITY)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
     assert matches[0].borrower_name == "Jane Smith"
     assert matches[0].person_name_override == "Jane Smith"
+
+
+def test_passport_requires_a_scanned_image(tmp_path):
+    pdf = _make_pdf_with_text_and_images(
+        tmp_path / "passport_mention.pdf",
+        [("Acceptable forms of ID include a driver's license or passport.", 0)],
+    )
+    occ = _occ("D1", pdf, 1)
+    assert key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY) == []
+
+
+def test_passport_with_scanned_image_is_confirmed(tmp_path):
+    pdf = _make_pdf_with_text_and_images(
+        tmp_path / "passport.pdf",
+        [("UNITED STATES OF AMERICA\nPASSPORT\nDOB 01/01/1990\nISSUED 01/01/2020\nEXPIRES 01/01/2030", 1)],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == CONFIRMED
+    assert matches[0].subtype == "Passport"
+
+
+def test_state_id_card_with_scanned_image_is_confirmed(tmp_path):
+    pdf = _make_pdf_with_text_and_images(
+        tmp_path / "state_id.pdf",
+        [("STATE OF EXAMPLE\nSTATE IDENTIFICATION CARD\nDOB 01/01/1990\nISSUED 01/01/2020\nEXPIRES 01/01/2030", 1)],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == CONFIRMED
+    assert matches[0].subtype == "State ID Card"
 
 
 # ---------------------------------------------------------------------
@@ -322,6 +390,6 @@ def test_multiple_key_document_results_on_one_document(tmp_path):
     occ = _occ("D1", pdf, 2)
     fp = _fp("D1", pdf)
     cd_matches = key_documents._find_closing_disclosures(occ, fp, _IDENTITY)
-    dl_matches = key_documents._find_drivers_licenses(occ, fp, _IDENTITY)
+    dl_matches = key_documents._find_government_ids(occ, fp, _IDENTITY)
     assert len(cd_matches) == 1
     assert len(dl_matches) == 1

@@ -302,16 +302,17 @@ class KeyDocumentMatch:
     """
 
     match_id: str
-    # "closing_disclosure" | "drivers_license" | "mu_privacy_policy" | "non_proceeding"
+    # "closing_disclosure" | "government_id" | "mu_privacy_policy" | "non_proceeding"
     category: str
-    # e.g. "Front"/"Back"/"Front and Back" (drivers_license), or the
-    # specific non-proceeding subtype ("Adverse Action Notice", ...).
+    # e.g. "Front"/"Back"/"Front and Back"/"Passport"/"State ID Card"/
+    # "Government ID" (government_id), or the specific non-proceeding
+    # subtype ("Adverse Action Notice", ...).
     subtype: str | None
     confidence_band: str  # "Confirmed" | "Strong Match" | "Possible Match"
     confidence: float
     document_id: str
     original_filename: str
-    # Detected on the page when reliably found (drivers_license only);
+    # Detected on the page when reliably found (government_id only);
     # None means "borrower unknown", never an invented identity.
     borrower_name: str | None
     reason: str

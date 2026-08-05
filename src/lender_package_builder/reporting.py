@@ -57,7 +57,7 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
 
 _CATEGORY_LABELS = {
     "closing_disclosure": "Closing Disclosure",
-    "drivers_license": "Driver's License",
+    "government_id": "Government ID",
     "mu_privacy_policy": "MU Privacy Policy",
     "non_proceeding": "Loan Non-Proceeding Documentation",
 }
@@ -74,7 +74,7 @@ def wet_signed_matches(run: RunResult) -> list:
 
 def write_key_document_report(run: RunResult, path: Path) -> None:
     """Human-readable key-document page-locator results (MILESTONE 4):
-    Closing Disclosures, Driver's Licenses, the Mortgage Unity Privacy
+    Closing Disclosures, Government IDs, the Mortgage Unity Privacy
     Policy, and loan non-proceeding documentation found in Final, plus
     a dedicated wet-signed-document status section. Recognition here is
     purely descriptive -- nothing in this report ever affected which
