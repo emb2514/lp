@@ -1,5 +1,45 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS: output restructure + Lender field + naming overhaul (part 1 of a larger,
+## still-in-progress request -- structural document recognition for ALTA/Loan Estimate/Closing
+## Disclosure, real computer-vision Government ID, and the bad-conversion review workflow are
+## still pending as of this entry)
+
+Real user requirements, delivered incrementally (this entry covers the foundational piece the
+rest builds on):
+
+1. **Output folder restructure.** "Final" now holds ONLY the OG and Final Lender Package PDFs (and
+   their split parts) -- extracted key documents no longer land there. A new "Important Docs"
+   folder (`naming.IMPORTANT_DOCS_FOLDER_NAME`) holds every extracted key document instead
+   (Closing Disclosure, Government ID, ALTA, Loan Estimate, MU Privacy Policy, non-proceeding
+   documents). `key_documents.extract_key_documents()`'s destination parameter renamed
+   `important_docs_dir`; `cli.py`'s `build_package`/`_execute_pipeline`/`_finish_cancellation` all
+   thread the new folder through (created eagerly like Final/Reports, cleaned up and recreated on
+   cancellation exactly like Final already was). New GUI "Open Important Docs" button in
+   `result_view.py`. New regression test (`test_final_and_important_docs_folders_never_mix_contents`)
+   proves the two folders' contents never cross.
+
+2. **Lender field.** `PackageIdentity.lender` (e.g. "UWM", "Freedom", "Rocket Mortgage") -- new
+   "Lender:" field in Advanced Settings' Package Details (optional, blank by default), new
+   `--lender` CLI flag, persisted in `history.json`.
+
+3. **Naming convention overhaul.** `naming.package_part_filename()` (previously just
+   "True, Michael, Lender Package.pdf", no loan number at all) now includes both lender and loan
+   number when set: "Doe, John, Lender Package, UWM, 6192278785.pdf" (Part NNN, when present, stays
+   last). `naming.key_document_filename()` gained an `include_lender` parameter (default True) --
+   Closing Disclosure/Loan Estimate/ALTA/MU Privacy Policy/non-proceeding documents get the lender
+   segment (they're tied to the loan transaction), Government ID never does (`include_lender=False`
+   -- a personal ID identifies the borrower, not the transaction). Government ID's document name in
+   filenames changed from "Driver License"/"Passport"/"State ID Card" to always "Govt ID", with the
+   specific type/side ("Drivers License Front", "Passport", ...) as its own segment --
+   "Doe, John, Govt ID, Drivers License Front, 6192278785.pdf". Neither existing behavior change
+   broke any prior test (checked directly: no existing test combined a loan number with an exact
+   `package_part_filename` string assertion), but 6 new tests lock in the new lender-inclusion/
+   omission behavior in both functions.
+
+Local suite: 344 engine (was 339) + 99 GUI (unchanged) = 443 total, all passing. Continuing with the
+remaining pieces of this request next (see the task list for the rest).
+
 ## SAFETY FIX: government-ID detection required an actual scanned image, not just text mentioning it
 
 A real user requirement: driver's-license/government-ID detection must only match an actual scanned

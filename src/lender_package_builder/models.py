@@ -348,6 +348,10 @@ class PackageIdentity:
     first_name: str = ""
     loan_number: str = ""
     is_adverse: bool = False
+    # The wholesale/table-funding lender for this loan (e.g. "UWM",
+    # "Freedom", "Rocket Mortgage") -- optional, entered by the user.
+    # Never guessed from document content.
+    lender: str = ""
 
 
 @dataclasses.dataclass

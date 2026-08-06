@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from .. import os_actions
 from ..formatting import format_elapsed
+from ... import naming
 from ...models import ProcessingStatus, RunResult
 from .flow_layout import FlowLayout
 from .uncertain_review_dialog import UncertainReviewDialog
@@ -81,6 +82,10 @@ class ResultView(QWidget):
         self.open_final_button = QPushButton("Open Final Package Folder")
         self.open_final_button.clicked.connect(self._open_final_folder)
         button_row.addWidget(self.open_final_button)
+
+        self.open_important_docs_button = QPushButton("Open Important Docs")
+        self.open_important_docs_button.clicked.connect(self._open_important_docs_folder)
+        button_row.addWidget(self.open_important_docs_button)
 
         self.open_reports_button = QPushButton("Open Reports")
         self.open_reports_button.clicked.connect(self._open_reports_folder)
@@ -198,6 +203,10 @@ class ResultView(QWidget):
     def _open_final_folder(self) -> None:
         if self._run is not None:
             os_actions.open_folder(self._run.output_path / "Final")
+
+    def _open_important_docs_folder(self) -> None:
+        if self._run is not None:
+            os_actions.open_folder(self._run.output_path / naming.IMPORTANT_DOCS_FOLDER_NAME)
 
     def _open_reports_folder(self) -> None:
         if self._run is not None:

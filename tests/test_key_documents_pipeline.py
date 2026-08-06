@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fixtures.builders import make_pdf_with_ink_signature, make_pdf_with_pages
 
-from lender_package_builder import key_documents, review_decisions
+from lender_package_builder import key_documents, naming, review_decisions
 from lender_package_builder.config import AppConfig
 from lender_package_builder.models import PackageIdentity, UncertainMatch
 
@@ -21,9 +21,10 @@ def _identity() -> PackageIdentity:
     return PackageIdentity(last_name="True", first_name="Michael", loan_number="6192278785")
 
 
-# TEST 1 - extraction lands directly in Final with the exact required
-# naming convention, for a Closing Disclosure embedded inside a larger
-# document (pages 3-4 of a 5-page filing).
+# TEST 1 - extraction lands directly in Important Docs (never Final --
+# that folder holds only the OG and Final Lender Package PDFs) with the
+# exact required naming convention, for a Closing Disclosure embedded
+# inside a larger document (pages 3-4 of a 5-page filing).
 def test_extraction_from_a_larger_pdf_uses_exact_filename(tmp_path, run_build):
     folder = tmp_path / "input"
     folder.mkdir()
@@ -47,7 +48,7 @@ def test_extraction_from_a_larger_pdf_uses_exact_filename(tmp_path, run_build):
     assert match.document_page_range == (3, 4)
     assert match.extracted_filename == "True, Michael, Closing Disclosure, Unsigned, 6192278785.pdf"
 
-    extracted_path = run.output_path / "Final" / match.extracted_filename
+    extracted_path = run.output_path / naming.IMPORTANT_DOCS_FOLDER_NAME / match.extracted_filename
     assert extracted_path.exists()
     from pypdf import PdfReader
 
@@ -66,7 +67,7 @@ def test_extraction_preserves_annotations(tmp_path, run_build):
     assert len(cd_matches) == 1
     assert cd_matches[0].signature_status == "Signed"
 
-    extracted_path = run.output_path / "Final" / cd_matches[0].extracted_filename
+    extracted_path = run.output_path / naming.IMPORTANT_DOCS_FOLDER_NAME / cd_matches[0].extracted_filename
     from pypdf import PdfReader
 
     reader = PdfReader(str(extracted_path))
@@ -75,19 +76,47 @@ def test_extraction_preserves_annotations(tmp_path, run_build):
 
 
 # TEST 3 - every extracted key-document file lands directly inside
-# Final, never a subfolder.
-def test_extracted_files_land_directly_in_final(tmp_path, run_build):
+# Important Docs, never a subfolder, and never Final.
+def test_extracted_files_land_directly_in_important_docs(tmp_path, run_build):
     folder = tmp_path / "input"
     folder.mkdir()
     make_pdf_with_pages(folder / "cd.pdf", [_CD_TEXT])
 
     run = run_build(folder, identity=_identity())
     assert run.key_document_matches
+    important_docs_dir = run.output_path / naming.IMPORTANT_DOCS_FOLDER_NAME
     for match in run.key_document_matches:
         if match.extracted_filename:
-            path = run.output_path / "Final" / match.extracted_filename
+            path = important_docs_dir / match.extracted_filename
             assert path.exists()
-            assert path.parent == run.output_path / "Final"
+            assert path.parent == important_docs_dir
+
+
+# TEST 3B - the "Final" folder holds only the OG/Final Lender Package
+# PDFs -- extracted key documents never land there, and the reverse:
+# Important Docs never contains an OG/Final Lender Package PDF.
+def test_final_and_important_docs_folders_never_mix_contents(tmp_path, run_build):
+    folder = tmp_path / "input"
+    folder.mkdir()
+    make_pdf_with_pages(folder / "cd.pdf", [_CD_TEXT])
+
+    run = run_build(folder, identity=_identity())
+    assert run.key_document_matches
+    assert any(m.extracted_filename for m in run.key_document_matches)
+
+    final_dir = run.output_path / "Final"
+    important_docs_dir = run.output_path / naming.IMPORTANT_DOCS_FOLDER_NAME
+
+    final_filenames = {p.name for p in final_dir.glob("*.pdf")}
+    important_docs_filenames = {p.name for p in important_docs_dir.glob("*.pdf")}
+
+    for part in run.og_parts + run.final_parts:
+        assert part.file_path.name in final_filenames
+    for match in run.key_document_matches:
+        if match.extracted_filename:
+            assert match.extracted_filename in important_docs_filenames
+
+    assert final_filenames.isdisjoint(important_docs_filenames)
 
 
 # TEST 4 - a Possible Match is reported but never auto-extracted.
@@ -135,7 +164,7 @@ def test_page_locations_refresh_after_manual_exclusion(tmp_path):
     (output_path / "Final").mkdir(parents=True)
     (output_path / "Reports").mkdir(parents=True)
 
-    from lender_package_builder import merging, naming
+    from lender_package_builder import merging
     from lender_package_builder.models import IntegrityCheckResult, ProcessingStatus, RunResult, SourceOccurrence
 
     def occ(doc_id, pdf_path, pages):

@@ -178,7 +178,9 @@ def test_identity_preview_updates_live_as_fields_change(window):
 # TEST - get_identity()/set_identity() round-trip exactly what was entered
 def test_get_identity_and_set_identity_round_trip(window):
     settings = window.advanced_settings
-    identity = PackageIdentity(last_name="Smith", first_name="Jane", loan_number="42", is_adverse=True)
+    identity = PackageIdentity(
+        last_name="Smith", first_name="Jane", loan_number="42", is_adverse=True, lender="UWM"
+    )
 
     settings.set_identity(identity)
 
@@ -186,6 +188,7 @@ def test_get_identity_and_set_identity_round_trip(window):
     assert settings.first_name_edit.text() == "Jane"
     assert settings.loan_number_edit.text() == "42"
     assert settings.adverse_checkbox.isChecked() is True
+    assert settings.lender_edit.text() == "UWM"
     assert settings.get_identity() == identity
 
 

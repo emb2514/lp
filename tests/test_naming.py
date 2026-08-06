@@ -80,7 +80,9 @@ def test_resolve_versioned_output_dir_skips_multiple_existing_versions(tmp_path)
 
 # TEST 6 - no underscores anywhere in generated names
 def test_no_underscores_in_any_generated_name():
-    identity = _identity(last_name="True", first_name="Michael", loan_number="6192278785", is_adverse=True)
+    identity = _identity(
+        last_name="True", first_name="Michael", loan_number="6192278785", is_adverse=True, lender="UWM"
+    )
     assert "_" not in naming.main_folder_name(identity)
     assert "_" not in naming.package_part_filename(identity, naming.FINAL_PACKAGE_KIND, 1, 1)
     assert "_" not in naming.package_part_filename(identity, naming.OG_PACKAGE_KIND, 1, 2)
@@ -89,7 +91,7 @@ def test_no_underscores_in_any_generated_name():
 
 # TEST 7 - comma placement is always correct (no leading/trailing/doubled commas)
 def test_comma_placement_is_clean():
-    identity = _identity(last_name="True", first_name="Michael", loan_number="6192278785")
+    identity = _identity(last_name="True", first_name="Michael", loan_number="6192278785", lender="UWM")
     for name in (
         naming.main_folder_name(identity),
         naming.package_part_filename(identity, naming.FINAL_PACKAGE_KIND, 1, 1),
@@ -216,17 +218,65 @@ def test_key_document_filename_two_borrowers_drivers_licenses():
     assert borrower_one != borrower_two
 
 
+# TEST 20 - the lender name appears as its own segment in the Lender/
+# Original Lender Package filename when set.
+def test_package_part_filename_includes_lender():
+    identity = _identity(last_name="Doe", first_name="John", loan_number="6192278785", lender="UWM")
+    assert (
+        naming.package_part_filename(identity, naming.FINAL_PACKAGE_KIND, 1, 1)
+        == "Doe, John, Lender Package, UWM, 6192278785.pdf"
+    )
+    assert (
+        naming.package_part_filename(identity, naming.OG_PACKAGE_KIND, 1, 1)
+        == "Doe, John, Original Lender Package, UWM, 6192278785.pdf"
+    )
+
+
+# TEST 21 - a blank lender is omitted cleanly, exactly like a blank loan
+# number (no doubled/dangling comma).
+def test_package_part_filename_omits_blank_lender():
+    identity = _identity(last_name="Doe", first_name="John", loan_number="6192278785")
+    name = naming.package_part_filename(identity, naming.FINAL_PACKAGE_KIND, 1, 1)
+    assert name == "Doe, John, Lender Package, 6192278785.pdf"
+    assert ",, " not in name
+
+
+# TEST 22 - the lender name appears in a key-document filename for a
+# document tied to the loan transaction (Closing Disclosure), right
+# before the loan number.
+def test_key_document_filename_includes_lender_for_closing_disclosure():
+    identity = _identity(last_name="Doe", first_name="John", loan_number="6192278785", lender="UWM")
+    assert (
+        naming.key_document_filename(identity, "Closing Disclosure", signature_status="Signed")
+        == "Doe, John, Closing Disclosure, Signed, UWM, 6192278785.pdf"
+    )
+
+
+# TEST 23 - Government ID never includes the lender segment (a personal
+# ID identifies the borrower, not the loan transaction), matching the
+# `include_lender=False` contract key_documents.py relies on.
+def test_key_document_filename_excludes_lender_when_include_lender_false():
+    identity = _identity(last_name="Doe", first_name="John", loan_number="6192278785", lender="UWM")
+    name = naming.key_document_filename(
+        identity, "Govt ID", signature_status="Drivers License Front", include_lender=False
+    )
+    assert name == "Doe, John, Govt ID, Drivers License Front, 6192278785.pdf"
+    assert "UWM" not in name
+
+
 # TEST 19 - naming functions are pure: they never touch the filesystem or
 # mutate the PackageIdentity passed in (no accidental "source renaming").
 def test_naming_functions_never_mutate_identity_or_touch_disk(tmp_path):
-    identity = _identity(last_name=" True ", first_name="Michael!!", loan_number="619-227-8785")
-    before = (identity.last_name, identity.first_name, identity.loan_number, identity.is_adverse)
+    identity = _identity(
+        last_name=" True ", first_name="Michael!!", loan_number="619-227-8785", lender=" UWM! "
+    )
+    before = (identity.last_name, identity.first_name, identity.loan_number, identity.is_adverse, identity.lender)
 
     naming.main_folder_name(identity)
     naming.package_part_filename(identity, naming.FINAL_PACKAGE_KIND, 1, 1)
     naming.key_document_filename(identity, "Closing Disclosure", signature_status="Signed")
 
-    after = (identity.last_name, identity.first_name, identity.loan_number, identity.is_adverse)
+    after = (identity.last_name, identity.first_name, identity.loan_number, identity.is_adverse, identity.lender)
     assert before == after
     assert list(tmp_path.iterdir()) == []
 

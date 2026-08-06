@@ -82,6 +82,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Mark this as an adverse/withdrawn/denied/cancelled (non-proceeding) file.",
     )
     build.add_argument(
+        "--lender",
+        default=None,
+        help="Wholesale/table-funding lender (e.g. UWM, Freedom, Rocket Mortgage), used to name "
+        "output files. Optional.",
+    )
+    build.add_argument(
         "--max-pages-per-part",
         type=int,
         default=None,
@@ -144,12 +150,13 @@ def _run_build_command(args: argparse.Namespace) -> int:
         config.enable_content_aware_dedup = False
 
     identity = None
-    if args.last_name or args.first_name or args.loan_number or args.adverse:
+    if args.last_name or args.first_name or args.loan_number or args.adverse or args.lender:
         identity = PackageIdentity(
             last_name=args.last_name or "",
             first_name=args.first_name or "",
             loan_number=args.loan_number or "",
             is_adverse=args.adverse,
+            lender=args.lender or "",
         )
 
     try:
@@ -294,17 +301,20 @@ def build_package(
     if resolved_output_dir.exists():
         raise OutputAlreadyExistsError(f"Output folder already exists: {resolved_output_dir}")
 
-    # Only "Final" (both packages plus any extracted key documents) and
-    # "Reports" (every log/report/manifest) are always created. A
+    # "Final" (the OG and Final Lender Package PDFs only), "Important
+    # Docs" (every extracted key document -- Closing Disclosure,
+    # Government ID, ALTA Settlement Statement, Loan Estimate, etc.),
+    # and "Reports" (every log/report/manifest) are always created. A
     # separate OG folder and Logs folder are gone -- the Original Lender
     # Package lives inside Final, and run.log lives inside Reports.
     # "Unconverted Files" is created lazily, only if something is
     # actually written there (see _preserve_unconverted_original /
     # _copy_extra_preserved_file) -- an empty folder is never shipped.
     final_dir = resolved_output_dir / "Final"
+    important_docs_dir = resolved_output_dir / naming.IMPORTANT_DOCS_FOLDER_NAME
     reports_dir = resolved_output_dir / "Reports"
     unconverted_dir = resolved_output_dir / naming.UNCONVERTED_FILES_FOLDER_NAME
-    for d in (resolved_output_dir, final_dir, reports_dir):
+    for d in (resolved_output_dir, final_dir, important_docs_dir, reports_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     file_handler = _setup_logging(reports_dir, verbose)
@@ -325,6 +335,7 @@ def build_package(
                     input_path=input_path,
                     output_dir=resolved_output_dir,
                     final_dir=final_dir,
+                    important_docs_dir=important_docs_dir,
                     reports_dir=reports_dir,
                     unconverted_dir=unconverted_dir,
                     config=config,
@@ -369,7 +380,7 @@ def build_package(
         except ProcessingCancelled:
             workspace.cleanup()
             raise _finish_cancellation(
-                resolved_output_dir, final_dir, reports_dir, unconverted_dir, reporter, input_path
+                resolved_output_dir, final_dir, important_docs_dir, reports_dir, unconverted_dir, reporter, input_path
             ) from None
     finally:
         logger.removeHandler(file_handler)
@@ -379,6 +390,7 @@ def build_package(
 def _finish_cancellation(
     output_dir: Path,
     final_dir: Path,
+    important_docs_dir: Path,
     reports_dir: Path,
     unconverted_dir: Path,
     reporter: "_ProgressReporter",
@@ -412,13 +424,14 @@ def _finish_cancellation(
     cleanup_succeeded = True
     moved_to: Path | None = None
     try:
-        for stale_dir in (final_dir, unconverted_dir):
+        for stale_dir in (final_dir, important_docs_dir, unconverted_dir):
             if stale_dir.exists():
                 shutil.rmtree(stale_dir)
         for stale_file in reports_dir.glob("*"):
             if stale_file.name != "run.log":
                 stale_file.unlink()
         final_dir.mkdir(parents=True, exist_ok=True)
+        important_docs_dir.mkdir(parents=True, exist_ok=True)
         reports_dir.mkdir(parents=True, exist_ok=True)
         _write_cancellation_report(reports_dir, output_dir, reporter, input_path, cancelled_at_stage)
     except OSError:
@@ -601,6 +614,7 @@ def _execute_pipeline(
     input_path: Path,
     output_dir: Path,
     final_dir: Path,
+    important_docs_dir: Path,
     reports_dir: Path,
     unconverted_dir: Path,
     config: AppConfig,
@@ -772,7 +786,7 @@ def _execute_pipeline(
     check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.LOCATING_KEY_DOCUMENTS, "[10/11] Locating key documents...")
     run.key_document_matches = key_documents.locate_key_documents(run)
-    key_documents.extract_key_documents(run.key_document_matches, run, final_dir)
+    key_documents.extract_key_documents(run.key_document_matches, run, important_docs_dir)
     reporter.emit(
         ProgressStage.LOCATING_KEY_DOCUMENTS,
         f"      {len(run.key_document_matches)} key-document match(es) found.",

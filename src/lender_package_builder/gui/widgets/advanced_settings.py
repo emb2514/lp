@@ -109,6 +109,10 @@ class AdvancedSettingsWidget(QWidget):
         self.loan_number_edit.setPlaceholderText("e.g. 6192278785")
         identity_form.addRow("Loan number:", self.loan_number_edit)
 
+        self.lender_edit = QLineEdit()
+        self.lender_edit.setPlaceholderText("e.g. UWM, Freedom, Rocket Mortgage (optional)")
+        identity_form.addRow("Lender:", self.lender_edit)
+
         content_layout.addLayout(identity_form)
 
         self.adverse_checkbox = QCheckBox(
@@ -218,6 +222,7 @@ class AdvancedSettingsWidget(QWidget):
             first_name=self.first_name_edit.text(),
             loan_number=self.loan_number_edit.text(),
             is_adverse=self.adverse_checkbox.isChecked(),
+            lender=self.lender_edit.text(),
         )
 
     def set_identity(self, identity: PackageIdentity) -> None:
@@ -225,6 +230,7 @@ class AdvancedSettingsWidget(QWidget):
         self.first_name_edit.setText(identity.first_name)
         self.loan_number_edit.setText(identity.loan_number)
         self.adverse_checkbox.setChecked(identity.is_adverse)
+        self.lender_edit.setText(identity.lender)
 
     def _update_identity_preview(self) -> None:
         self.identity_preview_label.setText(naming.main_folder_name(self.get_identity()))

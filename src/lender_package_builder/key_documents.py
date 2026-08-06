@@ -298,13 +298,13 @@ def _find_government_ids(
                 side = "Front and Back"
             else:
                 side = "Front"
-            subtype = side
+            subtype = f"Drivers License {side}"
             reason_id = f"Driver's License ({side})"
         elif id_type is not None:
             subtype = id_type
             reason_id = id_type
         else:
-            subtype = "Government ID"
+            subtype = "Unknown Government ID Side"
             reason_id = None
 
         detected_name = next(iter(page.structured_tokens.name_hints), None)
@@ -478,13 +478,14 @@ def _group_contiguous(indices: list[int], max_gap: int = 0) -> list[tuple[int, i
 # ---------------------------------------------------------------------
 
 
-def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final_dir) -> None:
+def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, important_docs_dir) -> None:
     """Extracts a standalone PDF for every Confirmed/Strong Match result,
-    directly into `final_dir` (never a subfolder), using
-    `naming.key_document_filename()`. Preserves the original page
-    appearance/annotations/signatures exactly -- pages are copied from
-    the already-converted PDF via pypdf, never re-rendered or OCR'd.
-    Possible Matches are reported but never auto-extracted.
+    directly into `important_docs_dir` (never a subfolder, and never the
+    "Final" folder -- that folder holds only the OG and Final Lender
+    Package PDFs), using `naming.key_document_filename()`. Preserves the
+    original page appearance/annotations/signatures exactly -- pages are
+    copied from the already-converted PDF via pypdf, never re-rendered
+    or OCR'd. Possible Matches are reported but never auto-extracted.
     """
 
     occ_by_id = {o.document_id: o for o in run.occurrences}
@@ -501,25 +502,26 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
         if match.category == "non_proceeding":
             document_name = match.subtype or document_name
 
-        # Driver's License keeps its side ("Front"/"Back"/"Front and
-        # Back") as a separate filename segment, exactly as before; the
-        # other government-ID subtypes ("Passport", "State ID Card",
-        # "Government ID") name the document type directly, with no
-        # separate segment needed.
+        # Government ID always uses the generic "Govt ID" document name
+        # with the specific type/side ("Drivers License Front",
+        # "Passport", ...) as its own segment, and is never attributed
+        # to a lender (it identifies the borrower personally, not the
+        # loan transaction) -- see naming.key_document_filename's
+        # `include_lender` docstring.
         subtype_segment = None
+        include_lender = True
         if match.category == "closing_disclosure":
             subtype_segment = match.signature_status
         elif match.category == "government_id":
-            if match.subtype in ("Front", "Back", "Front and Back"):
-                subtype_segment = match.subtype
-            else:
-                document_name = match.subtype or document_name
+            subtype_segment = match.subtype
+            include_lender = False
 
         base_filename = naming.key_document_filename(
             run.identity,
             document_name,
             signature_status=subtype_segment,
             person_name_override=match.person_name_override,
+            include_lender=include_lender,
         )
         count = used_names.get(base_filename, 0) + 1
         used_names[base_filename] = count
@@ -531,11 +533,12 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
                 document_name,
                 signature_status=subtype_segment,
                 person_name_override=match.person_name_override,
+                include_lender=include_lender,
                 copy_suffix=f"Copy {count}",
             )
         )
 
-        dest = final_dir / filename
+        dest = important_docs_dir / filename
         start, end = match.document_page_range
         reader = PdfReader(str(occ.converted_pdf_path))
         writer = PdfWriter()
@@ -548,6 +551,6 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, final
 
 _DOCUMENT_NAME_BY_CATEGORY = {
     "closing_disclosure": "Closing Disclosure",
-    "government_id": "Driver License",
+    "government_id": "Govt ID",
     "mu_privacy_policy": "MU Privacy Policy",
 }

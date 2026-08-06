@@ -1,8 +1,17 @@
 """User-facing output naming: the main output folder, the Final and
 Original Lender Package filenames, and extracted key-document
 filenames -- all derived from one `PackageIdentity` (last name, first
-name, loan number, adverse status) so every output name in the app
-comes from a single, consistently-formatted place.
+name, loan number, adverse status, lender) so every output name in the
+app comes from a single, consistently-formatted place.
+
+`identity.lender` (e.g. "UWM", "Freedom", "Rocket Mortgage") appears as
+its own segment in filenames for documents tied to the loan transaction
+itself (Lender Package, Original Lender Package, Closing Disclosure,
+Loan Estimate, ALTA Settlement Statement, MU Privacy Policy, loan
+non-proceeding documents) -- never for Government ID, which identifies
+the borrower personally, not the transaction (`key_document_filename`'s
+`include_lender=False`). Omitted cleanly wherever blank, exactly like
+every other optional identity field.
 
 Convention: comma-separated components, no underscores, e.g.
 "True, Michael, 6192278785" or "True, Michael, Lender Package,
@@ -28,6 +37,7 @@ _WHITESPACE_RUN = re.compile(r"\s+")
 FINAL_PACKAGE_KIND = "Lender Package"
 OG_PACKAGE_KIND = "Original Lender Package"
 UNCONVERTED_FILES_FOLDER_NAME = "Unconverted Files"
+IMPORTANT_DOCS_FOLDER_NAME = "Important Docs"
 INCOMPLETE_CANCELLED_OUTPUT_FOLDER_NAME = "Incomplete Cancelled Output"
 
 
@@ -51,6 +61,7 @@ def clean_identity(identity: PackageIdentity) -> PackageIdentity:
         first_name=sanitize_component(identity.first_name),
         loan_number=sanitize_component(identity.loan_number),
         is_adverse=identity.is_adverse,
+        lender=sanitize_component(identity.lender),
     )
 
 
@@ -101,16 +112,19 @@ def resolve_versioned_output_dir(parent: Path, base_name: str) -> Path:
 def package_part_filename(
     identity: PackageIdentity, kind: str, part_index: int, total_parts: int
 ) -> str:
-    """Final/Original Lender Package filename for one output part.
+    """Final/Original Lender Package filename for one output part, e.g.
+    "True, Michael, Lender Package, UWM, 6192278785.pdf" (lender and/or
+    loan number omitted cleanly when blank).
 
-    Single-part packages omit the part suffix entirely
-    ("True, Michael, Lender Package.pdf"); multi-part packages use a
-    three-digit, 1-based part number
-    ("True, Michael, Lender Package, Part 001.pdf").
+    Single-part packages omit the part suffix entirely; multi-part
+    packages append a three-digit, 1-based part number last
+    ("..., Lender Package, UWM, 6192278785, Part 001.pdf").
     """
 
+    identity = clean_identity(identity)
     prefix = _borrower_prefix(identity)
-    name = f"{prefix}, {kind}" if prefix else kind
+    segments = [s for s in (prefix, kind, identity.lender, identity.loan_number) if s]
+    name = ", ".join(segments)
     if total_parts > 1:
         name = f"{name}, Part {part_index:03d}"
     return sanitize_component(name) + ".pdf"
@@ -124,21 +138,31 @@ def key_document_filename(
     loan_number: str | None = None,
     copy_suffix: str | None = None,
     person_name_override: str | None = None,
+    include_lender: bool = True,
 ) -> str:
     """Standalone extracted key-document filename, e.g.
-    "True, Michael, Closing Disclosure, Signed, 6192278785.pdf".
+    "True, Michael, Closing Disclosure, Signed, UWM, 6192278785.pdf".
 
     `person_name_override` lets a document belonging to someone other
-    than the primary borrower (e.g. a co-borrower's Driver's License)
-    use that person's own name instead of `identity`'s, without
-    otherwise changing the convention.
+    than the primary borrower (e.g. a co-borrower's Government ID) use
+    that person's own name instead of `identity`'s, without otherwise
+    changing the convention.
+
+    `include_lender=False` (Government ID only) omits the lender segment
+    entirely -- a driver's license/passport/state ID identifies the
+    borrower personally, not the loan transaction, so it is never
+    attributed to a specific lender the way a Closing Disclosure, Loan
+    Estimate, ALTA Settlement Statement, or non-proceeding notice is.
     """
 
     prefix = sanitize_component(person_name_override) if person_name_override else _borrower_prefix(identity)
+    identity = clean_identity(identity)
     segments = [s for s in (prefix, document_name, signature_status) if s]
-    resolved_loan_number = loan_number if loan_number is not None else clean_identity(identity).loan_number
+    if include_lender and identity.lender:
+        segments.append(identity.lender)
+    resolved_loan_number = sanitize_component(loan_number) if loan_number is not None else identity.loan_number
     if resolved_loan_number:
-        segments.append(sanitize_component(resolved_loan_number))
+        segments.append(resolved_loan_number)
     if copy_suffix:
         segments.append(copy_suffix)
     return sanitize_component(", ".join(segments)) + ".pdf"

@@ -190,8 +190,8 @@ def test_drivers_license_separate_front_and_back_pages(tmp_path):
     occ = _occ("D1", pdf, 2)
     matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 2
-    assert matches[0].subtype == "Front"
-    assert matches[1].subtype == "Back"
+    assert matches[0].subtype == "Drivers License Front"
+    assert matches[1].subtype == "Drivers License Back"
 
 
 def test_drivers_license_combined_front_and_back(tmp_path):
@@ -199,7 +199,7 @@ def test_drivers_license_combined_front_and_back(tmp_path):
     occ = _occ("D1", pdf, 1)
     matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
-    assert matches[0].subtype == "Front and Back"
+    assert matches[0].subtype == "Drivers License Front and Back"
 
 
 # REAL SAFETY REQUIREMENT: a page that merely mentions "driver's
@@ -244,7 +244,7 @@ def test_id_like_field_labels_with_a_real_scanned_image_is_a_possible_match(tmp_
     matches = key_documents._find_government_ids(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
     assert matches[0].confidence_band == POSSIBLE_MATCH
-    assert matches[0].subtype == "Government ID"
+    assert matches[0].subtype == "Unknown Government ID Side"
 
 
 def test_drivers_license_detects_name_hint(tmp_path):
