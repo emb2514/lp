@@ -1,6 +1,32 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
-## RC3 IN PROGRESS: output restructure + Lender field + naming overhaul (part 1 of a larger,
+## RC3 IN PROGRESS (part 2): fixed MU Privacy Policy detection against a real sample (it never
+## matched), added MU MA Broker Addendum detection
+
+The user supplied two real Mortgage Unity documents to check the existing detector against.
+`_find_mu_privacy_policy` required "mortgage unity" AND ("privacy policy" OR "privacy notice")
+literally on the page -- the real document (a standard GLBA "FACTS" model privacy form) never
+actually contains either phrase anywhere; its real title is the regulation-mandated
+"What does Mortgage Unity LLC do with your personal information?". The existing test fixture used
+the literal words "Mortgage Unity Privacy Policy", which is why this never got caught locally --
+it wasn't testing against real document wording. **Fixed** by requiring the company marker plus
+that actual regulation-mandated title phrase ("do with your personal information") instead, with a
+CONFIRMED/STRONG_MATCH split based on how many of the standard GLBA section headings ("facts",
+"who we are", "reasons we can share", "what we do") also appear -- rewrote the test fixture to
+mirror the real document's actual page-1/page-2 text directly, plus a new false-positive test
+proving a checklist/cover-letter mention of "Mortgage Unity's privacy policy" still never matches.
+
+**Added** `_find_mu_ma_broker_addendum` (new category `mu_ma_broker_addendum`, document name
+"MU MA Broker Addendum") for the real "Mortgage Unity LLC Combined MA Broker Addendum" sample --
+requires the company marker, the exact "Addendum to Uniform Residential Loan Application" title,
+and the state name together (scoped to Massachusetts only, matching the one sample provided; other
+states would need their own samples). Both Mortgage-Unity-specific documents use
+`include_lender=False` in their filenames (confirmed by the user's own naming examples, which
+never included a Lender segment) -- unlike Closing Disclosure/Loan Estimate/ALTA, they're Mortgage
+Unity's own company/regulatory documents, not tied to whichever wholesale lender the loan went to.
+5 new tests total. Local suite: 349 engine (was 344) + 99 GUI (unchanged) = 448 total, all passing.
+
+## RC3 IN PROGRESS (part 1): output restructure + Lender field + naming overhaul (part 1 of a larger,
 ## still-in-progress request -- structural document recognition for ALTA/Loan Estimate/Closing
 ## Disclosure, real computer-vision Government ID, and the bad-conversion review workflow are
 ## still pending as of this entry)

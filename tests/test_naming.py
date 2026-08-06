@@ -264,6 +264,20 @@ def test_key_document_filename_excludes_lender_when_include_lender_false():
     assert "UWM" not in name
 
 
+# TEST 24 - the two Mortgage-Unity-specific documents (Privacy Policy,
+# MA Broker Addendum) never include the lender segment either -- they're
+# Mortgage Unity's own company/regulatory documents, not tied to
+# whichever wholesale lender this particular loan went to.
+def test_key_document_filename_excludes_lender_for_mu_documents():
+    identity = _identity(last_name="Doe", first_name="John", loan_number="6192278785", lender="UWM")
+    privacy_name = naming.key_document_filename(identity, "MU Privacy Policy", include_lender=False)
+    addendum_name = naming.key_document_filename(identity, "MU MA Broker Addendum", include_lender=False)
+    assert privacy_name == "Doe, John, MU Privacy Policy, 6192278785.pdf"
+    assert addendum_name == "Doe, John, MU MA Broker Addendum, 6192278785.pdf"
+    assert "UWM" not in privacy_name
+    assert "UWM" not in addendum_name
+
+
 # TEST 19 - naming functions are pure: they never touch the filesystem or
 # mutate the PackageIdentity passed in (no accidental "source renaming").
 def test_naming_functions_never_mutate_identity_or_touch_disk(tmp_path):

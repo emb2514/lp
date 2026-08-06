@@ -15,7 +15,9 @@ document types the reports/GUI surface separately:
   `_find_government_ids`'s docstring: this was a real, confirmed
   false-positive risk in the original text-only design.
 - The Mortgage Unity Privacy Policy specifically (never a generic
-  privacy notice from another lender).
+  privacy notice from another lender) and the Mortgage Unity
+  Massachusetts Broker Addendum specifically (never a generic addendum
+  to a Uniform Residential Loan Application).
 - Loan non-proceeding documentation (Adverse Action Notice, Withdrawal
   Certification, Denial Notice, Cancellation Notice, Closed for
   Incompleteness, or an unclassified but clearly non-proceeding
@@ -82,6 +84,7 @@ def locate_key_documents(run: RunResult) -> list[KeyDocumentMatch]:
             _find_closing_disclosures,
             _find_government_ids,
             _find_mu_privacy_policy,
+            _find_mu_ma_broker_addendum,
             _find_non_proceeding_documents,
         ):
             for match in finder(occ, fingerprint, run.identity):
@@ -345,32 +348,111 @@ def _find_government_ids(
 # ---------------------------------------------------------------------
 
 _MU_COMPANY_MARKER = "mortgage unity"
-_PRIVACY_MARKERS = ("privacy policy", "privacy notice")
+
+# The real Mortgage Unity privacy notice (a standard GLBA "FACTS" model
+# form, confirmed directly against a real sample) never actually
+# contains the words "privacy policy" or "privacy notice" anywhere on
+# the page -- the original detector's requirement for one of those two
+# phrases meant it would never have matched the real document at all.
+# The GLBA model form's title is a regulation-mandated phrase
+# ("What does [Company] do with your personal information?"), specific
+# enough that a mere reference/checklist item is very unlikely to
+# reproduce it verbatim, unlike the generic word "privacy".
+_PRIVACY_TITLE_PHRASE = "do with your personal information"
+_PRIVACY_SECTION_MARKERS = (
+    "facts",
+    "who we are",
+    "reasons we can share",
+    "what we do",
+)
 
 
 def _find_mu_privacy_policy(
     occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
 ) -> list[KeyDocumentMatch]:
+    """Requires the company marker plus the GLBA model form's actual,
+    regulation-mandated title phrase -- never just a mention of
+    "privacy" (a checklist item, a disclosure listing what will be
+    provided, a cover letter) -- see the module-level note above.
+    """
+
     matches: list[KeyDocumentMatch] = []
     for index, page in enumerate(fp.pages):
         text = page.normalized_text.casefold()
         if _MU_COMPANY_MARKER not in text:
             continue  # Mortgage Unity-specific evidence is required -- a generic privacy notice never matches.
-        has_privacy = any(marker in text for marker in _PRIVACY_MARKERS)
-        if not has_privacy:
+        if _PRIVACY_TITLE_PHRASE not in text:
             continue
+
+        section_count = sum(1 for marker in _PRIVACY_SECTION_MARKERS if marker in text)
+        band, confidence = (CONFIRMED, 1.0) if section_count >= 2 else (STRONG_MATCH, 0.75)
 
         matches.append(
             KeyDocumentMatch(
                 match_id="",
                 category="mu_privacy_policy",
                 subtype=None,
-                confidence_band=CONFIRMED,
-                confidence=1.0,
+                confidence_band=band,
+                confidence=confidence,
                 document_id=occ.document_id,
                 original_filename=occ.original_filename,
                 borrower_name=None,
-                reason='"Mortgage Unity" and a privacy policy/notice marker both found on the page.',
+                reason='"Mortgage Unity" and the GLBA privacy-notice title phrase both found on the page.',
+                document_page_range=(index + 1, index + 1),
+                signature_status=None,
+            )
+        )
+    return matches
+
+
+# ---------------------------------------------------------------------
+# Mortgage Unity Massachusetts Broker Addendum
+# ---------------------------------------------------------------------
+
+_MA_ADDENDUM_TITLE_PHRASE = "addendum to uniform residential loan application"
+_MA_ADDENDUM_SECTION_MARKERS = ("attorney disclosure", "broker license disclosure")
+
+
+def _find_mu_ma_broker_addendum(
+    occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
+) -> list[KeyDocumentMatch]:
+    """Massachusetts-specific broker/attorney disclosure addendum
+    (confirmed directly against a real "Mortgage Unity LLC Combined MA
+    Broker Addendum" sample). Requires the company marker, the exact
+    "Addendum to Uniform Residential Loan Application" title, AND the
+    state name -- a mere reference to Mortgage Unity or to a broker
+    addendum in a checklist/cover letter reproduces none of these
+    together. Scoped to Massachusetts only, matching the one sample
+    provided -- the same addendum for another state would need its own
+    sample before this could recognize it without guessing at wording
+    that might not match the real form.
+    """
+
+    matches: list[KeyDocumentMatch] = []
+    for index, page in enumerate(fp.pages):
+        text = page.normalized_text.casefold()
+        if _MU_COMPANY_MARKER not in text:
+            continue
+        if _MA_ADDENDUM_TITLE_PHRASE not in text:
+            continue
+        if "massachusetts" not in text:
+            continue
+
+        section_count = sum(1 for marker in _MA_ADDENDUM_SECTION_MARKERS if marker in text)
+        band, confidence = (CONFIRMED, 1.0) if section_count >= 1 else (STRONG_MATCH, 0.75)
+
+        matches.append(
+            KeyDocumentMatch(
+                match_id="",
+                category="mu_ma_broker_addendum",
+                subtype=None,
+                confidence_band=band,
+                confidence=confidence,
+                document_id=occ.document_id,
+                original_filename=occ.original_filename,
+                borrower_name=None,
+                reason='"Mortgage Unity", the Massachusetts loan-application addendum title, and the '
+                "state name all found on the page.",
                 document_page_range=(index + 1, index + 1),
                 signature_status=None,
             )
@@ -506,14 +588,20 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, impor
         # with the specific type/side ("Drivers License Front",
         # "Passport", ...) as its own segment, and is never attributed
         # to a lender (it identifies the borrower personally, not the
-        # loan transaction) -- see naming.key_document_filename's
-        # `include_lender` docstring.
+        # loan transaction). The two Mortgage-Unity-specific documents
+        # (Privacy Policy, MA Broker Addendum) are likewise never
+        # attributed to a lender -- they're Mortgage Unity's own
+        # company/regulatory documents, not tied to whichever wholesale
+        # lender this particular loan went to -- see
+        # naming.key_document_filename's `include_lender` docstring.
         subtype_segment = None
         include_lender = True
         if match.category == "closing_disclosure":
             subtype_segment = match.signature_status
         elif match.category == "government_id":
             subtype_segment = match.subtype
+            include_lender = False
+        elif match.category in ("mu_privacy_policy", "mu_ma_broker_addendum"):
             include_lender = False
 
         base_filename = naming.key_document_filename(
@@ -553,4 +641,5 @@ _DOCUMENT_NAME_BY_CATEGORY = {
     "closing_disclosure": "Closing Disclosure",
     "government_id": "Govt ID",
     "mu_privacy_policy": "MU Privacy Policy",
+    "mu_ma_broker_addendum": "MU MA Broker Addendum",
 }

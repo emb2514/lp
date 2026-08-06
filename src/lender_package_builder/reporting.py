@@ -59,6 +59,7 @@ _CATEGORY_LABELS = {
     "closing_disclosure": "Closing Disclosure",
     "government_id": "Government ID",
     "mu_privacy_policy": "MU Privacy Policy",
+    "mu_ma_broker_addendum": "MU MA Broker Addendum",
     "non_proceeding": "Loan Non-Proceeding Documentation",
 }
 

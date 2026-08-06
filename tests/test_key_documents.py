@@ -293,20 +293,104 @@ def test_state_id_card_with_scanned_image_is_confirmed(tmp_path):
 # Mortgage Unity Privacy Policy
 # ---------------------------------------------------------------------
 
+# Mirrors the real Mortgage Unity GLBA "FACTS" privacy notice sample
+# directly (a standard model privacy form) -- confirmed the real
+# document never actually contains the words "privacy policy" or
+# "privacy notice" anywhere on the page, only the regulation-mandated
+# title phrase "do with your personal information". A fixture using the
+# literal words "privacy policy" would not prove the detector works on
+# the actual document.
+_MU_PRIVACY_PAGE_1 = (
+    "FACTS\nWHAT DOES MORTGAGE UNITY LLC DO WITH YOUR PERSONAL INFORMATION?\n"
+    "Why?\nFinancial companies choose how they share your personal information.\n"
+    "What?\nThe types of personal information we collect and share depend on the product.\n"
+    "How?\nAll financial companies need to share personal information to run their everyday business.\n"
+    "Reasons we can share your personal information\nDoes MORTGAGE UNITY LLC share?\n"
+    "Questions?\nCall or go to www.mortgageunity.com"
+)
+_MU_PRIVACY_PAGE_2 = (
+    "Who we are\nWho is providing this notice?\nMORTGAGE UNITY LLC - NMLS# 1843595\n"
+    "What we do\nHow does MORTGAGE UNITY LLC protect my personal information?\n"
+    "Definitions\nAffiliates\nOther important information"
+)
+
 
 def test_mortgage_unity_privacy_policy_detected(tmp_path):
-    pdf = make_pdf_with_pages(tmp_path / "privacy.pdf", ["Mortgage Unity Privacy Policy\nWe respect your privacy."])
-    occ = _occ("D1", pdf, 1)
+    # Only page 1 of the real document actually carries the
+    # regulation-mandated title phrase -- page 2 (definitions, contact
+    # info) is included in the fixture to prove it does NOT also match
+    # on its own (no false extra match from a continuation page).
+    pdf = make_pdf_with_pages(tmp_path / "privacy.pdf", [_MU_PRIVACY_PAGE_1, _MU_PRIVACY_PAGE_2])
+    occ = _occ("D1", pdf, 2)
     matches = key_documents._find_mu_privacy_policy(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
+    assert matches[0].document_page_range == (1, 1)
     assert matches[0].confidence_band == CONFIRMED
 
 
 def test_another_lenders_privacy_policy_not_classified_as_mu(tmp_path):
-    pdf = make_pdf_with_pages(tmp_path / "privacy.pdf", ["Acme Lending Privacy Notice\nWe respect your privacy."])
+    pdf = make_pdf_with_pages(
+        tmp_path / "privacy.pdf", ["Acme Lending\nWhat does Acme Lending do with your personal information?"]
+    )
     occ = _occ("D1", pdf, 1)
     matches = key_documents._find_mu_privacy_policy(occ, _fp("D1", pdf), _IDENTITY)
     assert matches == []
+
+
+# REAL SAFETY REQUIREMENT: a checklist/cover-letter mention of Mortgage
+# Unity's privacy policy is not the privacy policy itself.
+def test_reference_to_mu_privacy_policy_is_not_a_match(tmp_path):
+    pdf = make_pdf_with_pages(
+        tmp_path / "checklist.pdf", ["Please see the attached Mortgage Unity privacy policy for details."]
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_mu_privacy_policy(occ, _fp("D1", pdf), _IDENTITY)
+    assert matches == []
+
+
+# ---------------------------------------------------------------------
+# Mortgage Unity Massachusetts Broker Addendum
+# ---------------------------------------------------------------------
+
+# Mirrors the real "Mortgage Unity LLC Combined MA Broker Addendum" sample.
+_MU_MA_ADDENDUM_TEXT = (
+    "MASSACHUSETTS\nMortgage Unity LLC Combined MA Broker Addendum Rev. 7/2019\n"
+    "Massachusetts\nAddendum to Uniform Residential Loan Application\n"
+    "Attorney Disclosure\n(Pursuant to MA Gen Laws Ch 184 17B)\n"
+    "The responsibility of the attorney for the mortgagee is to protect the interest of the mortgagee.\n"
+    "Broker License Disclosure\n(Mass. Regs. Code tit. 209, 41.12 & 42.14)\n"
+    "You, the Borrower(s), are hereby advised of the type of license(s) we hold in Massachusetts.\n"
+    "Mortgage Broker, License#: MB1843595"
+)
+
+
+def test_mu_ma_broker_addendum_detected(tmp_path):
+    pdf = make_pdf_with_pages(tmp_path / "ma_addendum.pdf", [_MU_MA_ADDENDUM_TEXT])
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_mu_ma_broker_addendum(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == CONFIRMED
+
+
+def test_mu_ma_broker_addendum_requires_massachusetts_and_title_and_company(tmp_path):
+    # Right title, no Mortgage Unity marker or state name -- a generic
+    # addendum to a URLA from any other originator must not match.
+    pdf = make_pdf_with_pages(
+        tmp_path / "generic_addendum.pdf", ["Addendum to Uniform Residential Loan Application\nAttorney Disclosure"]
+    )
+    occ = _occ("D1", pdf, 1)
+    assert key_documents._find_mu_ma_broker_addendum(occ, _fp("D1", pdf), _IDENTITY) == []
+
+
+# REAL SAFETY REQUIREMENT: a cover letter mentioning the MA Broker
+# Addendum is not the addendum itself.
+def test_reference_to_mu_ma_broker_addendum_is_not_a_match(tmp_path):
+    pdf = make_pdf_with_pages(
+        tmp_path / "cover_letter.pdf",
+        ["Please review the enclosed Mortgage Unity Massachusetts broker addendum before signing."],
+    )
+    occ = _occ("D1", pdf, 1)
+    assert key_documents._find_mu_ma_broker_addendum(occ, _fp("D1", pdf), _IDENTITY) == []
 
 
 # ---------------------------------------------------------------------

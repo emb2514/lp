@@ -7,11 +7,14 @@ app comes from a single, consistently-formatted place.
 `identity.lender` (e.g. "UWM", "Freedom", "Rocket Mortgage") appears as
 its own segment in filenames for documents tied to the loan transaction
 itself (Lender Package, Original Lender Package, Closing Disclosure,
-Loan Estimate, ALTA Settlement Statement, MU Privacy Policy, loan
-non-proceeding documents) -- never for Government ID, which identifies
-the borrower personally, not the transaction (`key_document_filename`'s
-`include_lender=False`). Omitted cleanly wherever blank, exactly like
-every other optional identity field.
+Loan Estimate, ALTA Settlement Statement, loan non-proceeding documents)
+-- never for Government ID (identifies the borrower personally, not the
+transaction) or the two Mortgage-Unity-specific documents, MU Privacy
+Policy and MU MA Broker Addendum (Mortgage Unity's own company/
+regulatory documents, not tied to whichever wholesale lender this loan
+went to) -- see each caller's `include_lender=False` in
+`key_documents.py`. Omitted cleanly wherever blank, exactly like every
+other optional identity field.
 
 Convention: comma-separated components, no underscores, e.g.
 "True, Michael, 6192278785" or "True, Michael, Lender Package,
