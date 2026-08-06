@@ -6,6 +6,12 @@ document types the reports/GUI surface separately:
 - Closing Disclosures, with a conservative signature-status
   classification (Signed / E-Sign / Unsigned / Revised / Signature
   Unknown).
+- Loan Estimates, reliably told apart from Closing Disclosures despite
+  sharing nearly identical section names -- each form's own fixed page
+  count (5 pages for a Closing Disclosure, 3 for a Loan Estimate) is
+  used as the mutual-exclusion signal, not any single sentence of
+  boilerplate text. See the module note above `_page_totals`.
+- ALTA Settlement Statements (Buyer / Seller / Combined).
 - Government-issued photo ID (Driver's License front/back/combined,
   Passport, State ID Card, or an unspecified-but-clearly-ID-shaped
   document), one borrower or several. Requires an actual embedded
@@ -82,6 +88,8 @@ def locate_key_documents(run: RunResult) -> list[KeyDocumentMatch]:
 
         for finder in (
             _find_closing_disclosures,
+            _find_loan_estimates,
+            _find_alta_settlement_statements,
             _find_government_ids,
             _find_mu_privacy_policy,
             _find_mu_ma_broker_addendum,
@@ -131,6 +139,36 @@ def _fill_final_page_ranges(match: KeyDocumentMatch, occ: SourceOccurrence, run:
 
 
 # ---------------------------------------------------------------------
+# Closing Disclosure / Loan Estimate page-count discrimination
+# ---------------------------------------------------------------------
+#
+# Real-world collision, confirmed directly against the actual CFPB model
+# forms (not assumed): a Loan Estimate's own page 1 prints the caption
+# "Save this Loan Estimate to compare with your Closing Disclosure."
+# right above its title -- so a naive `"closing disclosure" in text`
+# check matches EVERY Loan Estimate page, not just real Closing
+# Disclosures. The forms are also both standardized, fixed-length
+# documents with their own page count printed in the footer ("PAGE X OF
+# 3" for a Loan Estimate, "PAGE X OF 5" for a Closing Disclosure -- 12
+# CFR Part 1026 Appendix H), which is a far more reliable, form-intrinsic
+# way to tell them apart than any single sentence of boilerplate text.
+
+_PAGE_TOTAL_PATTERN = re.compile(r"page\s+\d+\s+of\s+(\d+)")
+_LE_COMPARISON_CAPTION = "compare with your closing disclosure"
+_LOAN_ESTIMATE_PAGE_TOTAL = 3
+_CLOSING_DISCLOSURE_PAGE_TOTAL = 5
+
+
+def _page_totals(pages: tuple[PageFingerprint, ...]) -> set[int]:
+    totals: set[int] = set()
+    for page in pages:
+        match = _PAGE_TOTAL_PATTERN.search(page.normalized_text.casefold())
+        if match:
+            totals.add(int(match.group(1)))
+    return totals
+
+
+# ---------------------------------------------------------------------
 # Closing Disclosure
 # ---------------------------------------------------------------------
 
@@ -152,7 +190,17 @@ _CD_REVISION_MARKERS = ("revised closing disclosure", "corrected closing disclos
 def _find_closing_disclosures(
     occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
 ) -> list[KeyDocumentMatch]:
-    marker_pages = [i for i, page in enumerate(fp.pages) if _CD_TITLE_MARKER in page.normalized_text.casefold()]
+    marker_pages = [
+        i
+        for i, page in enumerate(fp.pages)
+        if _CD_TITLE_MARKER in page.normalized_text.casefold()
+        # A page whose footer says "page X of 3" or that carries the
+        # Loan Estimate's own comparison caption is a Loan Estimate that
+        # merely mentions "Closing Disclosure" in passing, not a real
+        # Closing Disclosure -- see the module note above.
+        and _LOAN_ESTIMATE_PAGE_TOTAL not in _page_totals((page,))
+        and _LE_COMPARISON_CAPTION not in page.normalized_text.casefold()
+    ]
     if not marker_pages:
         return []
 
@@ -228,6 +276,180 @@ def _classify_signature_status(pages: tuple[PageFingerprint, ...]) -> str:
     if any(p.images for p in pages):
         return "Signature Unknown"
     return "Unsigned"
+
+
+# ---------------------------------------------------------------------
+# Loan Estimate
+# ---------------------------------------------------------------------
+
+_LE_TITLE_MARKER = "loan estimate"
+_LE_SECTION_MARKERS = (
+    "loan terms",
+    "projected payments",
+    "costs at closing",
+    "closing cost details",
+    "calculating cash to close",
+    "comparisons",
+    "other considerations",
+    "confirm receipt",
+)
+
+
+def _find_loan_estimates(
+    occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
+) -> list[KeyDocumentMatch]:
+    """Confirmed directly against the real CFPB H-24 model form and its
+    fixed-rate/interest-only-ARM/balloon/refinance variants: page 1
+    title "Loan Estimate", page 2 "Closing Cost Details" (Loan Costs /
+    Other Costs / Calculating Cash to Close), page 3 "Comparisons" /
+    "Other Considerations" / "Confirm Receipt", and a "PAGE X OF 3"
+    footer on every page. See the module note above `_page_totals` for
+    why a page carrying the Closing Disclosure's own 5-page footer is
+    excluded here even if it happens to mention "loan estimate".
+    """
+
+    marker_pages = [
+        i
+        for i, page in enumerate(fp.pages)
+        if _LE_TITLE_MARKER in page.normalized_text.casefold()
+        and _CLOSING_DISCLOSURE_PAGE_TOTAL not in _page_totals((page,))
+    ]
+    if not marker_pages:
+        return []
+
+    matches: list[KeyDocumentMatch] = []
+    for start, end in _group_contiguous(marker_pages, max_gap=1):
+        pages = fp.pages[start : end + 1]
+        section_hits = sum(
+            1
+            for marker in _LE_SECTION_MARKERS
+            if any(marker in p.normalized_text.casefold() for p in pages)
+        )
+        page_totals = _page_totals(pages)
+        confirmed_by_page_count = _LOAN_ESTIMATE_PAGE_TOTAL in page_totals
+
+        if (confirmed_by_page_count and section_hits >= 1) or section_hits >= 2:
+            band, confidence = CONFIRMED, 1.0
+            reason = (
+                f'"Loan Estimate" title found with {section_hits} corroborating section header(s)'
+                + (' and a "page X of 3" footer' if confirmed_by_page_count else "")
+                + "."
+            )
+        elif section_hits == 1 or confirmed_by_page_count:
+            band, confidence = STRONG_MATCH, 0.75
+            reason = '"Loan Estimate" title found with 1 corroborating signal (section header or page-count footer).'
+        else:
+            band, confidence = POSSIBLE_MATCH, 0.4
+            reason = '"Loan Estimate" text found, but no corroborating section headers or page-count footer nearby.'
+
+        matches.append(
+            KeyDocumentMatch(
+                match_id="",
+                category="loan_estimate",
+                subtype=None,
+                confidence_band=band,
+                confidence=confidence,
+                document_id=occ.document_id,
+                original_filename=occ.original_filename,
+                borrower_name=None,
+                reason=reason,
+                document_page_range=(start + 1, end + 1),
+                signature_status=None,
+            )
+        )
+    return matches
+
+
+# ---------------------------------------------------------------------
+# ALTA Settlement Statement
+# ---------------------------------------------------------------------
+
+# "ALTA Settlement Statement" covers the base form and its "- Buyer"/
+# "- Seller" suffix variants; "ALTA Combined Settlement Statement" has
+# "Combined" inserted between "ALTA" and "Settlement Statement" instead
+# of appended as a suffix, so it needs its own literal check.
+_ALTA_TITLE_MARKERS = ("alta settlement statement", "alta combined settlement statement")
+_ALTA_BYLINE_MARKER = "american land title association"
+_ALTA_SECTION_MARKERS = (
+    "prorations/adjustments",
+    "loan charges to",
+    "financial",
+)
+# Checked in this order -- a Combined statement's own line-item table
+# also shows "Buyer"/"Seller" column headers, so "Combined" must be
+# checked first or a combined statement would be mislabeled by side.
+_ALTA_SIDE_MARKERS = (
+    ("combined", "Combined"),
+    ("seller", "Seller"),
+    ("buyer", "Buyer"),
+)
+
+
+def _find_alta_settlement_statements(
+    occ: SourceOccurrence, fp: DocumentFingerprint, identity: PackageIdentity
+) -> list[KeyDocumentMatch]:
+    """Confirmed directly against a real ALTA Settlement Statement -
+    Seller (Adopted 05-01-2015): title "ALTA Settlement Statement"
+    (with a "- Buyer"/"- Seller" or "Combined" variant), the "American
+    Land Title Association" byline, and a Debit/Credit table grouped
+    under section headers including "Financial", "Prorations/
+    Adjustments", and "Loan Charges to (lender co.)".
+    """
+
+    marker_pages = [
+        i
+        for i, page in enumerate(fp.pages)
+        if any(marker in page.normalized_text.casefold() for marker in _ALTA_TITLE_MARKERS)
+    ]
+    if not marker_pages:
+        return []
+
+    matches: list[KeyDocumentMatch] = []
+    for start, end in _group_contiguous(marker_pages, max_gap=1):
+        pages = fp.pages[start : end + 1]
+        has_byline = any(_ALTA_BYLINE_MARKER in p.normalized_text.casefold() for p in pages)
+        section_hits = sum(
+            1
+            for marker in _ALTA_SECTION_MARKERS
+            if any(marker in p.normalized_text.casefold() for p in pages)
+        )
+
+        if has_byline and section_hits >= 2:
+            band, confidence = CONFIRMED, 1.0
+        elif has_byline or section_hits >= 2:
+            band, confidence = STRONG_MATCH, 0.75
+        else:
+            band, confidence = POSSIBLE_MATCH, 0.4
+
+        side = None
+        for phrase, label in _ALTA_SIDE_MARKERS:
+            if any(phrase in p.normalized_text.casefold() for p in pages):
+                side = label
+                break
+
+        reason_parts = ['"ALTA Settlement Statement" title found']
+        if has_byline:
+            reason_parts.append('with the "American Land Title Association" byline')
+        if section_hits:
+            reason_parts.append(f"and {section_hits} corroborating section header(s)")
+        reason = " ".join(reason_parts) + "."
+
+        matches.append(
+            KeyDocumentMatch(
+                match_id="",
+                category="alta_settlement_statement",
+                subtype=side,
+                confidence_band=band,
+                confidence=confidence,
+                document_id=occ.document_id,
+                original_filename=occ.original_filename,
+                borrower_name=None,
+                reason=reason,
+                document_page_range=(start + 1, end + 1),
+                signature_status=None,
+            )
+        )
+    return matches
 
 
 # ---------------------------------------------------------------------
@@ -585,14 +807,16 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, impor
             document_name = match.subtype or document_name
 
         # Government ID always uses the generic "Govt ID" document name
-        # with the specific type/side ("Drivers License Front",
-        # "Passport", ...) as its own segment, and is never attributed
-        # to a lender (it identifies the borrower personally, not the
-        # loan transaction). The two Mortgage-Unity-specific documents
-        # (Privacy Policy, MA Broker Addendum) are likewise never
-        # attributed to a lender -- they're Mortgage Unity's own
-        # company/regulatory documents, not tied to whichever wholesale
-        # lender this particular loan went to -- see
+        # with the specific type/side ("Front", "Passport", ...) as its
+        # own segment, and is never attributed to a lender (it
+        # identifies the borrower personally, not the loan transaction).
+        # The two Mortgage-Unity-specific documents (Privacy Policy, MA
+        # Broker Addendum) are likewise never attributed to a lender --
+        # they're Mortgage Unity's own company/regulatory documents, not
+        # tied to whichever wholesale lender this particular loan went
+        # to. ALTA's side (Buyer/Seller/Combined), when identified, is
+        # its own segment too, but IS attributed to the lender like a
+        # Closing Disclosure or Loan Estimate -- see
         # naming.key_document_filename's `include_lender` docstring.
         subtype_segment = None
         include_lender = True
@@ -603,6 +827,8 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, impor
             include_lender = False
         elif match.category in ("mu_privacy_policy", "mu_ma_broker_addendum"):
             include_lender = False
+        elif match.category == "alta_settlement_statement":
+            subtype_segment = match.subtype
 
         base_filename = naming.key_document_filename(
             run.identity,
@@ -639,6 +865,8 @@ def extract_key_documents(matches: list[KeyDocumentMatch], run: RunResult, impor
 
 _DOCUMENT_NAME_BY_CATEGORY = {
     "closing_disclosure": "Closing Disclosure",
+    "loan_estimate": "Loan Estimate",
+    "alta_settlement_statement": "ALTA Settlement Statement",
     "government_id": "Govt ID",
     "mu_privacy_policy": "MU Privacy Policy",
     "mu_ma_broker_addendum": "MU MA Broker Addendum",

@@ -25,7 +25,8 @@ Beyond building a package, Document Merger can also:
   ever leaving a partial file under a real package name, and without
   ever touching your source files.
 - **Locate and extract key documents** from the completed Final
-  package -- the Closing Disclosure (flagging any wet-signed copy),
+  package -- the Closing Disclosure (flagging any wet-signed copy), the
+  Loan Estimate, the ALTA Settlement Statement (Buyer/Seller/Combined),
   government-issued photo ID (Driver's License, Passport, or State ID
   Card -- always requires an actual scanned/photographed image on the
   page, never just text mentioning the document type), the Mortgage
@@ -33,7 +34,10 @@ Beyond building a package, Document Merger can also:
   documentation (adverse action, withdrawal, denial, or cancellation
   notices) -- with page locations reported in plain English and, for
   confidently-identified matches, extracted as their own standalone
-  files.
+  files. Closing Disclosure and Loan Estimate are reliably told apart
+  even though they share nearly identical section names, using each
+  form's own fixed page count (5 pages for a Closing Disclosure, 3 for
+  a Loan Estimate) rather than any single sentence of boilerplate text.
 - **Compare two packages** ("Compare Packages") -- an old/reference
   package against a newly generated one -- to confirm nothing
   meaningful went missing and nothing was wrongly duplicated, without
@@ -211,7 +215,8 @@ Highlights:
   a new package without restarting the app.
 - **Key-document page locator** -- once the Final package is built, the
   app looks for a Closing Disclosure (flagging any wet-signed copy
-  specifically), government-issued photo ID (Driver's License
+  specifically), a Loan Estimate, an ALTA Settlement Statement
+  (Buyer/Seller/Combined), government-issued photo ID (Driver's License
   front/back, Passport, or State ID Card, per borrower -- requires an
   actual scanned/photographed image on the page, never just text
   mentioning "driver's license" or "passport"), the Mortgage Unity
@@ -423,8 +428,9 @@ src/lender_package_builder/
 ├── models.py           Core data classes (SourceOccurrence, OutputPart, PackageIdentity, ...)
 ├── naming.py            Single source of every user-facing output name (folder, package, key-doc filenames)
 ├── cancellation.py       CancellationToken / check_cancelled() cooperative cancellation
-├── key_documents.py       Key-document page locator + extraction (Closing Disclosure, Driver's
-│                          Licenses, MU Privacy Policy, loan non-proceeding documentation)
+├── key_documents.py       Key-document page locator + extraction (Closing Disclosure, Loan
+│                          Estimate, ALTA Settlement Statement, government-issued photo ID, MU
+│                          Privacy Policy, loan non-proceeding documentation)
 ├── compare_packages.py     Compare Packages engine (analysis-only, never modifies either package)
 ├── history.py               Local build-history log behind the GUI's History screen
 ├── progress.py           ProgressStage / ProgressEvent structured progress API

@@ -57,6 +57,8 @@ def write_all_reports(run: RunResult, config, meta: dict, reports_dir: Path) -> 
 
 _CATEGORY_LABELS = {
     "closing_disclosure": "Closing Disclosure",
+    "loan_estimate": "Loan Estimate",
+    "alta_settlement_statement": "ALTA Settlement Statement",
     "government_id": "Government ID",
     "mu_privacy_policy": "MU Privacy Policy",
     "mu_ma_broker_addendum": "MU MA Broker Addendum",

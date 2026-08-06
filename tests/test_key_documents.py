@@ -160,6 +160,151 @@ def test_revised_closing_disclosure(tmp_path):
     assert matches[0].signature_status == "Revised"
 
 
+# REAL COLLISION, confirmed directly against the actual CFPB Loan
+# Estimate model form: page 1 prints "Save this Loan Estimate to
+# compare with your Closing Disclosure." right above the form's own
+# title. A naive `"closing disclosure" in text` check matches every
+# single Loan Estimate page for exactly this reason -- this must never
+# happen, in either direction.
+def test_loan_estimate_page_never_misclassified_as_closing_disclosure(tmp_path):
+    pdf = make_pdf_with_pages(
+        tmp_path / "le.pdf",
+        [
+            "Save this Loan Estimate to compare with your Closing Disclosure.\n"
+            "Loan Estimate\nLoan Terms\nProjected Payments\nCosts at Closing\n"
+            "LOAN ESTIMATE\nPAGE 1 OF 3 * LOAN ID #"
+        ],
+    )
+    occ = _occ("D1", pdf, 1)
+    fp = _fp("D1", pdf)
+    assert key_documents._find_closing_disclosures(occ, fp, _IDENTITY) == []
+    le_matches = key_documents._find_loan_estimates(occ, fp, _IDENTITY)
+    assert len(le_matches) == 1
+    assert le_matches[0].confidence_band == CONFIRMED
+
+
+def test_closing_disclosure_five_page_footer_never_misclassified_as_loan_estimate(tmp_path):
+    # The symmetric direction: a real Closing Disclosure's own 5-page
+    # footer must protect it from ever being read as a Loan Estimate,
+    # even on the (hypothetical) chance a CD page mentions "loan
+    # estimate" in passing.
+    pdf = make_pdf_with_pages(
+        tmp_path / "cd.pdf",
+        [
+            "Closing Disclosure\nLoan Terms\nProjected Payments\n"
+            "Compare this document with your Loan Estimate.\n"
+            "CLOSING DISCLOSURE\nPAGE 1 OF 5"
+        ],
+    )
+    occ = _occ("D1", pdf, 1)
+    fp = _fp("D1", pdf)
+    assert key_documents._find_loan_estimates(occ, fp, _IDENTITY) == []
+    cd_matches = key_documents._find_closing_disclosures(occ, fp, _IDENTITY)
+    assert len(cd_matches) == 1
+    assert cd_matches[0].confidence_band == CONFIRMED
+
+
+# ---------------------------------------------------------------------
+# Loan Estimate
+# ---------------------------------------------------------------------
+
+_LE_PAGE_1_TEXT = "Loan Estimate\nLoan Terms\nProjected Payments\nCosts at Closing\nLOAN ESTIMATE\nPAGE 1 OF 3"
+_LE_PAGE_2_TEXT = "Closing Cost Details\nCalculating Cash to Close\nLOAN ESTIMATE\nPAGE 2 OF 3"
+_LE_PAGE_3_TEXT = "Comparisons\nOther Considerations\nConfirm Receipt\nLOAN ESTIMATE\nPAGE 3 OF 3"
+
+
+def test_loan_estimate_confirmed_with_section_markers_and_page_footer(tmp_path):
+    pdf = make_pdf_with_pages(tmp_path / "le.pdf", [_LE_PAGE_1_TEXT, _LE_PAGE_2_TEXT, _LE_PAGE_3_TEXT])
+    occ = _occ("D1", pdf, 3)
+    matches = key_documents._find_loan_estimates(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == CONFIRMED
+    assert matches[0].document_page_range == (1, 3)
+
+
+def test_loan_estimate_possible_match_without_corroboration(tmp_path):
+    pdf = make_pdf_with_pages(tmp_path / "le.pdf", ["Please review your loan estimate before closing."])
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_loan_estimates(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == POSSIBLE_MATCH
+
+
+def test_multiple_loan_estimate_variants(tmp_path):
+    # Fixed-rate, interest-only ARM, balloon, and refinance Loan
+    # Estimates all share the identical section/footer structure --
+    # only the filled-in loan terms differ, which this detector never
+    # looks at.
+    variants = (
+        _LE_PAGE_1_TEXT,
+        _LE_PAGE_1_TEXT.replace("Costs at Closing", "Costs at Closing\nBalloon Payment"),
+        _LE_PAGE_1_TEXT.replace("Loan Terms", "Loan Terms\nInterest Only"),
+    )
+    for i, variant_text in enumerate(variants):
+        pdf = make_pdf_with_pages(tmp_path / f"le_{i}.pdf", [variant_text])
+        occ = _occ("D1", pdf, 1)
+        matches = key_documents._find_loan_estimates(occ, _fp("D1", pdf), _IDENTITY)
+        assert len(matches) == 1
+        assert matches[0].confidence_band == CONFIRMED
+
+
+# ---------------------------------------------------------------------
+# ALTA Settlement Statement
+# ---------------------------------------------------------------------
+
+_ALTA_SELLER_TEXT = (
+    "American Land Title Association\nALTA Settlement Statement - Seller\nAdopted 05-01-2015\n"
+    "Financial\nSales Price of Property\nProrations/Adjustments\nSchool Taxes\n"
+    "Loan Charges to (lender co.)\nPoints"
+)
+
+
+def test_alta_seller_settlement_statement_confirmed(tmp_path):
+    pdf = make_pdf_with_pages(tmp_path / "alta.pdf", [_ALTA_SELLER_TEXT])
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_alta_settlement_statements(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == CONFIRMED
+    assert matches[0].subtype == "Seller"
+
+
+def test_alta_buyer_settlement_statement(tmp_path):
+    pdf = make_pdf_with_pages(
+        tmp_path / "alta_buyer.pdf",
+        [_ALTA_SELLER_TEXT.replace("ALTA Settlement Statement - Seller", "ALTA Settlement Statement - Buyer")],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_alta_settlement_statements(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].subtype == "Buyer"
+
+
+def test_alta_combined_settlement_statement_not_mislabeled_by_side(tmp_path):
+    # A Combined statement's table shows both "Buyer" and "Seller"
+    # columns -- "Combined" must win, not whichever of the two happens
+    # to appear first in extracted text.
+    pdf = make_pdf_with_pages(
+        tmp_path / "alta_combined.pdf",
+        [
+            "American Land Title Association\nALTA Combined Settlement Statement\nAdopted 05-01-2015\n"
+            "Financial\nBuyer\nSeller\nProrations/Adjustments\nLoan Charges to (lender co.)"
+        ],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_alta_settlement_statements(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].subtype == "Combined"
+
+
+def test_alta_possible_match_without_byline_or_sections(tmp_path):
+    pdf = make_pdf_with_pages(tmp_path / "alta_weak.pdf", ["See the attached ALTA Settlement Statement."])
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_alta_settlement_statements(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == POSSIBLE_MATCH
+    assert matches[0].subtype is None
+
+
 # ---------------------------------------------------------------------
 # Government-issued photo ID (Driver's License, Passport, State ID Card)
 # ---------------------------------------------------------------------

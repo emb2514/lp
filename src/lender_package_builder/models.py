@@ -302,10 +302,12 @@ class KeyDocumentMatch:
     """
 
     match_id: str
-    # "closing_disclosure" | "government_id" | "mu_privacy_policy" | "non_proceeding"
+    # "closing_disclosure" | "loan_estimate" | "alta_settlement_statement"
+    # | "government_id" | "mu_privacy_policy" | "non_proceeding"
     category: str
     # e.g. "Front"/"Back"/"Front and Back"/"Passport"/"State ID Card"/
-    # "Government ID" (government_id), or the specific non-proceeding
+    # "Government ID" (government_id), "Buyer"/"Seller"/"Combined"
+    # (alta_settlement_statement), or the specific non-proceeding
     # subtype ("Adverse Action Notice", ...).
     subtype: str | None
     confidence_band: str  # "Confirmed" | "Strong Match" | "Possible Match"
