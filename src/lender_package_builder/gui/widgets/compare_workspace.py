@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QSt
 
 from ...cancellation import CancellationToken
 from .. import dialogs
+from .compare_grid_view import CompareGridView
 from .compare_progress_view import CompareProgressView
 from .compare_results_view import CompareResultsView
 from .compare_side_selector import CompareSideSelector
@@ -41,15 +42,20 @@ class CompareWorkspace(QWidget):
 
         self.input_page = self._build_input_page()
         self.progress_view = CompareProgressView()
+        self.grid_view = CompareGridView()
         self.results_view = CompareResultsView()
 
         self.stack.addWidget(self.input_page)
         self.stack.addWidget(self.progress_view)
+        self.stack.addWidget(self.grid_view)
         self.stack.addWidget(self.results_view)
         self.stack.setCurrentWidget(self.input_page)
 
         self.progress_view.cancel_requested.connect(self._on_cancel_clicked)
+        self.grid_view.new_comparison_requested.connect(self._on_new_comparison)
+        self.grid_view.view_list_requested.connect(self._on_view_list_requested)
         self.results_view.new_comparison_requested.connect(self._on_new_comparison)
+        self.results_view.view_grid_requested.connect(self._on_view_grid_requested)
 
     def _build_input_page(self) -> QWidget:
         page = QWidget()
@@ -122,8 +128,9 @@ class CompareWorkspace(QWidget):
         self.is_comparing = False
         self._cancel_token = None
         self.progress_view.stop()
+        self.grid_view.set_result(result)
         self.results_view.set_result(result)
-        self.stack.setCurrentWidget(self.results_view)
+        self.stack.setCurrentWidget(self.grid_view)
 
     def _on_compare_failed(self, user_message: str, _technical_details: str) -> None:
         self.is_comparing = False
@@ -150,3 +157,9 @@ class CompareWorkspace(QWidget):
         self.old_selector.clear_selection()
         self.new_selector.clear_selection()
         self.stack.setCurrentWidget(self.input_page)
+
+    def _on_view_list_requested(self) -> None:
+        self.stack.setCurrentWidget(self.results_view)
+
+    def _on_view_grid_requested(self) -> None:
+        self.stack.setCurrentWidget(self.grid_view)

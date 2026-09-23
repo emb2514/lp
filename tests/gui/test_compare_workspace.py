@@ -135,7 +135,14 @@ def test_full_comparison_through_real_worker_shows_results(window, tmp_path, qtb
 
     qtbot.waitUntil(lambda: not workspace.is_comparing, timeout=15000)
 
-    assert workspace.stack.currentWidget() is workspace.results_view
+    # The visual highlight grid is now the PRIMARY results view (real
+    # user request: "just highlight it, don't tell me what's
+    # different") -- the detailed list view is still fully populated
+    # and reachable via "View Detailed List", just no longer the default.
+    assert workspace.stack.currentWidget() is workspace.grid_view
+    assert workspace.grid_view._result is not None
+    assert workspace.grid_view._result.old_page_count == 2
+    assert workspace.grid_view._result.new_page_count == 1
     assert workspace.results_view._result is not None
     assert workspace.results_view._result.old_page_count == 2
     assert workspace.results_view._result.new_page_count == 1

@@ -56,6 +56,25 @@ CATEGORY_POSSIBLE_MISSING = "Possible Missing Document"
 CATEGORY_EXTRA_PAGE = "Extra Blank, Cover, Index, or Report Page"
 CATEGORY_NEEDS_REVIEW = "Needs Review"
 
+# The exact set the Compare Packages visual grid (gui/widgets/
+# compare_grid_view.py) highlights: "this page is not confidently the
+# same as, or does not confidently exist in, the other package" -- per
+# the real request behind that view ("just highlight it, don't explain
+# what's different"), this is a single flat yes/no signal, not a
+# severity ranking. Everything NOT in this set (Exact Match, Equivalent
+# Content, Moved or Reordered, Same Document Different Version) has
+# confidently-equivalent content on both sides and is never highlighted.
+UNMATCHED_CATEGORIES = frozenset(
+    {
+        CATEGORY_MEANINGFUL_DIFFERENCE,
+        CATEGORY_LIKELY_DUPLICATE_REMOVED,
+        CATEGORY_ONLY_IN_OLD,
+        CATEGORY_ONLY_IN_NEW,
+        CATEGORY_POSSIBLE_MISSING,
+        CATEGORY_EXTRA_PAGE,
+    }
+)
+
 _EXTRA_PAGE_MARKERS = (
     "table of contents",
     "index",
@@ -116,6 +135,14 @@ class ComparisonResult:
     new_page_count: int
     findings: list[ComparisonFinding]
     source_hash: str
+    # (file_path, page_in_file_index) for every page, ordered by overall
+    # index -- lets a caller (the Compare Packages visual grid) locate
+    # and render any given "old page N" / "new page N" without needing
+    # to re-parse a human-readable page_ref string like "letter.pdf,
+    # page 3". Always populated; empty tuple only for a side with zero
+    # pages.
+    old_page_locations: tuple[tuple[Path, int], ...] = ()
+    new_page_locations: tuple[tuple[Path, int], ...] = ()
 
     def counts_by_category(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -294,6 +321,8 @@ def compare_packages(
         new_page_count=new_side.page_count,
         findings=findings,
         source_hash=compute_source_hash(old_side.files, new_side.files),
+        old_page_locations=tuple((p.file_path, p.page_in_file_index) for p in old_side.pages),
+        new_page_locations=tuple((p.file_path, p.page_in_file_index) for p in new_side.pages),
     )
 
 

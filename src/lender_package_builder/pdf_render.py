@@ -20,6 +20,7 @@ comparable using the same distance function.
 from __future__ import annotations
 
 import functools
+import io
 from pathlib import Path
 
 import pypdfium2 as pdfium
@@ -31,6 +32,12 @@ from .pdf_content import hamming_distance, _dhash
 # content_dedup.py's blended text+visual scoring, flagged for empirical
 # tuning against real scanned lender documents.
 _MAX_HAMMING_DISTANCE = 64
+
+# GUI thumbnail cache: bounded (unlike the comparison dHash cache above,
+# an actual PNG per entry costs real memory) but big enough to hold a
+# full Compare Packages grid for a typical multi-hundred-page package
+# without repeated re-rendering as the user scrolls back and forth.
+_THUMBNAIL_CACHE_SIZE = 600
 
 
 @functools.lru_cache(maxsize=512)
@@ -77,3 +84,41 @@ def clear_render_cache() -> None:
     """
 
     _render_cached.cache_clear()
+    _render_thumbnail_cached.cache_clear()
+
+
+@functools.lru_cache(maxsize=_THUMBNAIL_CACHE_SIZE)
+def _render_thumbnail_cached(pdf_path_str: str, page_index: int, max_dimension_px: int) -> bytes:
+    pdf = pdfium.PdfDocument(pdf_path_str)
+    try:
+        page = pdf[page_index]
+        try:
+            width_pt, height_pt = page.get_size()
+            longest_side = max(width_pt, height_pt, 1.0)
+            scale = max_dimension_px / longest_side
+            bitmap = page.render(scale=scale)
+            pil_image = bitmap.to_pil()
+        finally:
+            page.close()
+    finally:
+        pdf.close()
+
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def render_page_thumbnail_png(pdf_path: Path, page_index: int, max_dimension_px: int = 160) -> bytes:
+    """Renders one page to a small PNG-encoded thumbnail, for GUI
+    display only -- this is a display concern, never used for
+    comparison (see `render_page_to_hash` for that). Returns raw PNG
+    bytes rather than a Qt type so this engine module never imports Qt;
+    the GUI layer hands the bytes straight to `QPixmap.loadFromData`.
+
+    Cached per (path, page index, size) for the process lifetime, same
+    reasoning as `render_page_to_hash` -- a Compare Packages grid
+    re-rendering or a page revisited while scrolling never re-decodes
+    the source PDF.
+    """
+
+    return _render_thumbnail_cached(str(pdf_path), page_index, max_dimension_px)

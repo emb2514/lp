@@ -235,17 +235,23 @@ Highlights:
 - **Compare Packages** -- a separate workspace ("Compare" in the left
   sidebar) for comparing an old/reference package against a newly
   generated one, useful when a package was compiled by hand and may
-  still contain duplicates. It never modifies either package -- it only
-  reports Exact Match, Equivalent Content, Contained in Larger Document,
-  Same Document/Different Version, Meaningful Difference, Likely
-  Duplicate Removed, Moved or Reordered, Only in Old, Only in New,
-  Possible Missing Document, Extra Blank/Cover/Index/Report Page,
-  Unrecognized Section, or Needs Review for every page on both sides,
-  with the same protected-difference rules (signatures, dates, dollar
-  amounts, names, form values, and so on) the rest of this app already
-  enforces -- nothing is ever called "missing" without first checking
-  whether it moved, was contained in a larger document, or was a
-  correctly-removed duplicate.
+  still contain duplicates. It never modifies either package. Results
+  open on a visual highlight grid by default: every page from both
+  packages as a small thumbnail, with a page highlighted only when it
+  has no confidently-equivalent counterpart on the other side --
+  nothing is narrated by default, the highlight itself is the signal
+  (click any page to see why, if you want the detail). The original
+  detailed list -- Exact Match, Equivalent Content, Contained in Larger
+  Document, Same Document/Different Version, Meaningful Difference,
+  Likely Duplicate Removed, Moved or Reordered, Only in Old, Only in
+  New, Possible Missing Document, Extra Blank/Cover/Index/Report Page,
+  Unrecognized Section, or Needs Review for every page -- is one click
+  away ("View Detailed List"). Both views share the same
+  protected-difference rules (signatures, dates, dollar amounts, names,
+  form values, and so on) the rest of this app already enforces --
+  nothing is ever flagged as "missing" without first checking whether it
+  moved, was contained in a larger document, or was a correctly-removed
+  duplicate.
 - **History** -- "History" in the left sidebar lists every package this
   installation has built (newest first): name, loan number, date,
   result, and an Open Folder button. It's a local, read-only convenience

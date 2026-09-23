@@ -1,5 +1,47 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 5): Compare Packages visual highlight grid -- the new PRIMARY results
+## view, replacing the category/explanation table as the default
+
+Real user request: "the pages that are in one but not the other are highlighted or smth... dont
+try to tell me what is different, just highlight it yk? make it obvious that this page isnt in
+the other one and vice versa."
+
+New `gui/widgets/compare_grid_view.py` (`CompareGridView`): every page from both packages renders
+as a small thumbnail in one of two scrolling columns (Old / New). A page whose finding category is
+in the new `compare_packages.UNMATCHED_CATEGORIES` set (Meaningful Difference, Likely Duplicate
+Removed, Only in Old, Only in New, Possible Missing Document, Extra Blank/Cover/Index/Report Page
+-- i.e. no confidently-equivalent counterpart on the other side) gets a highlighted amber border;
+everything else (Exact Match, Equivalent Content, Moved or Reordered, Same Document Different
+Version) renders plainly. That single highlight IS the primary signal -- no category label, no
+explanation text, by default. Clicking a page still reveals the underlying finding for anyone who
+wants it (opt-in, not narrated).
+
+This is now the view shown immediately after a comparison finishes (`CompareWorkspace.
+_on_compare_finished`); the original detailed category/explanation table (`compare_results_view.
+py`, unchanged) is kept as a secondary "View Detailed List" view, one click away in either
+direction (`view_list_requested`/`view_grid_requested` signals).
+
+Supporting engine changes (both purely additive, no behavior change to existing comparison logic):
+- `compare_packages.ComparisonResult` gained `old_page_locations`/`new_page_locations` --
+  `(file_path, page_in_file_index)` per page, ordered by overall index, letting the grid render
+  any given page without re-parsing a human-readable `page_ref` string like "letter.pdf, page 3".
+- New `pdf_render.render_page_thumbnail_png()` -- a small PNG-encoded thumbnail for GUI display
+  only (never used for comparison; that stays `render_page_to_hash`'s job). Returns raw bytes
+  rather than a Qt type so the engine layer still never imports Qt; cached per (path, page, size)
+  like the existing hash cache.
+
+Thumbnails render progressively via a zero-interval `QTimer` (a few pages per tick) rather than a
+background `QThread` -- simpler, and avoids the real-QThread-under-offscreen-Qt fragility already
+noted in `tests/gui/conftest.py`, while keeping the UI responsive for a package with hundreds of
+pages (the event loop gets control back between chunks).
+
+New tests: `tests/gui/test_compare_grid_view.py` (10 tests -- cell population, highlight
+correctness for only-in-old/only-in-new/exact-match, progressive thumbnail rendering completes,
+click-to-detail, summary count, both navigation signals, re-populating clears stale cells) plus 5
+new `pdf_render.py` thumbnail tests. `test_full_comparison_through_real_worker_shows_results`
+updated for the new default view. Full suite: 481 passing (was 467).
+
 ## RC3 IN PROGRESS (part 4): real performance fix -- batch LibreOffice conversions into one
 ## process, and reuse the content-analysis fingerprint instead of re-parsing every Final document
 ## a second time during key-document location

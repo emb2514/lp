@@ -194,6 +194,21 @@ def build_stylesheet() -> str:
     QLabel#StatusBannerTitle[status="warning"] {{ color: {WARNING}; font-weight: 700; font-size: 13pt; }}
     QLabel#StatusBannerTitle[status="error"] {{ color: {ERROR}; font-weight: 700; font-size: 13pt; }}
 
+    QFrame#ComparePageCell {{
+        background: {CARD_BACKGROUND};
+        border: 2px solid transparent;
+        border-radius: {RADIUS}px;
+    }}
+
+    QFrame#ComparePageCell[unmatched="true"] {{
+        background: {WARNING_BG};
+        border: 2px solid {WARNING};
+    }}
+
+    QFrame#ComparePageCell:hover {{
+        border: 2px solid {ACCENT};
+    }}
+
     QProgressBar {{
         background: {BACKGROUND};
         border: 1px solid {CARD_BORDER};

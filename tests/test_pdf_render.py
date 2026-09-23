@@ -61,3 +61,51 @@ def test_render_functions_are_mockable(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(pdf_render, "render_page_to_hash", fake_render)
     pdf_render.render_page_to_hash(tmp_path / "whatever.pdf", 0)
     assert calls == [(tmp_path / "whatever.pdf", 0)]
+
+
+# ---------------------------------------------------------------------
+# render_page_thumbnail_png -- GUI display thumbnails (Compare Packages
+# visual grid). Display-only: never used for comparison.
+# ---------------------------------------------------------------------
+
+
+# TEST 6 - produces a real, decodable PNG within the requested bounds
+def test_render_page_thumbnail_png_produces_a_valid_bounded_png(tmp_path: Path):
+    a = builders.make_scanned_like_pdf(tmp_path / "a.pdf", pages=1, image_seed=1)
+    png_bytes = pdf_render.render_page_thumbnail_png(a, 0, max_dimension_px=160)
+
+    assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG signature, not a stub
+
+    from PIL import Image
+
+    image = Image.open(__import__("io").BytesIO(png_bytes))
+    assert max(image.size) <= 161  # rounding tolerance
+    assert max(image.size) >= 100  # not degenerately tiny
+
+
+# TEST 7 - a differently-shaped page (portrait vs. landscape-ish) still
+# respects the max-dimension bound on its LONGEST side
+def test_render_page_thumbnail_png_respects_max_dimension_for_each_page_shape(tmp_path: Path):
+    a = builders.make_scanned_like_pdf(tmp_path / "a.pdf", pages=1, image_seed=2)
+    for max_dim in (80, 200):
+        png_bytes = pdf_render.render_page_thumbnail_png(a, 0, max_dimension_px=max_dim)
+        from PIL import Image
+
+        image = Image.open(__import__("io").BytesIO(png_bytes))
+        assert max(image.size) <= max_dim + 1
+
+
+# TEST 8 - repeated calls for the same page/size are cached (no crash on reuse, identical bytes)
+def test_render_page_thumbnail_png_is_cached(tmp_path: Path):
+    a = builders.make_scanned_like_pdf(tmp_path / "a.pdf", pages=1, image_seed=3)
+    png1 = pdf_render.render_page_thumbnail_png(a, 0)
+    png2 = pdf_render.render_page_thumbnail_png(a, 0)
+    assert png1 == png2
+
+
+# TEST 9 - multi-page documents thumbnail each page independently
+def test_render_page_thumbnail_png_multipage(tmp_path: Path):
+    a = builders.make_scanned_like_pdf(tmp_path / "a.pdf", pages=3, image_seed=4)
+    thumbs = [pdf_render.render_page_thumbnail_png(a, i) for i in range(3)]
+    assert len(thumbs) == 3
+    assert all(t[:8] == b"\x89PNG\r\n\x1a\n" for t in thumbs)

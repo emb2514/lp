@@ -32,6 +32,7 @@ _ALL_CATEGORIES = "All categories"
 
 class CompareResultsView(QWidget):
     new_comparison_requested = Signal()
+    view_grid_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -79,6 +80,10 @@ class CompareResultsView(QWidget):
         layout.addWidget(detail_card)
 
         button_row = FlowLayout(spacing=8)
+
+        self.view_grid_button = QPushButton("View Highlight Grid")
+        self.view_grid_button.clicked.connect(self.view_grid_requested.emit)
+        button_row.addWidget(self.view_grid_button)
 
         self.previous_button = QPushButton("Previous Finding")
         self.previous_button.clicked.connect(self._select_previous)
