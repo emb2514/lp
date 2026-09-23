@@ -19,16 +19,40 @@ from PIL import Image, UnidentifiedImageError
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, Preformatted, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.platypus import Image as RLImage
 
 from ..models import ConversionOutcome, ConversionResult
-from .base import failed_result, validate_pdf
+from .base import failed_result, text_to_paragraph_chunks, validate_pdf
 
 NAME = "reportlab-html-basic"
 
-_BLOCK_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td", "th"]
+# REAL USER-FACING BUG: "div" was missing here. Real-world HTML --
+# Outlook/Word "Save As HTML" exports especially -- routinely wraps
+# every bit of content in <div>/<span> layout tags and rarely uses <p>
+# at all, so `body.find_all(_BLOCK_TAGS + ["img"])` matched NOTHING and
+# every such document fell all the way through to the last-resort
+# monospace/Preformatted branch below -- an ordinary letter or
+# disclosure rendered as a block of code, not a document. "div" is
+# handled specially in the main loop (see `_is_content_leaf`): only a
+# div with no nested block-tag descendant of its own is rendered
+# directly, so a layout wrapper `<div>` full of nested `<div>`/`<p>`
+# content is never ALSO rendered (which would duplicate every word).
+_BLOCK_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td", "th", "div"]
 _HEADING_SIZES = {"h1": 18, "h2": 16, "h3": 14, "h4": 13, "h5": 12, "h6": 11}
+
+
+def _is_content_leaf(element) -> bool:
+    """A block element is only rendered directly if it has no nested
+    block-tag descendant of its own -- otherwise its content is what
+    those descendants already render, and rendering the ancestor too
+    would duplicate every word inside it. Matters most for <div> (real-
+    world HTML nests it constantly), but applied to every block tag so
+    e.g. a <td>/<li>/<blockquote> wrapping a <div> or <p> is never
+    double-rendered either.
+    """
+
+    return element.find(_BLOCK_TAGS) is None
 
 
 def can_handle(extension: str) -> bool:
@@ -90,6 +114,9 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
                 flowables.append(Spacer(1, 6))
             continue
 
+        if not _is_content_leaf(element):
+            continue
+
         if element.name in ("td", "th"):
             saw_table = True
 
@@ -110,10 +137,16 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
         plain_text = body.get_text(separator="\n", strip=True)
         if plain_text:
             warnings.append(
-                "No recognized HTML structure was found; rendered the page's plain text instead."
+                "No recognized HTML structure was found; rendered the page's extracted text instead."
             )
-            style = ParagraphStyle(name="Mono", fontName="Courier", fontSize=9, leading=11)
-            flowables = [Preformatted(plain_text, style)]
+            # REAL USER-FACING BUG: this used to render with a monospace
+            # font in a Preformatted flowable -- ordinary prose came out
+            # looking like a block of code. See
+            # base.text_to_paragraph_chunks's docstring.
+            flowables = []
+            for chunk in text_to_paragraph_chunks(plain_text):
+                flowables.append(Paragraph(escape(chunk), body_style))
+                flowables.append(Spacer(1, 4))
 
     if not flowables:
         return failed_result(

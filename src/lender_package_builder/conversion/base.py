@@ -18,6 +18,36 @@ from reportlab.pdfgen import canvas
 from ..models import ConversionOutcome, ConversionResult, SourceOccurrence
 
 
+def text_to_paragraph_chunks(text: str) -> list[str]:
+    """Groups raw extracted text into paragraph-sized chunks: consecutive
+    non-blank lines are joined into one paragraph, a blank line starts a
+    new one. Un-wraps text that was manually line-wrapped by whatever
+    produced it (a mail client, a plain-text export, ...) back into
+    reflowable prose.
+
+    REAL USER-FACING BUG this exists to fix: raw extracted text used to
+    be rendered with a monospace font in a `Preformatted` flowable
+    (verbatim line breaks, terminal-style) -- to a real reader that
+    looks exactly like a block of code or a data dump, not a document,
+    even when the underlying text is perfectly ordinary prose (an email
+    body, a paragraph of HTML content with no recognized markup).
+    Callers should instead render each returned chunk as a normal
+    `Paragraph` with an ordinary proportional font.
+    """
+
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for line in text.split("\n"):
+        if line.strip():
+            current.append(line.strip())
+        elif current:
+            paragraphs.append(" ".join(current))
+            current = []
+    if current:
+        paragraphs.append(" ".join(current))
+    return paragraphs
+
+
 class Converter(Protocol):
     """Interface implemented by every format-specific converter."""
 

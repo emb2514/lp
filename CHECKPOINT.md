@@ -1,5 +1,48 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 6): real user-reported bug -- "majority of those pages turned into like
+## code" -- ordinary HTML/email pages were rendering in a monospace font, sometimes with fully
+## duplicated content
+
+User report, in the actual built PDF (not a preview): most pages looked like code. Found two
+independent, real causes:
+
+1. **`conversion/email.py`** rendered EVERY email's message body with a monospace font (`Courier`,
+   inside a `Preformatted` flowable) UNCONDITIONALLY -- this was never a fallback, it was the only
+   path that ever existed for a `.eml`/`.msg` body. Any package with meaningful email
+   correspondence (loan officer/borrower/processor emails, which is common) would show a Courier
+   block on every single email's header page. This is almost certainly the dominant cause of
+   "majority of pages."
+2. **`conversion/html.py`**'s block-tag detection (`_BLOCK_TAGS`) never included `<div>`. Real-
+   world HTML -- Outlook/Word "Save As HTML" exports especially -- wraps nearly everything in
+   `<div>`/`<span>` and rarely uses `<p>` at all, so `body.find_all(_BLOCK_TAGS + ["img"])` matched
+   nothing for that kind of document and it fell all the way through to the same monospace last-
+   resort branch. This affects `.html`/`.htm` files directly AND indirectly, since `.eml`/`.msg`
+   HTML bodies are extracted through a separate plain BeautifulSoup `.get_text()` call (unaffected
+   by this specific bug, but still hit cause #1 above regardless).
+
+**Fixed** both at the root, not by picking a different fallback font:
+- New shared `conversion/base.py:text_to_paragraph_chunks()` -- groups raw extracted text into
+  paragraph-sized chunks (consecutive non-blank lines joined, blank line = paragraph break),
+  un-wrapping manually line-wrapped text back into reflowable prose. Both `html.py`'s last-resort
+  branch and `email.py`'s body now render each chunk as a normal `Paragraph` with the SAME
+  proportional Helvetica font used everywhere else on the page -- not a special/fallback font, the
+  same one. `Preformatted`/`Courier` are gone from both files entirely.
+- `html.py`: added `"div"` to `_BLOCK_TAGS`, with a new `_is_content_leaf()` check -- a block
+  element (div especially, since it nests constantly in real HTML) is only rendered directly if it
+  has NO nested block-tag descendant of its own; otherwise its content is what those descendants
+  already render, and rendering the wrapper too would duplicate every word inside it. Applied to
+  every block tag (not just div) so e.g. a `<td>` wrapping a `<div>` is never double-rendered
+  either.
+
+New `tests/test_html_email_rendering.py` (6 tests) -- directly reproduces both original bugs
+(div-only HTML, a fully bare-text HTML body, and a plain email body) and asserts the actual
+embedded PDF font is never Courier; a nested-div duplication test; a manually-line-wrapped email
+body reflow test; a regression test that already-working structured HTML (h1/p) still works
+unchanged. Confirmed each of the 3 bug-reproducing tests genuinely fails against the pre-fix code
+(stashed the fix, reran, watched them fail with the exact expected assertion, then restored the
+fix) before trusting them as real regression coverage. Full suite: 487 passing (was 481).
+
 ## RC3 IN PROGRESS (part 5): Compare Packages visual highlight grid -- the new PRIMARY results
 ## view, replacing the category/explanation table as the default
 

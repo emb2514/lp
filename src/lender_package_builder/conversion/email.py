@@ -18,7 +18,6 @@ import dataclasses
 import email as email_lib
 import email.policy
 import tempfile
-import textwrap
 from email.parser import BytesParser
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -28,19 +27,17 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import ListFlowable, ListItem, Paragraph, Preformatted, SimpleDocTemplate, Spacer
+from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
 from ..cancellation import check_cancelled
 from ..hashing import sha256_of_file
 from ..models import ConversionOutcome, ConversionResult, SourceOccurrence
-from .base import failed_result, make_placeholder_pdf, validate_pdf
+from .base import failed_result, make_placeholder_pdf, text_to_paragraph_chunks, validate_pdf
 
 NAME = "email-mime"
 
 _EML_EXT = {".eml"}
 _MSG_EXT = {".msg"}
-
-_WRAP_WIDTH = 100
 
 
 def can_handle(extension: str) -> bool:
@@ -163,22 +160,10 @@ def _append_pdf_pages(writer: PdfWriter, pdf_path: Path) -> None:
         writer.add_page(page)
 
 
-def _wrap(text: str, width: int = _WRAP_WIDTH) -> str:
-    out_lines = []
-    for line in text.splitlines() or [""]:
-        if len(line) <= width:
-            out_lines.append(line if line else " ")
-            continue
-        for chunk in textwrap.wrap(line, width=width) or [line[:width]]:
-            out_lines.append(chunk)
-    return "\n".join(out_lines) if out_lines else " "
-
-
 def _render_header_pdf(data: _EmailData, dest_path: Path) -> str | None:
     title_style = ParagraphStyle(name="Title", fontName="Helvetica-Bold", fontSize=15, leading=19)
     label_style = ParagraphStyle(name="Label", fontName="Helvetica-Bold", fontSize=10, leading=14)
     body_style = ParagraphStyle(name="Body", fontName="Helvetica", fontSize=10, leading=14)
-    mono_style = ParagraphStyle(name="Mono", fontName="Courier", fontSize=9, leading=11)
 
     flowables = [Paragraph("EMAIL MESSAGE", title_style), Spacer(1, 10)]
     for label, value in (
@@ -194,7 +179,15 @@ def _render_header_pdf(data: _EmailData, dest_path: Path) -> str | None:
     flowables.append(Paragraph("Message body:", label_style))
     flowables.append(Spacer(1, 4))
     body = data.body_text.strip() or "(This message has no text body.)"
-    flowables.append(Preformatted(_wrap(body), mono_style))
+    # REAL USER-FACING BUG: this used to always render the body with a
+    # monospace font in a Preformatted flowable, regardless of content --
+    # an ordinary email body read exactly like a block of code, not a
+    # message. Reflowed into normal paragraphs with the same proportional
+    # font as everything else on this page. See
+    # base.text_to_paragraph_chunks's docstring.
+    for chunk in text_to_paragraph_chunks(body):
+        flowables.append(Paragraph(escape(chunk), body_style))
+        flowables.append(Spacer(1, 4))
 
     if data.attachments:
         flowables.append(Spacer(1, 14))
