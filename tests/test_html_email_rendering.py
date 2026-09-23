@@ -25,8 +25,10 @@ to the hand-reconstructed renderer if LibreOffice isn't available.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+import pytest
 from fixtures.builders import make_eml, make_html, read_pdf_text
 from pypdf import PdfReader
 
@@ -35,6 +37,11 @@ from lender_package_builder.conversion import email as email_conv
 from lender_package_builder.conversion import html as html_conv
 from lender_package_builder.conversion import office as office_conv
 from lender_package_builder.models import ProcessingStatus, SourceOccurrence
+
+_libreoffice_available = pytest.mark.skipif(
+    shutil.which("soffice") is None and shutil.which("libreoffice") is None,
+    reason="LibreOffice not installed on this machine",
+)
 
 
 def _fonts_used(pdf_path: Path) -> set[str]:
@@ -86,6 +93,7 @@ def _eml_occurrence(path: Path) -> SourceOccurrence:
 # ---------------------------------------------------------------------
 
 
+@_libreoffice_available
 def test_convert_prefers_a_real_libreoffice_render_when_available(tmp_path):
     body_html = (
         "<style>.hdr{background:#003366;color:#fff;padding:6px;}</style>"
