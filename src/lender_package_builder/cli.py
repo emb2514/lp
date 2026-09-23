@@ -35,6 +35,7 @@ from ._version import PRODUCT_NAME
 from .cancellation import CancellationToken, ProcessingCancelled, check_cancelled
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
+from .conversion import html as html_conv
 from .conversion import office as office_conv
 from .conversion.base import make_placeholder_pdf
 from .exceptions import (
@@ -653,9 +654,9 @@ def _execute_pipeline(
         total=len(non_ignored),
     )
 
-    # PERFORMANCE: batch every DOCX/XLSX/DOC/XLS document through ONE
-    # LibreOffice process instead of one fresh process (and one fresh
-    # profile) per file -- see convert_batch_with_libreoffice's
+    # PERFORMANCE: batch every DOCX/XLSX/DOC/XLS/HTML/HTM document
+    # through ONE LibreOffice process instead of one fresh process (and
+    # one fresh profile) per file -- see convert_batch_with_libreoffice's
     # docstring for the measured ~8x speedup on a real batch. Purely a
     # fast path: batching two or fewer files has no meaningful startup
     # cost to save, and any file this doesn't produce a result for
@@ -663,24 +664,28 @@ def _execute_pipeline(
     # as if no batch had been attempted.
     batch_results: dict[str, ConversionResult] = {}
     backend_order = getattr(config, "office_backend_order", ("libreoffice", "office_com", "fallback"))
+    batchable_extensions = office_conv.BATCHABLE_EXTENSIONS | html_conv.HTML_BATCHABLE_EXTENSIONS
     batch_candidates = [
         occ
         for occ in non_ignored
         if not occ.is_duplicate
         and not (occ.conversion_failure_reason and occ.status == ProcessingStatus.DISCOVERED)
-        and occ.original_extension.lower() in office_conv.BATCHABLE_EXTENSIONS
+        and occ.original_extension.lower() in batchable_extensions
         and occ.extracted_path is not None
         and occ.extracted_path.exists()
     ]
     # Only batches when LibreOffice is the FIRST backend the configured
     # order would try anyway -- an unusual custom order that puts
     # another backend ahead of it must behave identically to the
-    # per-file path, never be short-circuited by this fast path.
+    # per-file path, never be short-circuited by this fast path. HTML
+    # files always try LibreOffice first regardless of this setting
+    # (html.py has no separate backend-order concept), so they only lose
+    # the batching speedup in that unusual case, never correctness.
     if backend_order and backend_order[0] == "libreoffice" and len(batch_candidates) >= 2 and office_conv.find_libreoffice():
         check_cancelled(cancellation_token)
         reporter.emit(
             ProgressStage.CONVERTING_DOCUMENTS,
-            f"      Batch-converting {len(batch_candidates)} Office document(s) via LibreOffice "
+            f"      Batch-converting {len(batch_candidates)} document(s) via LibreOffice "
             "(one process instead of one per file)...",
         )
         batch_items = [

@@ -248,6 +248,31 @@ def test_docx_xlsx_use_libreoffice_when_available(tmp_path, run_build):
     assert xlsx_occ.used_fallback_renderer is False
 
 
+# Additional coverage: real user request -- HTML files converted via a
+# real LibreOffice render (not the hand-reconstructed fallback), and
+# batched through the same one-LibreOffice-process pre-pass as DOCX/XLSX.
+@pytest.mark.skipif(
+    shutil.which("soffice") is None and shutil.which("libreoffice") is None,
+    reason="LibreOffice not installed on this machine",
+)
+def test_html_files_use_libreoffice_and_are_batched(tmp_path, run_build):
+    from fixtures.builders import make_html
+
+    folder = tmp_path / "input"
+    make_html(folder / "letter_a.html", "<div>Dear Borrower A, review your figures.</div>")
+    make_html(folder / "letter_b.html", "<div>Dear Borrower B, review your figures.</div>")
+
+    run = run_build(folder)  # default backend order prefers libreoffice
+
+    occ_a = _doc(run, "letter_a.html")
+    occ_b = _doc(run, "letter_b.html")
+
+    assert occ_a.conversion_backend == "libreoffice"
+    assert occ_a.used_fallback_renderer is False
+    assert occ_b.conversion_backend == "libreoffice"
+    assert occ_b.used_fallback_renderer is False
+
+
 # Additional coverage: legacy .doc/.xls binary formats, converted through
 # the real local LibreOffice backend (the only converter Stage 1 can
 # safely test for this format on a non-Windows machine).
@@ -315,7 +340,7 @@ def test_libreoffice_conversion_is_killed_promptly_once_cancelled(tmp_path, monk
     threading.Timer(0.3, token.request).start()
 
     start = time.perf_counter()
-    result = office._convert_with_libreoffice("soffice-stand-in", source, dest, token)
+    result = office.convert_with_libreoffice("soffice-stand-in", source, dest, token)
     elapsed = time.perf_counter() - start
 
     assert result is None
@@ -338,7 +363,7 @@ def test_libreoffice_conversion_completes_normally_without_cancellation(tmp_path
     dest = tmp_path / "converted.pdf"
 
     token = CancellationToken()  # never requested
-    result = office._convert_with_libreoffice(soffice, source, dest, token)
+    result = office.convert_with_libreoffice(soffice, source, dest, token)
 
     assert result is not None
     assert result.outcome.value == "success"

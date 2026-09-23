@@ -1,10 +1,32 @@
 """HTML/HTM-to-PDF conversion.
 
-Renders entirely offline: no network request is ever made, no remote
-script/stylesheet/font/image is fetched. Only inline `data:` images and
-images referenced by a local relative path that already exists on disk
-next to the source file are embedded; anything else produces a recorded
-warning rather than a silent gap.
+REAL USER REPORT: "i need the HTML files to be 'printed' to PDF. i DO
+NOT want those strings of codes... i need the actual file, like the one
+that looks like the file... this needs to be a legible document" -- the
+same thing a browser's own "Print to PDF" does. A hand-reconstructed
+render (extract text, lay it back out with a generic PDF library) can
+never really be that, no matter how well the text extraction works --
+it throws away layout, colors, table borders, images-in-place, fonts.
+
+So LibreOffice -- already a hard dependency for DOCX/XLSX, see
+office.py -- is now tried FIRST for every HTML file, via the same
+`office.convert_with_libreoffice` used there (it's format-agnostic;
+LibreOffice picks its own import filter from the file extension). That
+gives a real, faithful, "print to PDF"-quality render: actual layout,
+table borders, background colors, fonts. `HTML_BATCHABLE_EXTENSIONS`
+lets HTML files join the same one-LibreOffice-process-per-batch speed
+path DOCX/XLSX already use (see office.convert_batch_with_libreoffice).
+
+The BeautifulSoup/reportlab renderer below (`_render_with_fallback`) is
+now ONLY a fallback for a machine with no LibreOffice install -- it
+always adds an explicit "reduced fidelity" warning when used, exactly
+like the DOCX/XLSX fallback already does, so a report never implies
+this achieved the same quality as a real render. Renders entirely
+offline either way: no network request is ever made, no remote script/
+stylesheet/font/image is fetched. Only inline `data:` images and images
+referenced by a local relative path that already exists on disk next to
+the source file are embedded; anything else produces a recorded warning
+rather than a silent gap.
 """
 
 from __future__ import annotations
@@ -23,21 +45,25 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.platypus import Image as RLImage
 
 from ..models import ConversionOutcome, ConversionResult
+from . import office as office_conv
 from .base import failed_result, text_to_paragraph_chunks, validate_pdf
 
-NAME = "reportlab-html-basic"
+NAME = "fallback-html"
 
-# REAL USER-FACING BUG: "div" was missing here. Real-world HTML --
-# Outlook/Word "Save As HTML" exports especially -- routinely wraps
-# every bit of content in <div>/<span> layout tags and rarely uses <p>
-# at all, so `body.find_all(_BLOCK_TAGS + ["img"])` matched NOTHING and
-# every such document fell all the way through to the last-resort
-# monospace/Preformatted branch below -- an ordinary letter or
-# disclosure rendered as a block of code, not a document. "div" is
-# handled specially in the main loop (see `_is_content_leaf`): only a
-# div with no nested block-tag descendant of its own is rendered
-# directly, so a layout wrapper `<div>` full of nested `<div>`/`<p>`
-# content is never ALSO rendered (which would duplicate every word).
+# Same set `can_handle` recognizes -- lets html files join office.py's
+# one-LibreOffice-process batch pre-pass (cli.py) instead of each
+# spawning its own fresh process.
+HTML_BATCHABLE_EXTENSIONS = {".html", ".htm"}
+
+# Handles real-world HTML the fallback renderer's block-tag detection
+# would otherwise miss entirely -- Outlook/Word "Save As HTML" exports
+# especially wrap nearly everything in <div>/<span> and rarely use <p>
+# at all. Only exercised when the fallback renderer runs (no LibreOffice
+# available); "div" is handled specially in the main loop (see
+# `_is_content_leaf`): only a div with no nested block-tag descendant of
+# its own is rendered directly, so a layout wrapper `<div>` full of
+# nested `<div>`/`<p>` content is never ALSO rendered (which would
+# duplicate every word).
 _BLOCK_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td", "th", "div"]
 _HEADING_SIZES = {"h1": 18, "h2": 16, "h3": 14, "h4": 13, "h5": 12, "h6": 11}
 
@@ -60,11 +86,43 @@ def can_handle(extension: str) -> bool:
 
 
 def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_token=None) -> ConversionResult:
+    """Tries a real, faithful LibreOffice render first -- the actual
+    document, laid out the way "Print to PDF" would show it -- and only
+    falls back to the hand-reconstructed renderer below if LibreOffice
+    isn't available on this machine (or that attempt itself fails). See
+    this module's docstring for the real user report behind this order.
+    """
+
     source = occurrence.extracted_path
     if source is None or not source.exists():
         return failed_result("Original HTML bytes were not available to convert.")
 
-    warnings: list[str] = []
+    soffice = office_conv.find_libreoffice()
+    if soffice:
+        result = office_conv.convert_with_libreoffice(soffice, source, dest_path, cancellation_token)
+        if result is not None:
+            return result
+        # Falls through to the fallback renderer below -- LibreOffice
+        # being installed but failing on this specific file must never
+        # be treated as "this file cannot be converted at all."
+
+    return _convert_with_fallback_renderer(source, dest_path)
+
+
+def _convert_with_fallback_renderer(source: Path, dest_path: Path) -> ConversionResult:
+    """Hand-reconstructed HTML render: extracts text/structure and lays
+    it back out with reportlab. Used ONLY when LibreOffice isn't
+    available -- see this module's docstring. Always warns that this
+    achieves lower fidelity than a real render (no layout, no table
+    borders, no background colors), the same way the DOCX/XLSX fallback
+    renderer already warns in office.py.
+    """
+
+    warnings: list[str] = [
+        "High-fidelity conversion (LibreOffice) was not available. Used the basic fallback "
+        "renderer: extracted text and images only. Original layout, table borders, background "
+        "colors, and fonts are NOT preserved."
+    ]
 
     try:
         raw = source.read_bytes()
@@ -174,7 +232,7 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
         return failed_result(f"Converted PDF failed validation: {error}", warnings=warnings)
 
     return ConversionResult(
-        outcome=ConversionOutcome.SUCCESS,
+        outcome=ConversionOutcome.FALLBACK_SUCCESS,
         pdf_path=dest_path,
         page_count=page_count,
         backend=NAME,

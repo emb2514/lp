@@ -53,7 +53,7 @@ BATCHABLE_EXTENSIONS = _DOCX_EXT | _XLSX_EXT | _LEGACY_EXT
 _LIBREOFFICE_TIMEOUT_SECONDS = 180
 
 # How often to poll a running LibreOffice process for cancellation while
-# waiting for it to finish -- see `_convert_with_libreoffice`'s docstring.
+# waiting for it to finish -- see `convert_with_libreoffice`'s docstring.
 _CANCELLATION_POLL_INTERVAL_SECONDS = 0.2
 
 # A batch conversion's overall timeout scales with how many files are in
@@ -97,7 +97,7 @@ def convert(
             if not soffice:
                 attempts.append("libreoffice: not found on this machine")
                 continue
-            result = _convert_with_libreoffice(soffice, source, dest_path, cancellation_token)
+            result = convert_with_libreoffice(soffice, source, dest_path, cancellation_token)
             if result is not None:
                 return result
             attempts.append("libreoffice: conversion attempt failed")
@@ -136,7 +136,7 @@ def _find_libreoffice() -> str | None:
     return None
 
 
-def _convert_with_libreoffice(
+def convert_with_libreoffice(
     soffice: str, source: Path, dest_path: Path, cancellation_token: CancellationToken | None = None
 ) -> ConversionResult | None:
     """Runs LibreOffice headless conversion, polling for cancellation
@@ -151,6 +151,13 @@ def _convert_with_libreoffice(
     `_CANCELLATION_POLL_INTERVAL_SECONDS` instead, so a cancellation
     request is noticed (and the process killed) almost immediately
     rather than only after this one file happens to finish or time out.
+
+    Public (not `office`-module-private) because it's format-agnostic --
+    LibreOffice picks its import filter from `source`'s own extension,
+    so this is reused as-is by `html.py` to get a real, faithful
+    "print to PDF"-quality render instead of a hand-reconstructed one
+    (see html.py's module docstring for the real user report behind
+    that).
     """
 
     with tempfile.TemporaryDirectory(prefix="lpb_soffice_") as tmp_out:

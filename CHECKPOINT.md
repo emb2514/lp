@@ -1,5 +1,41 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 7): HTML files now render via a REAL LibreOffice "Print to PDF"-quality
+## conversion, not a hand-reconstructed text-extraction one
+
+Direct follow-up to part 6 below. After fixing the monospace-font bug, the user clarified the real
+requirement: "i need the HTML files to be 'printed' to PDF. i DO NOT want those strings of codes...
+i need the actual file, like the one that looks like the file... typically with those i have to go
+in and print to pdf... this needs to be a legible document." A hand-reconstructed render (extract
+text/structure with BeautifulSoup, lay it back out with reportlab) can never really be "the actual
+file" no matter how good the text extraction is -- it throws away layout, table borders, background
+colors, images-in-place, fonts.
+
+**Fixed** by trying a real LibreOffice render FIRST for every `.html`/`.htm` file, using the exact
+same mechanism already relied on for DOCX/XLSX (`office.convert_with_libreoffice` -- renamed from
+`_convert_with_libreoffice`, now public since it's genuinely format-agnostic; LibreOffice picks its
+own import filter from the file extension, confirmed directly: it selects "Writer/Web document"
+for `.html` with zero code changes needed). Verified directly against a realistic sample (styled
+header with a background color, a bordered table with dollar amounts, plain paragraphs) -- the
+LibreOffice render preserves the color, the table structure, and the layout; a screenshot comparison
+is in this session's transcript. `html.py`'s own BeautifulSoup/reportlab renderer (including last
+session's div-handling fix) is now ONLY a fallback for a machine with no LibreOffice install, and
+always adds an explicit "reduced fidelity" warning when used, exactly like the DOCX/XLSX fallback
+already does -- `NAME` renamed `"reportlab-html-basic"` -> `"fallback-html"`, outcome changed
+`SUCCESS` -> `FALLBACK_SUCCESS` to match that convention. New `HTML_BATCHABLE_EXTENSIONS` lets HTML
+files join the SAME one-LibreOffice-process batch pre-pass DOCX/XLSX already use in `cli.py`
+(gated the same way: only when LibreOffice is the first configured backend, so an unusual custom
+`office_backend_order` still behaves identically to the per-file path).
+
+Test file restructured into two layers: `convert()` dispatcher tests (prefers LibreOffice when
+available -- asserts `backend == "libreoffice"` against a real conversion; falls back correctly
+when LibreOffice is unavailable or fails on a specific file, both via monkeypatch) and direct
+`_convert_with_fallback_renderer()` tests (the div-handling/font-correctness tests from part 6,
+now exercised directly so they're meaningful regardless of whether the test machine happens to
+have LibreOffice installed). New pipeline-level test confirms 2 HTML files get batched through
+LibreOffice together, matching the existing DOCX/XLSX batching test. Full suite: 491 passing (was
+487).
+
 ## RC3 IN PROGRESS (part 6): real user-reported bug -- "majority of those pages turned into like
 ## code" -- ordinary HTML/email pages were rendering in a monospace font, sometimes with fully
 ## duplicated content

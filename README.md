@@ -108,12 +108,16 @@ decide a duplicate.
   and preferred when available -- it is not hardcoded to 3.11.
 - No administrator rights required. Nothing is installed outside this
   project folder's `.venv`.
-- Optional, for higher-fidelity DOCX/XLS(X)/DOC conversion: a local
-  install of **LibreOffice** (free) or **Microsoft Office**. Without
-  either, DOCX/XLSX still convert via a built-in fallback renderer
-  (plain text/tables only, clearly labeled as such in the report);
-  legacy `.doc`/`.xls` without LibreOffice or Office become placeholders
-  (see "Known Stage 1 Limitations").
+- Optional, for higher-fidelity DOCX/XLS(X)/DOC/HTML conversion: a
+  local install of **LibreOffice** (free) or, for Office formats only,
+  **Microsoft Office**. Without either, DOCX/XLSX/HTML still convert
+  via a built-in fallback renderer (plain text/tables only, clearly
+  labeled as such in the report -- no real layout, table borders,
+  background colors, or fonts); legacy `.doc`/`.xls` without LibreOffice
+  or Office become placeholders (see "Known Stage 1 Limitations"). With
+  LibreOffice installed, HTML files render as a real, faithful "Print to
+  PDF"-quality page -- actual layout and formatting, not extracted text
+  laid back out generically.
 
 ## Installation
 
