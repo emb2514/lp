@@ -14,7 +14,10 @@ from lender_package_builder import key_documents, naming, review_decisions
 from lender_package_builder.config import AppConfig
 from lender_package_builder.models import PackageIdentity, UncertainMatch
 
-_CD_TEXT = "Closing Disclosure\nLoan Terms\nProjected Payments\nBorrower: Michael True"
+_CD_TEXT = (
+    "Closing Disclosure\nLoan Terms\nProjected Payments\nBorrower: Michael True\n"
+    "CLOSING DISCLOSURE\nPAGE 1 OF 5"
+)
 
 
 def _identity() -> PackageIdentity:
@@ -101,6 +104,53 @@ def test_final_and_important_docs_folders_never_mix_contents(tmp_path, run_build
     make_pdf_with_pages(folder / "cd.pdf", [_CD_TEXT])
 
     run = run_build(folder, identity=_identity())
+    assert run.key_document_matches
+    assert any(m.extracted_filename for m in run.key_document_matches)
+
+
+# TEST 3C - PERFORMANCE: key-document location must reuse the same
+# DocumentFingerprint content_dedup.py already built during stage 5
+# ("Analyzing document content") instead of parsing and re-fingerprinting
+# every Final document a second time. Real, measurable redundant work --
+# fingerprinting (page text, embedded images, signature fields,
+# annotations) was already identified as the slowest per-document
+# operation in the whole pipeline; doing it twice for every document in
+# Final doubled that cost for no reason.
+def test_key_document_location_reuses_stage_five_fingerprints(tmp_path, run_build, monkeypatch):
+    folder = tmp_path / "input"
+    folder.mkdir()
+    make_pdf_with_pages(folder / "cd.pdf", [_CD_TEXT])
+
+    calls = {"count": 0}
+    original = key_documents.build_document_fingerprint
+
+    def _counting(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(key_documents, "build_document_fingerprint", _counting)
+
+    run = run_build(folder, identity=_identity())
+    assert run.key_document_matches
+    # The pre-built fingerprint from stage 5 satisfied every document in
+    # Final -- key_documents.py's own fallback re-fingerprinting path
+    # must never have been reached.
+    assert calls["count"] == 0
+
+
+# TEST 3D - when content-aware analysis is disabled (no fingerprints
+# dict is ever built), key-document location must still work correctly
+# via its own fallback re-fingerprinting path -- reuse is an
+# optimization, never a hard dependency.
+def test_key_document_location_still_works_with_content_aware_dedup_disabled(tmp_path, run_build, config):
+    import dataclasses
+
+    folder = tmp_path / "input"
+    folder.mkdir()
+    make_pdf_with_pages(folder / "cd.pdf", [_CD_TEXT])
+
+    disabled_config = dataclasses.replace(config, enable_content_aware_dedup=False)
+    run = run_build(folder, identity=_identity(), config=disabled_config)
     assert run.key_document_matches
     assert any(m.extracted_filename for m in run.key_document_matches)
 

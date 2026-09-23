@@ -65,12 +65,28 @@ POSSIBLE_MATCH = "Possible Match"
 _AUTO_EXTRACT_BANDS = (CONFIRMED, STRONG_MATCH)
 
 
-def locate_key_documents(run: RunResult) -> list[KeyDocumentMatch]:
+def locate_key_documents(
+    run: RunResult, fingerprints: dict[str, DocumentFingerprint] | None = None
+) -> list[KeyDocumentMatch]:
     """Runs every detector over every document currently in Final and
     returns all matches found, in a stable, deterministic order. Never
     mutates `run.occurrences` or anything about Final's contents.
+
+    `fingerprints`, when given, is the SAME dict content_dedup.py's
+    `build_fingerprints()` already built during content-aware analysis
+    (stage 5) -- reused here instead of parsing and re-fingerprinting
+    every Final document a second time. This was a real, measurable
+    redundant-computation bug: fingerprinting a real converted PDF (page
+    text, embedded images, signature fields, annotations) is the single
+    slowest per-document operation in the whole pipeline, and every
+    document ending up in Final had already paid that cost once. Falls
+    back to computing a fresh fingerprint only for a document missing
+    from the dict (e.g. content-aware dedup disabled via config, or no
+    dict supplied at all -- callers that don't have one, like a review-
+    decision rebuild, still work exactly as before).
     """
 
+    fingerprints = fingerprints or {}
     final_occurrences = [o for o in run.occurrences if o.included_in_final]
     matches: list[KeyDocumentMatch] = []
     seq = 1
@@ -78,13 +94,15 @@ def locate_key_documents(run: RunResult) -> list[KeyDocumentMatch]:
     for occ in final_occurrences:
         if not occ.converted_pdf_path or not occ.converted_pdf_path.exists():
             continue
-        try:
-            fingerprint = build_document_fingerprint(occ.document_id, occ.converted_pdf_path)
-        except Exception:
-            # A single unreadable converted PDF must never crash the
-            # whole run -- it simply never participates in key-document
-            # detection, exactly like content_dedup.build_fingerprints().
-            continue
+        fingerprint = fingerprints.get(occ.document_id)
+        if fingerprint is None:
+            try:
+                fingerprint = build_document_fingerprint(occ.document_id, occ.converted_pdf_path)
+            except Exception:
+                # A single unreadable converted PDF must never crash the
+                # whole run -- it simply never participates in key-document
+                # detection, exactly like content_dedup.build_fingerprints().
+                continue
 
         for finder in (
             _find_closing_disclosures,
@@ -212,18 +230,36 @@ def _find_closing_disclosures(
             for marker in _CD_SECTION_MARKERS
             if any(marker in p.normalized_text.casefold() for p in pages)
         )
-        if section_hits >= 2:
+        # REAL FALSE-POSITIVE RISK: a closing-instructions letter, cover
+        # letter, or underwriting-conditions list can plausibly reuse the
+        # exact same TRID section vocabulary the real form uses ("Loan
+        # Terms", "Cash to Close") without being the form itself -- the
+        # Loan Estimate shares nearly this same vocabulary too, see the
+        # module note above `_page_totals`. Title text and section words
+        # alone are NEVER enough to call a page "the actual" Closing
+        # Disclosure; only the regulation-mandated "PAGE X OF 5" footer
+        # (12 CFR Part 1026 Appendix H) is genuinely intrinsic to the real
+        # printed form, so it is now REQUIRED for any auto-extraction-
+        # eligible band (Confirmed or Strong Match) -- a page that merely
+        # mentions Closing Disclosure, however many section words it also
+        # contains, stays a Possible Match for human review.
+        has_page_count_footer = _CLOSING_DISCLOSURE_PAGE_TOTAL in _page_totals(pages)
+
+        if has_page_count_footer and section_hits >= 2:
             band, reason = CONFIRMED, (
-                f'"{_CD_TITLE_MARKER.title()}" title found with {section_hits} corroborating CD section '
-                "headers (e.g. Loan Terms, Projected Payments, Loan Costs)."
+                f'"{_CD_TITLE_MARKER.title()}" title found with a "page X of 5" footer and '
+                f"{section_hits} corroborating CD section headers (e.g. Loan Terms, Projected Payments, Loan Costs)."
             )
-        elif section_hits == 1:
+        elif has_page_count_footer:
             band, reason = STRONG_MATCH, (
-                f'"{_CD_TITLE_MARKER.title()}" title found with 1 corroborating CD section header.'
+                f'"{_CD_TITLE_MARKER.title()}" title found with a "page X of 5" footer, but fewer than 2 '
+                "corroborating CD section headers nearby."
             )
         else:
             band, reason = POSSIBLE_MATCH, (
-                f'"{_CD_TITLE_MARKER.title()}" text found, but no corroborating CD section headers nearby.'
+                f'"{_CD_TITLE_MARKER.title()}" text found, but no "page X of 5" footer -- this may only be a '
+                "mention of the Closing Disclosure (a cover letter, checklist, or instructions), not the "
+                "actual form."
             )
 
         is_revised = any(
@@ -326,21 +362,33 @@ def _find_loan_estimates(
             if any(marker in p.normalized_text.casefold() for p in pages)
         )
         page_totals = _page_totals(pages)
+        # Same false-positive risk as the Closing Disclosure (see the note
+        # in `_find_closing_disclosures`): a checklist, cover letter, or
+        # the Closing Disclosure's own boilerplate can reuse this form's
+        # section vocabulary without being the actual Loan Estimate. Only
+        # the regulation-mandated "PAGE X OF 3" footer is genuinely
+        # intrinsic to the real printed form, so it is now REQUIRED for
+        # any auto-extraction-eligible band.
         confirmed_by_page_count = _LOAN_ESTIMATE_PAGE_TOTAL in page_totals
 
-        if (confirmed_by_page_count and section_hits >= 1) or section_hits >= 2:
+        if confirmed_by_page_count and section_hits >= 2:
             band, confidence = CONFIRMED, 1.0
             reason = (
-                f'"Loan Estimate" title found with {section_hits} corroborating section header(s)'
-                + (' and a "page X of 3" footer' if confirmed_by_page_count else "")
-                + "."
+                f'"Loan Estimate" title found with a "page X of 3" footer and {section_hits} '
+                "corroborating section header(s)."
             )
-        elif section_hits == 1 or confirmed_by_page_count:
+        elif confirmed_by_page_count:
             band, confidence = STRONG_MATCH, 0.75
-            reason = '"Loan Estimate" title found with 1 corroborating signal (section header or page-count footer).'
+            reason = (
+                '"Loan Estimate" title found with a "page X of 3" footer, but fewer than 2 corroborating '
+                "section headers nearby."
+            )
         else:
             band, confidence = POSSIBLE_MATCH, 0.4
-            reason = '"Loan Estimate" text found, but no corroborating section headers or page-count footer nearby.'
+            reason = (
+                '"Loan Estimate" text found, but no "page X of 3" footer -- this may only be a mention of '
+                "the Loan Estimate, not the actual form."
+            )
 
         matches.append(
             KeyDocumentMatch(

@@ -35,6 +35,7 @@ from ._version import PRODUCT_NAME
 from .cancellation import CancellationToken, ProcessingCancelled, check_cancelled
 from .config import AppConfig, load_config
 from .conversion import convert_occurrence
+from .conversion import office as office_conv
 from .conversion.base import make_placeholder_pdf
 from .exceptions import (
     ArchiveTooLargeError,
@@ -46,7 +47,7 @@ from .exceptions import (
     ProcessingCancelledError,
 )
 from .inventory import InventoryBuilder
-from .models import ConversionOutcome, PackageIdentity, ProcessingStatus, RunResult
+from .models import ConversionOutcome, ConversionResult, PackageIdentity, ProcessingStatus, RunResult
 from .progress import ProgressCallback, ProgressEvent, ProgressSeverity, ProgressStage
 from .workspace import Workspace
 
@@ -652,6 +653,47 @@ def _execute_pipeline(
         total=len(non_ignored),
     )
 
+    # PERFORMANCE: batch every DOCX/XLSX/DOC/XLS document through ONE
+    # LibreOffice process instead of one fresh process (and one fresh
+    # profile) per file -- see convert_batch_with_libreoffice's
+    # docstring for the measured ~8x speedup on a real batch. Purely a
+    # fast path: batching two or fewer files has no meaningful startup
+    # cost to save, and any file this doesn't produce a result for
+    # simply falls through to the unchanged per-file path below, exactly
+    # as if no batch had been attempted.
+    batch_results: dict[str, ConversionResult] = {}
+    backend_order = getattr(config, "office_backend_order", ("libreoffice", "office_com", "fallback"))
+    batch_candidates = [
+        occ
+        for occ in non_ignored
+        if not occ.is_duplicate
+        and not (occ.conversion_failure_reason and occ.status == ProcessingStatus.DISCOVERED)
+        and occ.original_extension.lower() in office_conv.BATCHABLE_EXTENSIONS
+        and occ.extracted_path is not None
+        and occ.extracted_path.exists()
+    ]
+    # Only batches when LibreOffice is the FIRST backend the configured
+    # order would try anyway -- an unusual custom order that puts
+    # another backend ahead of it must behave identically to the
+    # per-file path, never be short-circuited by this fast path.
+    if backend_order and backend_order[0] == "libreoffice" and len(batch_candidates) >= 2 and office_conv.find_libreoffice():
+        check_cancelled(cancellation_token)
+        reporter.emit(
+            ProgressStage.CONVERTING_DOCUMENTS,
+            f"      Batch-converting {len(batch_candidates)} Office document(s) via LibreOffice "
+            "(one process instead of one per file)...",
+        )
+        batch_items = [
+            (occ.document_id, occ.extracted_path, workspace.new_convert_path(occ.document_id))
+            for occ in batch_candidates
+        ]
+        batch_results = office_conv.convert_batch_with_libreoffice(batch_items, cancellation_token)
+        reporter.emit(
+            ProgressStage.CONVERTING_DOCUMENTS,
+            f"      Batch conversion produced {len(batch_results)}/{len(batch_candidates)} PDF(s); "
+            "any remaining file(s) below fall through to the normal per-file conversion path.",
+        )
+
     for i, occ in enumerate(non_ignored, start=1):
         check_cancelled(cancellation_token)
         if occ.is_duplicate:
@@ -679,7 +721,9 @@ def _execute_pipeline(
             extra_preserved: list[tuple[str, Path]] = []
         else:
             dest = workspace.new_convert_path(occ.document_id)
-            result = convert_occurrence(occ, dest, config, workspace, cancellation_token)
+            result = batch_results.get(occ.document_id)
+            if result is None:
+                result = convert_occurrence(occ, dest, config, workspace, cancellation_token)
             result_outcome_failed = result.outcome == ConversionOutcome.FAILED
             failure_reason = result.failure_reason
             warnings = result.warnings
@@ -743,7 +787,7 @@ def _execute_pipeline(
             occ_by_id[doc_id].og_part_index = part.index
     reporter.emit(ProgressStage.BUILDING_OG, f"      OG: {len(og_parts)} part(s) written.")
 
-    content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches = (
+    content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches, fingerprints = (
         _run_content_aware_analysis(occurrences, config, reporter, cancellation_token)
     )
 
@@ -785,7 +829,7 @@ def _execute_pipeline(
 
     check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.LOCATING_KEY_DOCUMENTS, "[10/11] Locating key documents...")
-    run.key_document_matches = key_documents.locate_key_documents(run)
+    run.key_document_matches = key_documents.locate_key_documents(run, fingerprints)
     key_documents.extract_key_documents(run.key_document_matches, run, important_docs_dir)
     reporter.emit(
         ProgressStage.LOCATING_KEY_DOCUMENTS,
@@ -819,7 +863,12 @@ def _run_content_aware_analysis(
     which is exactly RC1's original exact-hash-only behavior.
 
     Returns (content_duplicate_groups, document_families,
-    overlap_findings, oversized_bucket_notes, uncertain_matches).
+    overlap_findings, oversized_bucket_notes, uncertain_matches,
+    fingerprints). `fingerprints` is returned too (even though this
+    function's own job is duplicate/version analysis, not key-document
+    location) so key_documents.locate_key_documents() can reuse the same
+    already-built DocumentFingerprint per document instead of parsing
+    and re-fingerprinting every Final document a second time.
     """
 
     if not config.enable_content_aware_dedup:
@@ -830,7 +879,7 @@ def _run_content_aware_analysis(
             (ProgressStage.CLASSIFYING_VERSIONS, "[8/11] Content-aware analysis disabled; skipping."),
         ):
             reporter.emit(stage, label)
-        return [], [], [], [], []
+        return [], [], [], [], [], {}
 
     check_cancelled(cancellation_token)
     reporter.emit(ProgressStage.FINGERPRINTING_CONTENT, "[5/11] Analyzing document content...")
@@ -887,7 +936,14 @@ def _run_content_aware_analysis(
 
     uncertain_matches = _build_uncertain_matches(uncertain_content_pairs, overlap_findings)
 
-    return content_duplicate_groups, document_families, overlap_findings, oversized_bucket_notes, uncertain_matches
+    return (
+        content_duplicate_groups,
+        document_families,
+        overlap_findings,
+        oversized_bucket_notes,
+        uncertain_matches,
+        fingerprints,
+    )
 
 
 def _build_uncertain_matches(

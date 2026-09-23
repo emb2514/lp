@@ -343,3 +343,117 @@ def test_libreoffice_conversion_completes_normally_without_cancellation(tmp_path
     assert result is not None
     assert result.outcome.value == "success"
     assert dest.exists()
+
+
+# ---------------------------------------------------------------------
+# convert_batch_with_libreoffice -- PERFORMANCE: one LibreOffice process
+# for many files instead of one fresh process (and profile) per file.
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    shutil.which("soffice") is None and shutil.which("libreoffice") is None,
+    reason="LibreOffice not installed on this machine",
+)
+def test_convert_batch_with_libreoffice_converts_every_file(tmp_path):
+    sources = []
+    dests = []
+    items = []
+    for i in range(3):
+        source = tmp_path / f"doc{i}.docx"
+        make_docx(source, [f"Title {i}", f"Body paragraph {i}."])
+        dest = tmp_path / f"out{i}.pdf"
+        sources.append(source)
+        dests.append(dest)
+        items.append((f"D{i}", source, dest))
+
+    results = office.convert_batch_with_libreoffice(items)
+
+    assert set(results) == {"D0", "D1", "D2"}
+    for i, dest in enumerate(dests):
+        assert dest.exists()
+        assert results[f"D{i}"].outcome.value == "success"
+        assert results[f"D{i}"].pdf_path == dest
+        assert results[f"D{i}"].backend == "libreoffice"
+
+
+@pytest.mark.skipif(
+    shutil.which("soffice") is None and shutil.which("libreoffice") is None,
+    reason="LibreOffice not installed on this machine",
+)
+def test_convert_batch_with_libreoffice_never_collides_on_identical_source_filenames(tmp_path):
+    # REAL RISK: a loan package routinely has multiple documents that
+    # happen to share a filename across different subfolders (e.g. two
+    # unrelated "letter.docx" files). LibreOffice's --convert-to --outdir
+    # writes each output as "<input stem>.pdf" -- if both source files
+    # were handed to soffice under their original names, the second
+    # output would silently overwrite the first in the shared --outdir.
+    # Staging under each document's own unique document_id must prevent
+    # this completely.
+    folder_a = tmp_path / "a"
+    folder_b = tmp_path / "b"
+    folder_a.mkdir()
+    folder_b.mkdir()
+    source_a = folder_a / "letter.docx"
+    source_b = folder_b / "letter.docx"
+    make_docx(source_a, ["Letter From Folder A"])
+    make_docx(source_b, ["Letter From Folder B"])
+    dest_a = tmp_path / "dest_a.pdf"
+    dest_b = tmp_path / "dest_b.pdf"
+
+    results = office.convert_batch_with_libreoffice(
+        [("DOC-A", source_a, dest_a), ("DOC-B", source_b, dest_b)]
+    )
+
+    assert set(results) == {"DOC-A", "DOC-B"}
+    assert dest_a.exists()
+    assert dest_b.exists()
+    # Each destination genuinely holds its OWN source's content, not a
+    # copy of the other one that overwrote it in a shared --outdir.
+    from pypdf import PdfReader
+
+    text_a = PdfReader(str(dest_a)).pages[0].extract_text()
+    text_b = PdfReader(str(dest_b)).pages[0].extract_text()
+    assert "Folder A" in text_a
+    assert "Folder B" in text_b
+
+
+def test_convert_batch_with_libreoffice_is_killed_promptly_once_cancelled(tmp_path, monkeypatch):
+    # Same proof as the single-file cancellation test above, for the
+    # batch path: a long-running stand-in process is killed almost
+    # immediately once cancellation is requested, never left running for
+    # anywhere near the batch's full scaled timeout.
+    source = tmp_path / "doc0.docx"
+    source.write_bytes(b"not a real docx -- the stand-in process never reads it")
+    dest = tmp_path / "out0.pdf"
+
+    original_popen = subprocess.Popen
+
+    def _fake_popen(cmd, **kwargs):
+        return original_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+
+    monkeypatch.setattr(office.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(office, "_find_libreoffice", lambda: "soffice-stand-in")
+
+    token = CancellationToken()
+    threading.Timer(0.3, token.request).start()
+
+    start = time.perf_counter()
+    results = office.convert_batch_with_libreoffice([("D0", source, dest)], token)
+    elapsed = time.perf_counter() - start
+
+    assert results == {}
+    assert elapsed < 5.0, f"took {elapsed:.1f}s to notice cancellation"
+
+
+def test_convert_batch_with_libreoffice_returns_empty_for_empty_input():
+    assert office.convert_batch_with_libreoffice([]) == {}
+
+
+def test_convert_batch_with_libreoffice_returns_empty_when_libreoffice_not_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(office, "_find_libreoffice", lambda: None)
+    source = tmp_path / "doc0.docx"
+    source.write_bytes(b"irrelevant")
+    dest = tmp_path / "out0.pdf"
+
+    assert office.convert_batch_with_libreoffice([("D0", source, dest)]) == {}

@@ -1,5 +1,92 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 4): real performance fix -- batch LibreOffice conversions into one
+## process, and reuse the content-analysis fingerprint instead of re-parsing every Final document
+## a second time during key-document location
+
+User report: package builds are still too slow. Found two separate, measurable redundant-work
+bugs (not guessed -- both confirmed with direct timing on this machine):
+
+1. **LibreOffice batching.** Every DOCX/XLSX/DOC/XLS document spawned its OWN fresh
+   `soffice --headless` process with its own freshly-initialized user profile directory --
+   process startup + profile initialization is a large, mostly fixed per-process cost that
+   dwarfs the actual conversion work for a typical letter or worksheet. Measured directly: 12
+   small Office documents through the full pipeline went from 16.0s (one soffice process per
+   file, the original behavior) to 2.3s (one soffice process for the whole batch) -- a 7x
+   speedup, and the gap widens with more files since it's N fixed startups against one. New
+   `office.convert_batch_with_libreoffice()`: stages every source file into a scratch directory
+   renamed to `<document_id><ext>` first (LibreOffice's `--outdir` writes each output as
+   `<input stem>.pdf`, and two different source documents can easily share a filename across a
+   loan package's subfolders -- e.g. two unrelated "letter.docx" -- which would otherwise
+   silently collide in the shared output directory; staging under the already-unique
+   `document_id` makes this collision-proof), then runs ONE `soffice --convert-to` invocation
+   covering all of them, polling `--outdir` for newly-appeared PDFs (same cadence/pattern as the
+   existing single-file cancellation-poll loop) so results become available per file as they
+   complete, not only once the whole batch finishes. `cli.py`'s conversion stage runs this as a
+   pre-pass (only when 2+ Office documents are eligible AND LibreOffice is the first configured
+   backend -- an unusual custom `office_backend_order` that puts another backend first must
+   behave identically to the per-file path, never be short-circuited) and the existing per-file
+   loop is otherwise completely unchanged: any file missing from the batch result (staging
+   failure, batch failure, timeout, cancellation) simply falls through to the normal per-file
+   `convert_occurrence` call exactly as before, so batching is purely a performance fast path
+   that can only ever help, never introduce a new failure mode. Per-file progress messages
+   (`[i/total] filename: OK`) are unchanged in order and content -- the batch pre-pass does the
+   expensive work and the main loop just picks up the already-computed result.
+
+2. **Key-document fingerprint reuse.** `key_documents.locate_key_documents()` (stage 10,
+   "Locating key documents") was calling `build_document_fingerprint()` on every document in
+   Final from scratch -- but content_dedup.py's `build_fingerprints()` (stage 5, "Analyzing
+   document content") had already fingerprinted essentially the same set of documents, and that
+   fingerprinting work was already identified as the single slowest per-document operation in
+   the whole pipeline (see the RC2 entry below). Every Final document was being fully
+   re-parsed, its images re-downsampled, its text re-extracted, a second time for no reason.
+   Fixed by threading the same `fingerprints` dict `_run_content_aware_analysis()` already
+   builds through to `locate_key_documents(run, fingerprints)`, which now looks up an existing
+   fingerprint by `document_id` first and only computes a fresh one as a fallback (content-aware
+   dedup disabled via config, or a caller with no dict at all -- e.g. the post-review-decision
+   rebuild path -- still works exactly as before). New regression test
+   (`test_key_document_location_reuses_stage_five_fingerprints`) monkeypatches
+   `key_documents.build_document_fingerprint` and asserts it is never called for a normal run.
+
+Both fixes are pure engine-level changes with no GUI/behavior change other than speed. Local
+suite (now run against a fully working local LibreOffice + Qt install, not skipped): 467 passing
+(was 462; +5 new: 1 fingerprint-reuse test, 1 disabled-dedup fallback test, 3 batch-conversion
+tests including a dedicated filename-collision safety test).
+
+## RC3 IN PROGRESS (part 3): fixed a real false-positive gap in Closing Disclosure / Loan Estimate
+## detection -- a page merely mentioning "Closing Disclosure" could reach CONFIRMED and get
+## auto-extracted without ever containing the actual form
+
+User report: key-document detection still wasn't reliably finding the actual document, "its not
+like every file that mentions a closing disclosure is the actual closing disclosure." Root cause,
+found by reading the detector directly (not guessed): `_find_closing_disclosures` required the
+title phrase plus 2+ corroborating section markers ("Loan Terms", "Cash to Close", ...) for
+CONFIRMED -- but never checked the Closing Disclosure's OWN regulation-mandated "PAGE X OF 5"
+footer (12 CFR Part 1026 Appendix H) at all, even though `_find_loan_estimates` already used the
+equivalent "PAGE X OF 3" footer as a corroborating signal for the Loan Estimate. Both forms share
+nearly identical TRID section vocabulary by design (that's WHY the page-count footer was already
+needed as a mutual-exclusion signal between the two forms, see the note above `_page_totals`), so
+a closing-instructions letter, cover letter, or underwriting-conditions list that happens to
+discuss "your Loan Terms and Cash to Close" could rack up 2 section-marker hits purely from
+common mortgage vocabulary having nothing to do with the actual printed form.
+
+**Fixed** by making the regulation-mandated page-count footer REQUIRED for any auto-extraction-
+eligible band on both forms -- title and section words alone, however many, now cap at Possible
+Match (reported, never auto-extracted) without it:
+- Closing Disclosure: `has_page_count_footer and section_hits >= 2` → Confirmed;
+  `has_page_count_footer` alone → Strong Match; no footer → Possible Match regardless of section
+  hits.
+- Loan Estimate: same shape, symmetric (`confirmed_by_page_count and section_hits >= 2` →
+  Confirmed; footer alone → Strong Match; no footer → Possible Match).
+
+New regression tests directly reproducing the reported failure mode:
+`test_closing_instructions_letter_mentioning_closing_disclosure_is_never_confirmed`,
+`test_closing_disclosure_requires_page_count_footer_for_strong_match_too`,
+`test_document_mentioning_loan_estimate_without_footer_is_never_confirmed`. Updated the existing
+`_CD_UNSIGNED_TEXT` / `_CD_TEXT` fixtures (both test files) to include the footer text a real
+Closing Disclosure actually carries -- they were unrealistic in exactly the way that let this gap
+go unnoticed. Local suite: 363 passing (was 358 non-GUI; +5 new tests), full suite incl. GUI: 462.
+
 ## RC3 IN PROGRESS (part 2): fixed MU Privacy Policy detection against a real sample (it never
 ## matched), added MU MA Broker Addendum detection
 

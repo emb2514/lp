@@ -72,7 +72,10 @@ def _fp(document_id: str, pdf_path: Path):
 
 _IDENTITY = PackageIdentity(last_name="True", first_name="Michael", loan_number="6192278785")
 
-_CD_UNSIGNED_TEXT = "Closing Disclosure\nLoan Terms\nProjected Payments\nBorrower: Michael True"
+_CD_UNSIGNED_TEXT = (
+    "Closing Disclosure\nLoan Terms\nProjected Payments\nBorrower: Michael True\n"
+    "CLOSING DISCLOSURE\nPAGE 1 OF 5"
+)
 
 
 # ---------------------------------------------------------------------
@@ -183,6 +186,43 @@ def test_loan_estimate_page_never_misclassified_as_closing_disclosure(tmp_path):
     assert le_matches[0].confidence_band == CONFIRMED
 
 
+def test_closing_instructions_letter_mentioning_closing_disclosure_is_never_confirmed(tmp_path):
+    # REAL SAFETY REQUIREMENT: a closing-instructions letter, cover
+    # letter, or underwriting-conditions list can plausibly reuse the
+    # exact same TRID section vocabulary the real Closing Disclosure form
+    # uses ("Loan Terms", "Cash to Close") without being the form itself
+    # -- the title phrase and those section words are not unique to the
+    # actual form. Without the form's own "page X of 5" footer, this must
+    # never be treated as confidently found, and must never auto-extract.
+    pdf = make_pdf_with_pages(
+        tmp_path / "closing_instructions.pdf",
+        [
+            "Closing Instructions\n"
+            "Please review your Closing Disclosure carefully before signing. It sets out your "
+            "final Loan Terms, Projected Payments, and Cash to Close. Contact escrow with questions."
+        ],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_closing_disclosures(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == POSSIBLE_MATCH
+    assert matches[0].confidence_band not in key_documents._AUTO_EXTRACT_BANDS
+
+
+def test_closing_disclosure_requires_page_count_footer_for_strong_match_too(tmp_path):
+    # Title + section words alone, even several of them, must never reach
+    # Strong Match (still auto-extracted) without the footer -- only
+    # Possible Match, which is reported but never auto-extracted.
+    pdf = make_pdf_with_pages(
+        tmp_path / "cd_no_footer.pdf",
+        ["Closing Disclosure\nLoan Terms\nProjected Payments\nLoan Costs\nCash to Close"],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_closing_disclosures(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == POSSIBLE_MATCH
+
+
 def test_closing_disclosure_five_page_footer_never_misclassified_as_loan_estimate(tmp_path):
     # The symmetric direction: a real Closing Disclosure's own 5-page
     # footer must protect it from ever being read as a Loan Estimate,
@@ -228,6 +268,22 @@ def test_loan_estimate_possible_match_without_corroboration(tmp_path):
     matches = key_documents._find_loan_estimates(occ, _fp("D1", pdf), _IDENTITY)
     assert len(matches) == 1
     assert matches[0].confidence_band == POSSIBLE_MATCH
+
+
+def test_document_mentioning_loan_estimate_without_footer_is_never_confirmed(tmp_path):
+    # Symmetric to the Closing Disclosure case above -- a cover letter
+    # can reuse the same section vocabulary without being the actual
+    # Loan Estimate form. Without the "page X of 3" footer, this must
+    # never reach an auto-extraction-eligible band.
+    pdf = make_pdf_with_pages(
+        tmp_path / "le_letter.pdf",
+        ["Please review your Loan Estimate. It shows your Loan Terms and Projected Payments."],
+    )
+    occ = _occ("D1", pdf, 1)
+    matches = key_documents._find_loan_estimates(occ, _fp("D1", pdf), _IDENTITY)
+    assert len(matches) == 1
+    assert matches[0].confidence_band == POSSIBLE_MATCH
+    assert matches[0].confidence_band not in key_documents._AUTO_EXTRACT_BANDS
 
 
 def test_multiple_loan_estimate_variants(tmp_path):
