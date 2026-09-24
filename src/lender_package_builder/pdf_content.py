@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import io
 import re
 import unicodedata
 
@@ -267,9 +268,16 @@ def _dhash(image, hash_size: int = 8) -> int:
     that already falls back to "uncertain" whenever it's not confident.
     Returns a 64-bit integer; Hamming distance between two dHashes is a
     cheap, reasonable proxy for visual similarity.
+
+    Skips `.convert("L")` when the image is already grayscale -- PIL's
+    `.convert()` still allocates and copies a full new buffer even when
+    the target mode already matches the source (it's not a no-op),
+    which is pure waste on a multi-megapixel scanned page image (a real
+    measured cost, see this module's other performance notes).
     """
 
-    small = image.convert("L").resize((hash_size + 1, hash_size), resample=1)
+    gray = image if image.mode == "L" else image.convert("L")
+    small = gray.resize((hash_size + 1, hash_size), resample=1)
     pixels = list(small.getdata())
     bits = 0
     for row in range(hash_size):
@@ -299,7 +307,7 @@ def _average_color(image) -> tuple[float, float, float]:
     computes the identical mean, just without the Python-level loop.
     """
 
-    rgb_image = image.convert("RGB")
+    rgb_image = image if image.mode == "RGB" else image.convert("RGB")
     if rgb_image.width == 0 or rgb_image.height == 0:
         return (0.0, 0.0, 0.0)
     mean = ImageStat.Stat(rgb_image).mean
@@ -312,7 +320,7 @@ def _looks_blank_at_resolution(image) -> bool:
     full-resolution safety guarantee this must preserve.
     """
 
-    gray = image.convert("L")
+    gray = image if image.mode == "L" else image.convert("L")
     if gray.width == 0 or gray.height == 0:
         return True
     total = gray.width * gray.height
@@ -377,7 +385,143 @@ def _classify_image_blank(image, precomputed_quick=None) -> bool:
     return _looks_blank_at_resolution(image)
 
 
+# REAL, MEASURED PERFORMANCE BUG: pypdf's public `page.images` API
+# always pays a full decode-then-RE-ENCODE-then-decode round trip
+# internally to populate `ImageFile.data` (confirmed directly by
+# reading pypdf's own `_xobj_to_image`: it builds the real decoded
+# image, then unconditionally calls `img.save(buffer, format=...)` and
+# re-opens THAT, purely so `.data` is guaranteed to be valid standalone
+# image-file bytes). We only ever need the decoded pixels (for average
+# color / blank check / perceptual hash) and a hash of the raw bytes
+# (for exact-duplicate detection) -- never a re-encoded standalone
+# image file -- so that round trip is pure waste here. Measured via
+# cProfile on a realistic 100-page scanned document: this was ~48% of
+# this module's ENTIRE per-page fingerprinting cost, the single largest
+# cost in the whole content-fingerprinting stage (already separately
+# identified, see `_ANALYSIS_MAX_DIMENSION` above, as the slowest stage
+# in the whole pipeline on a real package).
+_FAST_DECODE_GRAY_SPACES = ("/DeviceGray", "/CalGray")
+_FAST_DECODE_RGB_SPACES = ("/DeviceRGB", "/CalRGB")
+
+
+def _try_fast_extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...] | None:
+    """Decodes the two most common real-world embedded-image cases
+    directly -- DCTDecode/JPEG needs no re-encode at all (it's already
+    a real JPEG file); simple 8-bit DeviceGray/DeviceRGB FlateDecode is
+    a straight `Image.frombytes` -- and returns None, falling back to
+    the slower, fully general `page.images`-based path with NO loss of
+    correctness, for anything else at all: a nested Form XObject or an
+    inline image (this page's `page.images` ids include anything other
+    than a simple top-level key), any other filter (LZW/CCITT Fax/JPX/
+    JBIG2), indexed color, CMYK, non-8-bit depth, an alpha/soft-mask
+    channel, or any unexpected structure. Never guesses -- only ever a
+    pure speed optimization on top of identical results.
+    """
+
+    try:
+        ids = page._get_ids_image()
+        if not all(isinstance(entry, str) for entry in ids):
+            return None  # a nested Form XObject or inline image is present
+        if not ids:
+            return ()
+        resources = page.get("/Resources")
+        xobjects = resources.get("/XObject") if resources is not None else None
+        if xobjects is None:
+            return None
+        xobjects = xobjects.get_object()
+
+        signals: list[EmbeddedImageSignal] = []
+        for key in ids:
+            x_obj = xobjects[key].get_object()
+            decoded = _fast_decode_image_xobject(x_obj)
+            if decoded is None:
+                return None
+            raw_hash, pil_image = decoded
+            signals.append(_signal_from_pil_image(raw_hash, pil_image))
+        return tuple(signals)
+    except Exception:
+        return None
+
+
+def _fast_decode_image_xobject(x_obj) -> tuple[str, Image.Image] | None:
+    try:
+        if x_obj.get("/SMask") is not None or x_obj.get("/Mask") is not None:
+            return None  # has an alpha/soft mask -- defer to the general path
+        filters = x_obj.get("/Filter")
+        lfilters = filters[-1] if isinstance(filters, list) else filters
+        raw = x_obj.get_data()
+        if isinstance(raw, str):
+            raw = raw.encode()
+        raw_hash = hashlib.sha256(raw).hexdigest()
+
+        if lfilters == "/DCTDecode":
+            img = Image.open(io.BytesIO(raw))
+            img.load()
+            return raw_hash, img
+
+        if lfilters == "/FlateDecode":
+            width = int(x_obj["/Width"])
+            height = int(x_obj["/Height"])
+            bpc = int(x_obj.get("/BitsPerComponent", 8))
+            color_space = x_obj.get("/ColorSpace")
+            if hasattr(color_space, "get_object"):
+                color_space = color_space.get_object()
+            if isinstance(color_space, list):
+                if len(color_space) == 1:
+                    color_space = color_space[0].get_object()
+                else:
+                    return None  # e.g. Indexed -- defer to the general path
+            if bpc != 8:
+                return None
+            # The pixel component count comes from /ColorSpace itself --
+            # /Colors is a DecodeParms predictor parameter (PNG-predictor
+            # reconstruction, already fully resolved by get_data() before
+            # we ever see these bytes), essentially never present as a
+            # direct key on a plain Image XObject, and must never be
+            # trusted as the colorspace indicator.
+            if color_space in _FAST_DECODE_GRAY_SPACES:
+                mode, colors = "L", 1
+            elif color_space in _FAST_DECODE_RGB_SPACES:
+                mode, colors = "RGB", 3
+            else:
+                return None
+            expected_len = width * height * colors
+            body = raw[:-1] if len(raw) == expected_len + 1 and raw[-1:] == b"\n" else raw
+            if len(body) != expected_len:
+                return None
+            img = Image.frombytes(mode, (width, height), body)
+            return raw_hash, img
+
+        return None
+    except Exception:
+        return None
+
+
+def _signal_from_pil_image(byte_hash: str, pil_image: Image.Image) -> EmbeddedImageSignal:
+    width, height = pil_image.size
+    analysis_image = _prepare_analysis_image(pil_image) if width > 1 and height > 1 else pil_image
+    phash = _dhash(analysis_image) if width > 1 and height > 1 else None
+    avg_color = _average_color(analysis_image) if width >= 1 and height >= 1 else None
+    is_blank = (
+        _classify_image_blank(pil_image, precomputed_quick=analysis_image)
+        if width > 1 and height > 1
+        else False
+    )
+    return EmbeddedImageSignal(
+        byte_sha256=byte_hash,
+        perceptual_hash=phash,
+        average_color=avg_color,
+        is_blank=is_blank,
+        width=width,
+        height=height,
+    )
+
+
 def _extract_embedded_images(page) -> tuple[EmbeddedImageSignal, ...]:
+    fast_result = _try_fast_extract_embedded_images(page)
+    if fast_result is not None:
+        return fast_result
+
     signals: list[EmbeddedImageSignal] = []
     try:
         image_iter = list(page.images)

@@ -1,5 +1,62 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 11): major performance fix -- eliminated a wasteful decode-then-re-
+## encode-then-decode round trip that pypdf's public image API pays on EVERY embedded image,
+## confirmed via cProfile to be the single largest cost in the pipeline's slowest stage
+
+User report: real packages take 12-18 minutes. Profiled a realistic 223-page synthetic package
+end-to-end (per-stage wall-clock via the progress callback, not guessed): `fingerprinting_content`
+("Analyzing document content") was 78% of total time -- already flagged in this module's own
+comments as the historically slowest stage. Profiled THAT stage with cProfile directly and found
+the actual cause: `page.images` (pypdf's public image-extraction API) always decodes the real
+image, then unconditionally RE-ENCODES it to a standalone file format (`img.save()`), then RE-
+OPENS that just-encoded file -- purely so `ImageFile.data` is guaranteed valid standalone image-
+file bytes, a guarantee this app never needed (only the decoded pixels for analysis, and a hash of
+SOME bytes for exact-duplicate detection). Confirmed directly by reading pypdf's own
+`_xobj_to_image` source. Measured: ~48% of the entire per-page fingerprinting cost on a 100-page
+scanned document was this one avoidable round trip.
+
+**Fixed** with `_try_fast_extract_embedded_images()`: decodes the two most common real-world cases
+directly -- DCTDecode/JPEG needs no re-encode at all (it's already a real JPEG file, just
+`Image.open()`); simple 8-bit DeviceGray/DeviceRGB FlateDecode is a straight `Image.frombytes()` on
+the already-decompressed stream. Returns `None` (falling back to the original, fully general
+`page.images`-based path, with NO loss of correctness) for anything else at all: a nested Form
+XObject or inline image present anywhere on the page, any other filter (LZW/CCITT Fax/JPX/JBIG2),
+indexed color, CMYK, non-8-bit depth, an alpha/soft-mask channel, a raw byte length that doesn't
+match the declared dimensions, or any unexpected structure -- never guesses, purely a speed
+optimization layered on top of identical results. The `byte_sha256` exact-duplicate signal now
+hashes the raw stream bytes directly (more precise than before: two genuinely byte-identical source
+images now always hash identically regardless of which path decoded them, where previously it
+depended on pypdf's own re-encoding being deterministic) -- confirmed safe: it's used only as a
+"definitely identical" FAST-PATH shortcut in `content_dedup.py`, never the sole basis for a
+duplicate/different conclusion, so any two images the two paths happen to hash differently for still
+correctly fall through to the same perceptual-hash/average-color comparison already used for
+non-identical images.
+
+Also fixed, smaller but real and risk-free: `_average_color`/`_dhash`/`_looks_blank_at_resolution`
+each called `.convert()` unconditionally even when the image was already in the target mode --
+confirmed PIL's `.convert()` is not a no-op even when the mode already matches (it still allocates
+and copies a full new buffer), pure waste on a multi-megapixel scanned page. All three now skip the
+call when the mode already matches.
+
+Combined, measured end-to-end on the realistic 223-page synthetic package: fingerprinting dropped
+from 8.45s to 4.39s (48% reduction), total pipeline time from 10.9s to 6.6s (40% reduction). At
+realistic 300 DPI scan resolution (2550x3300), fingerprinting is now dominated by the BOX-resample
+downsampling step itself (`_prepare_analysis_image`) -- deliberately NOT touched: it's the slower,
+more accurate resampling algorithm a previous session specifically proved was necessary
+(`test_faint_mark_survives_downsampling_on_a_600_dpi_scan` caught a faster algorithm silently
+missing a faint signature mark), so this remaining cost is the safety-critical floor, not further
+avoidable waste.
+
+New `tests/test_fast_image_decode.py` (12 tests): fast-path-vs-slow-path result equivalence for
+realistic RGB scans, a grayscale image, and a JPEG-sourced image (all asserting byte-for-byte
+identical average color / perceptual hash / blank classification / dimensions, not just "both
+succeed"); an end-to-end fingerprint-pipeline test; and 7 direct decline/fallback tests (CMYK,
+indexed colorspace, non-8-bit depth, unrecognized filter, SMask present, Mask present, unrecognized
+colorspace, byte-length mismatch) proving the fast path never guesses and the slow-path fallback is
+never lost. Confirmed 11 of 12 fail against the pre-fix code before trusting them. Full suite: 523
+passing (was 511).
+
 ## RC3 IN PROGRESS (part 10): real bug -- the Lender field was missing from the main output
 ## folder name (and its live Advanced Settings preview), even though every filename inside that
 ## folder already included it
