@@ -120,6 +120,39 @@ def build_arg_parser() -> argparse.ArgumentParser:
     build.add_argument(
         "--quiet", action="store_true", help="Suppress live progress output (still prints the summary)."
     )
+
+    batch = subparsers.add_parser(
+        "batch",
+        help="Build one OG+Final package per immediate subfolder of a parent folder (one loan per "
+        "subfolder) in a single run.",
+    )
+    batch.add_argument("parent_folder", help="Folder containing one subfolder per loan.")
+    batch.add_argument(
+        "--output", type=Path, default=None,
+        help="Parent output directory -- each loan's own output folder is created inside it. "
+        "Defaults to alongside each loan's own input folder, same as build's default.",
+    )
+    batch.add_argument(
+        "--max-pages-per-part", type=int, default=None,
+        help="Override the maximum pages allowed in one output part (a ceiling, not a target).",
+    )
+    batch.add_argument(
+        "--max-size-mb-per-part", type=float, default=None,
+        help="Override the maximum MB allowed in one output part (a ceiling, not a target).",
+    )
+    batch.add_argument(
+        "--allow-large-input", action="store_true",
+        help="Bypass ZIP-bomb-style safety thresholds for known, intentionally large loan folders.",
+    )
+    batch.add_argument(
+        "--disable-content-aware-dedup", action="store_true",
+        help="Fall back to exact-SHA-256-only duplicate detection for every loan in this batch.",
+    )
+    batch.add_argument("--verbose", action="store_true", help="Enable debug-level logging.")
+    batch.add_argument("--config", type=Path, default=None, help="Path to a config.toml file.")
+    batch.add_argument(
+        "--quiet", action="store_true", help="Suppress live progress output (still prints the summary)."
+    )
     return parser
 
 
@@ -129,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build":
         return _run_build_command(args)
+    if args.command == "batch":
+        return _run_batch_command(args)
 
     parser.print_help()
     return 2
@@ -182,6 +217,58 @@ def _run_build_command(args: argparse.Namespace) -> int:
 
     _print_summary(run)
     return 0 if run.success else 1
+
+
+def _run_batch_command(args: argparse.Namespace) -> int:
+    from . import batch as batch_mod  # local import: avoids a cli.py <-> batch.py cycle
+
+    parent_folder = Path(args.parent_folder).expanduser().resolve()
+    config_path = args.config or _default_config_path()
+
+    try:
+        config = load_config(config_path)
+    except InvalidConfigError as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
+
+    if args.max_pages_per_part is not None:
+        config.max_pages_per_part = args.max_pages_per_part
+    if args.max_size_mb_per_part is not None:
+        config.max_size_mb_per_part = args.max_size_mb_per_part
+    if args.disable_content_aware_dedup:
+        config.enable_content_aware_dedup = False
+
+    if not parent_folder.is_dir():
+        print(f"\nFAILED: Not a folder: {parent_folder}", file=sys.stderr)
+        return 1
+
+    def _on_loan_start(loan_folder: Path, current: int, total: int) -> None:
+        if not args.quiet:
+            print(f"[{current}/{total}] Building: {loan_folder.name}")
+
+    try:
+        result = batch_mod.build_batch(
+            parent_folder=parent_folder,
+            output_dir=args.output,
+            config=config,
+            allow_large_input=args.allow_large_input,
+            progress_callback=_on_loan_start,
+        )
+    except LenderPackageBuilderError as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # top-level safety net; never a bare crash with no message
+        print(f"\nUNEXPECTED ERROR: {exc}", file=sys.stderr)
+        logger.exception("Unexpected error during batch")
+        return 1
+
+    print()
+    print("=" * 70)
+    print(f"Batch complete: {len(result.succeeded)}/{len(result.loan_results)} loan(s) succeeded")
+    for loan_result in result.failed:
+        print(f"  FAILED: {loan_result.loan_folder.name} -- {loan_result.error_message}", file=sys.stderr)
+
+    return 0 if not result.failed else 1
 
 
 def _default_config_path() -> Path:

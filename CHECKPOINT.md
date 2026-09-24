@@ -1,5 +1,43 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 12): new feature -- batch mode (CLI only so far; GUI integration still
+## pending)
+
+Real user request: "point the app at a folder-of-folders (one per loan) and build them all in one
+run instead of one at a time." New `batch.py` module: `build_batch(parent_folder, output_dir,
+config, ...)` builds one independent OG+Final package per immediate subfolder of `parent_folder`,
+reusing `build_package()` completely unchanged for each one -- loans are never merged or mixed
+together, each still gets its own separate package exactly like running the app once per loan by
+hand. A single loan's failure is isolated (recorded, batch continues) -- the same "one bad thing
+never takes down everything else" principle already used for a single document's failure within
+one build; a real cancellation request, in contrast, aborts the whole batch immediately.
+
+Per-loan identity (borrower name, loan number) is parsed from each loan subfolder's own name
+(`identity_from_folder_name`) rather than requiring manual entry per loan, which would defeat the
+purpose. Conservative by design: only this app's own "Last, First[, LoanNumber]" convention (the
+same shape `naming.main_folder_name` itself already produces) is split into separate fields;
+anything else becomes the last name alone, with first/loan-number left blank -- never guessed, and
+always correctable afterward since this only affects output naming, never which documents get
+processed.
+
+New CLI subcommand: `lender_package_builder batch <parent_folder> [--output ...] [--max-pages-per-
+part ...] [--allow-large-input] [--disable-content-aware-dedup] [--quiet]` (mirrors `build`'s
+relevant options). `write_batch_summary()` produces a human-readable `Batch Summary.txt` listing
+every loan, its parsed identity, success/failure, and output location.
+
+29 new tests (`test_batch.py` + `test_batch_cli.py`): folder-name identity parsing (last+first,
++loan number, extra whitespace, no-comma fallback, unusual/ambiguous shapes never guessed at),
+folder discovery (dirs only, case-insensitive sort, empty parent), multi-loan builds (each gets its
+own parsed identity and its own output subfolder), failure isolation (one loan's simulated failure,
+injected via monkeypatch since a real build_package call turned out NOT to fail on an empty input
+folder -- it succeeds trivially with 0 documents, a real behavior discovered while writing this
+test), cancellation aborting the whole batch, progress-callback ordering, the summary file's
+content, and the CLI subcommand's argument parsing/dispatch/exit codes. Confirmed the batch.py
+absence causes a real import failure before trusting the suite. Full suite: 545 passing (was 523).
+
+GUI integration (a batch-mode workspace, mirroring how Compare Packages got its own workspace) is
+NOT part of this entry -- CLI-only so far, by design, to ship a solid tested core engine first.
+
 ## RC3 IN PROGRESS (part 11): major performance fix -- eliminated a wasteful decode-then-re-
 ## encode-then-decode round trip that pypdf's public image API pays on EVERY embedded image,
 ## confirmed via cProfile to be the single largest cost in the pipeline's slowest stage
