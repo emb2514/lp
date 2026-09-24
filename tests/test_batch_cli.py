@@ -5,6 +5,8 @@ mode (see batch.py for the underlying engine).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fixtures.builders import make_pdf_with_pages
 
 from lender_package_builder import cli
@@ -39,7 +41,7 @@ def test_batch_subcommand_accepts_the_same_kind_of_overrides_as_build():
             "--quiet",
         ]
     )
-    assert str(args.output) == "/some/output"
+    assert args.output == Path("/some/output")
     assert args.max_pages_per_part == 50
     assert args.allow_large_input is True
     assert args.disable_content_aware_dedup is True
