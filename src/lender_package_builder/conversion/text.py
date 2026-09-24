@@ -3,10 +3,24 @@
 Line breaks are preserved exactly (a `Preformatted` flowable), long
 lines are safely wrapped, and pagination is handled automatically by
 reportlab's Platypus document flow.
+
+REAL USER-FACING BUG this module guards against: MISMO/ULDD loan-data
+XML (and similar machine-to-machine data files, e.g. a Loan Quality
+Advisor request) is routinely delivered as a `.txt` file that is one
+single line tens of thousands of characters long, with no whitespace
+at all. Wrapping that blindly at a fixed character width -- this
+module's normal behavior for ordinary text -- chops tags and values at
+arbitrary points with no relationship to the document's actual
+structure, producing something "no one but a computer could
+understand." `_pretty_print_if_xml` detects real XML content and
+reformats it with proper indentation first (exactly like any XML
+viewer/editor would show it) -- the data is completely unchanged, only
+its whitespace/layout is.
 """
 
 from __future__ import annotations
 
+import xml.dom.minidom as minidom
 from pathlib import Path
 
 from reportlab.lib.pagesizes import LETTER
@@ -34,6 +48,28 @@ def _decode(raw: bytes) -> tuple[str, str]:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace"), "utf-8 (with replacement characters)"
+
+
+def _pretty_print_if_xml(text: str) -> str | None:
+    """Returns an indented, human-scannable rendering of `text` if it
+    parses as well-formed XML; None for anything else (never guesses --
+    a file that merely starts with "<" but isn't real XML, or any other
+    plain text, is left completely untouched by this function).
+    """
+
+    if not text.strip().startswith("<"):
+        return None
+    try:
+        dom = minidom.parseString(text)
+    except Exception:
+        return None
+    pretty = dom.toprettyxml(indent="  ")
+    # minidom emits a blank line for every whitespace-only text node
+    # between sibling elements -- stripped so the result reads like a
+    # real formatted document, not one with a blank line after every
+    # single tag.
+    lines = [line for line in pretty.split("\n") if line.strip()]
+    return "\n".join(lines)
 
 
 def _wrap_preserving_breaks(text: str, width: int) -> str:
@@ -72,6 +108,13 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
             warnings.append(
                 "Could not confidently detect text encoding; some characters may have "
                 "been replaced."
+            )
+        pretty_xml = _pretty_print_if_xml(text)
+        if pretty_xml is not None:
+            text = pretty_xml
+            warnings.append(
+                "This text file contains XML data -- reformatted with indentation for "
+                "readability (the underlying data is unchanged, only its layout is)."
             )
 
     wrapped = _wrap_preserving_breaks(text, _WRAP_WIDTH)

@@ -1,5 +1,36 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 9): MISMO/ULDD loan-data XML delivered as a `.txt` file now renders
+## indented and readable instead of blindly chopped every 100 characters
+
+User supplied a real sample: a Loan Quality Advisor ULDD Request (`fd59e77d-6192500730_LQA_...
+_ULDD_Request.txt`) -- one single line of MISMO 3.0 XML, tens of thousands of characters long, no
+whitespace at all. `text.py`'s existing behavior (`_wrap_preserving_breaks`, unchanged and still
+used for ordinary text) hard-wraps at a fixed 100-character width with no regard for structure --
+for this kind of file, that chops tags and attribute values at arbitrary points, producing exactly
+"no one but a computer could understand that."
+
+**Fixed** with new `_pretty_print_if_xml()`: detects real, well-formed XML content (never guesses
+-- a file that merely starts with "<" but doesn't actually parse as XML, or any other plain text,
+is returned untouched) and reformats it with `xml.dom.minidom.toprettyxml()` BEFORE the existing
+wrap/render pipeline runs, exactly like any XML viewer would show it -- verified directly against
+the real sample file: 375,000-character single line became genuinely readable, properly nested
+XML (confirmed by rendering the actual output PDF to an image and inspecting it -- property
+address, appraisal amount, and every field cleanly visible line-by-line with indentation reflecting
+the real document structure). The data itself is completely unchanged, only its layout is; a
+report warning discloses the reformatting explicitly. Monospace stays the right font choice here
+(unlike the email/HTML prose bug from parts 6-8) since this is genuinely structured/indented data,
+not prose forced into a code font.
+
+New `tests/test_text_xml_rendering.py` (7 tests): direct unit coverage for `_pretty_print_if_xml`
+(real MISMO sample reformats with visible indentation depth increasing per nesting level; ordinary
+text, malformed XML-like text, and empty text are all left untouched, never guessed at), an
+end-to-end conversion test against the real sample's actual structure asserting the raw unbroken
+line never appears in the output PDF's text, and two regression tests confirming ordinary `.txt`
+files (including the pre-existing long-line-wrapping behavior) are completely unaffected. Confirmed
+5 of the 7 tests fail against the pre-fix code before trusting them. Full suite: 508 passing (was
+501).
+
 ## RC3 IN PROGRESS (part 8): PRECISELY REPRODUCED AND FIXED the real "full page of base64" bug,
 ## plus a general safety net so this class of bug can never silently reach a final package again
 
