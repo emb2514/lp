@@ -5,6 +5,8 @@ document that cannot be safely converted.
 
 from __future__ import annotations
 
+import base64
+import re
 import textwrap
 from pathlib import Path
 from typing import Protocol
@@ -46,6 +48,73 @@ def text_to_paragraph_chunks(text: str) -> list[str]:
     if current:
         paragraphs.append(" ".join(current))
     return paragraphs
+
+
+# REAL, CONFIRMED BUG (reproduced directly): an email attachment with
+# NO Content-Type and NO Content-Transfer-Encoding header at all (some
+# document-delivery systems produce exactly this, malformed but real)
+# defaults to "text/plain" per the MIME spec and is never base64-
+# decoded -- its raw, still-encoded text then looks like one very long,
+# blank-line-free paragraph and gets rendered verbatim as an unreadable
+# page. `decode_if_disguised_binary_attachment` recognizes this
+# specific pattern (long base64 that decodes to a known file signature)
+# so the caller can route it through the normal attachment pipeline
+# instead. `looks_like_garbled_non_prose` is a broader, lower-
+# specificity safety net for the same class of failure in general: it
+# never identifies WHAT the content is, only that it clearly isn't
+# readable prose, so it should never be silently rendered as if it
+# were a normal page.
+
+_MIN_BASE64_LIKE_LENGTH = 200
+
+_KNOWN_BINARY_SIGNATURES: tuple[tuple[bytes, str, str], ...] = (
+    (b"%PDF-", ".pdf", "PDF"),
+    (b"PK\x03\x04", ".zip", "ZIP/Office document"),
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", ".doc", "legacy Office document"),
+    (b"\xff\xd8\xff", ".jpg", "JPEG image"),
+    (b"\x89PNG\r\n\x1a\n", ".png", "PNG image"),
+)
+
+
+def decode_if_disguised_binary_attachment(text: str) -> tuple[bytes, str, str] | None:
+    """Returns `(decoded_bytes, file_extension, file_kind)` if `text` is
+    raw, undecoded base64 that decodes to a RECOGNIZED binary file
+    signature -- never guesses on merely base64-shaped content, since
+    plenty of legitimate short strings coincidentally are; only content
+    long enough to plausibly BE a whole embedded file, and that
+    decodes to an actual known file's magic bytes, counts. Returns
+    None for ordinary text.
+    """
+
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) < _MIN_BASE64_LIKE_LENGTH:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", compact):
+        return None
+    try:
+        decoded = base64.b64decode(compact, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return None
+    for magic, ext, kind in _KNOWN_BINARY_SIGNATURES:
+        if decoded.startswith(magic):
+            return decoded, ext, kind
+    return None
+
+
+def looks_like_garbled_non_prose(text: str) -> bool:
+    """A general, low-false-positive safety net: ordinary prose is
+    roughly 15-20% whitespace (average word length ~5 characters plus a
+    space); base64/hex/other encoded binary data has almost none, even
+    accounting for MIME's traditional 76-character line wrapping (well
+    under 3%). Only meaningful on genuinely long text -- a short
+    string's whitespace ratio doesn't indicate anything reliably.
+    """
+
+    stripped = text.strip()
+    if len(stripped) < 200:
+        return False
+    whitespace_count = sum(1 for ch in stripped if ch.isspace())
+    return (whitespace_count / len(stripped)) < 0.03
 
 
 class Converter(Protocol):

@@ -46,7 +46,7 @@ from reportlab.platypus import Image as RLImage
 
 from ..models import ConversionOutcome, ConversionResult
 from . import office as office_conv
-from .base import failed_result, text_to_paragraph_chunks, validate_pdf
+from .base import failed_result, looks_like_garbled_non_prose, text_to_paragraph_chunks, validate_pdf
 
 NAME = "fallback-html"
 
@@ -193,6 +193,16 @@ def _convert_with_fallback_renderer(source: Path, dest_path: Path) -> Conversion
 
     if not flowables:
         plain_text = body.get_text(separator="\n", strip=True)
+        if plain_text and looks_like_garbled_non_prose(plain_text):
+            # General safety net (see this module's docstring): never
+            # silently render content that doesn't look like real prose
+            # -- treat it the same as "nothing renderable was found"
+            # rather than showing an unreadable page.
+            warnings.append(
+                "This page's extracted content did not look like readable text (it may be "
+                "corrupted or mis-encoded) and was not displayed."
+            )
+            plain_text = ""
         if plain_text:
             warnings.append(
                 "No recognized HTML structure was found; rendered the page's extracted text instead."

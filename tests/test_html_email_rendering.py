@@ -21,10 +21,25 @@ a hand-reconstructed text-extraction render is NOT the same as a real
 colors. `html.py`'s `convert()` now tries a real LibreOffice render
 FIRST (the same mechanism DOCX/XLSX already use), and only falls back
 to the hand-reconstructed renderer if LibreOffice isn't available.
+
+Report 3, after reports 1 and 2 ("i get a full page of [base64
+characters]... no one but a computer could understand that"):
+reproduced exactly. A MIME part carrying an attachment with NO
+Content-Type and NO Content-Transfer-Encoding header at all (a
+malformed but real message some document-delivery systems produce)
+defaults to "text/plain" per the MIME spec and is never base64-decoded
+-- its raw, still-encoded text then looks like one very long paragraph
+and got rendered verbatim as an unreadable page. See
+`base.decode_if_disguised_binary_attachment` (recovers the real
+embedded file and routes it through the normal attachment pipeline
+instead) and `base.looks_like_garbled_non_prose` (a general safety net:
+refuses to render ANY text that doesn't look like real prose, even for
+a case that isn't a recognized disguised attachment).
 """
 
 from __future__ import annotations
 
+import base64
 import shutil
 from pathlib import Path
 
@@ -33,6 +48,7 @@ from fixtures.builders import make_eml, make_html, read_pdf_text
 from pypdf import PdfReader
 
 from lender_package_builder.config import AppConfig
+from lender_package_builder.conversion import base as conv_base
 from lender_package_builder.conversion import email as email_conv
 from lender_package_builder.conversion import html as html_conv
 from lender_package_builder.conversion import office as office_conv
@@ -269,3 +285,145 @@ def test_email_body_with_manual_line_wrapping_is_reflowed_into_one_paragraph(tmp
     assert "This is a single long sentence" in text
     assert "that was manually wrapped" in text
     assert "across several short lines" in text
+
+
+# ---------------------------------------------------------------------
+# base.py -- decode_if_disguised_binary_attachment / looks_like_garbled_non_prose
+# ---------------------------------------------------------------------
+
+
+def test_decode_if_disguised_binary_attachment_detects_a_real_pdf():
+    real_pdf_bytes = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>" * 5
+    encoded = base64.b64encode(real_pdf_bytes).decode("ascii")
+    wrapped = "\n".join(encoded[i : i + 76] for i in range(0, len(encoded), 76))
+
+    result = conv_base.decode_if_disguised_binary_attachment(wrapped)
+
+    assert result is not None
+    decoded_bytes, ext, kind = result
+    assert decoded_bytes == real_pdf_bytes
+    assert ext == ".pdf"
+    assert kind == "PDF"
+
+
+def test_decode_if_disguised_binary_attachment_ignores_ordinary_text():
+    ordinary = "This is a perfectly normal email body with plenty of real words and spaces in it."
+    assert conv_base.decode_if_disguised_binary_attachment(ordinary) is None
+
+
+def test_decode_if_disguised_binary_attachment_ignores_short_base64_like_text():
+    # Real short strings can coincidentally be valid base64 -- must
+    # never guess without a real, recognized file signature behind it.
+    short_base64_alphabet_text = "QUJDREVGRw=="
+    assert conv_base.decode_if_disguised_binary_attachment(short_base64_alphabet_text) is None
+
+
+def test_decode_if_disguised_binary_attachment_ignores_valid_base64_of_unknown_content():
+    # Long, valid base64 that decodes cleanly but to bytes not matching
+    # any known file signature -- never guessed at either.
+    random_bytes = bytes(range(256)) * 2
+    encoded = base64.b64encode(random_bytes).decode("ascii")
+    assert conv_base.decode_if_disguised_binary_attachment(encoded) is None
+
+
+def test_looks_like_garbled_non_prose_flags_long_whitespace_free_text():
+    garbled = "A" * 500
+    assert conv_base.looks_like_garbled_non_prose(garbled) is True
+
+
+def test_looks_like_garbled_non_prose_accepts_ordinary_prose():
+    prose = "This is an entirely ordinary paragraph of real English text. " * 10
+    assert conv_base.looks_like_garbled_non_prose(prose) is False
+
+
+def test_looks_like_garbled_non_prose_ignores_short_text():
+    assert conv_base.looks_like_garbled_non_prose("A" * 50) is False
+
+
+# ---------------------------------------------------------------------
+# email.py end-to-end -- the exact reported bug, reproduced and fixed
+# ---------------------------------------------------------------------
+
+
+def _make_eml_with_disguised_pdf_attachment(path: Path) -> Path:
+    # Simulates the exact confirmed real-world failure: a MIME part
+    # carrying a PDF attachment with NO Content-Type and NO Content-
+    # Transfer-Encoding header at all.
+    real_pdf_bytes = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>" * 5
+    encoded = base64.b64encode(real_pdf_bytes).decode("ascii")
+    wrapped = "\n".join(encoded[i : i + 76] for i in range(0, len(encoded), 76))
+
+    raw = (
+        "From: sender@example.com\r\n"
+        "To: recipient@example.com\r\n"
+        "Subject: Your Closing Disclosure\r\n"
+        "MIME-Version: 1.0\r\n"
+        'Content-Type: multipart/mixed; boundary="BOUNDARY"\r\n'
+        "\r\n"
+        "--BOUNDARY\r\n"
+        "Content-Type: text/plain; charset=us-ascii\r\n"
+        "\r\n"
+        "Please see the attached document.\r\n"
+        "--BOUNDARY\r\n"
+        "\r\n"
+        f"{wrapped}\r\n"
+        "--BOUNDARY--\r\n"
+    ).encode("ascii")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    return path
+
+
+def test_disguised_pdf_attachment_is_recovered_not_shown_as_base64_text(tmp_path):
+    source = _make_eml_with_disguised_pdf_attachment(tmp_path / "message.eml")
+
+    data = email_conv._parse_eml(source)
+
+    # The body text is the real message, not the base64 blob.
+    assert "Please see the attached document" in data.body_text
+    assert "PDF" not in data.body_text
+    assert len(data.body_text) < 200
+    # The disguised attachment was recovered as a real attachment.
+    assert len(data.attachments) == 1
+    name, att_bytes = data.attachments[0]
+    assert att_bytes.startswith(b"%PDF-")
+
+
+def test_disguised_pdf_attachment_end_to_end_conversion_succeeds(tmp_path):
+    source = _make_eml_with_disguised_pdf_attachment(tmp_path / "message.eml")
+    occ = _eml_occurrence(source)
+    dest = tmp_path / "out.pdf"
+
+    result = email_conv.convert(occ, dest, AppConfig())
+
+    assert result.outcome.value == "success"
+    # Header page + a divider page + the recovered PDF's own page(s) --
+    # never just the one header page a silently-dropped/garbled
+    # attachment would have produced.
+    reader = PdfReader(str(dest))
+    assert len(reader.pages) >= 2
+
+    text = read_pdf_text(dest)
+    assert "Please see the attached document" in text
+    # The raw base64 must never appear anywhere in the final PDF's text.
+    assert "AAAAAAAAAAAAAAAAAAAA" not in text
+
+
+def test_garbled_email_body_that_is_not_a_recognized_file_still_shows_a_placeholder(tmp_path):
+    # A body that's clearly not prose (fails looks_like_garbled_non_prose)
+    # but doesn't decode to any recognized file signature either (so
+    # decode_if_disguised_binary_attachment can't recover a real file
+    # from it) -- must still never be rendered verbatim.
+    garbled_body = "A" * 40 + "B" * 40 + "C" * 40 + "D" * 40 + "E" * 40 + "F" * 40
+    source = make_eml(tmp_path / "garbled.eml", subject="Garbled", body=garbled_body)
+    occ = _eml_occurrence(source)
+    dest = tmp_path / "out.pdf"
+
+    result = email_conv.convert(occ, dest, AppConfig())
+
+    assert result.outcome.value == "success"
+    assert any("did not look like readable text" in w for w in result.warnings)
+    text = read_pdf_text(dest)
+    assert garbled_body not in text
+    assert "could not be verified as readable text" in text

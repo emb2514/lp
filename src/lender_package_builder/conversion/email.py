@@ -10,6 +10,24 @@ single PDF.
 Parsing is entirely local. `.eml` uses the standard-library `email`
 package; `.msg` uses the pure-Python `extract_msg` parser (no Outlook
 installation required).
+
+REAL, CONFIRMED USER-FACING BUG this module guards against directly:
+"i get a full page of [base64 characters]... no one but a computer
+could understand that." Reproduced exactly: a MIME part carrying an
+attachment with NO Content-Type and NO Content-Transfer-Encoding header
+at all (a malformed but real message some document-delivery systems
+produce) defaults to "text/plain" per the MIME spec and is never
+base64-decoded -- its raw, still-encoded text then looks like one very
+long paragraph and would otherwise be rendered verbatim as an
+unreadable page. `_parse_eml` now recognizes this pattern (see
+`base.decode_if_disguised_binary_attachment`) and routes it through the
+normal attachment pipeline instead of treating it as body text, so the
+actual embedded document (a PDF, an Office file, an image) shows up as
+a real, readable page -- and `_render_header_pdf` refuses to render any
+body text that still doesn't look like real prose even after that,
+using a clearly labeled placeholder instead (see
+`base.looks_like_garbled_non_prose`) rather than ever silently showing
+something unreadable.
 """
 
 from __future__ import annotations
@@ -32,7 +50,14 @@ from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTempl
 from ..cancellation import check_cancelled
 from ..hashing import sha256_of_file
 from ..models import ConversionOutcome, ConversionResult, SourceOccurrence
-from .base import failed_result, make_placeholder_pdf, text_to_paragraph_chunks, validate_pdf
+from .base import (
+    decode_if_disguised_binary_attachment,
+    failed_result,
+    looks_like_garbled_non_prose,
+    make_placeholder_pdf,
+    text_to_paragraph_chunks,
+    validate_pdf,
+)
 
 NAME = "email-mime"
 
@@ -79,9 +104,10 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
     preserved: list[tuple[str, Path]] = []
 
     header_pdf = work_dir / "00_header.pdf"
-    header_error = _render_header_pdf(data, header_pdf)
+    header_error, header_warnings = _render_header_pdf(data, header_pdf)
     if header_error:
         return failed_result(f"Could not render email header/body page: {header_error}")
+    warnings.extend(header_warnings)
 
     writer = PdfWriter()
     _append_pdf_pages(writer, header_pdf)
@@ -160,7 +186,14 @@ def _append_pdf_pages(writer: PdfWriter, pdf_path: Path) -> None:
         writer.add_page(page)
 
 
-def _render_header_pdf(data: _EmailData, dest_path: Path) -> str | None:
+def _render_header_pdf(data: _EmailData, dest_path: Path) -> tuple[str | None, list[str]]:
+    """Returns `(error, warnings)` -- `error` set means the page could
+    not be built at all; `warnings` is populated when the body was
+    replaced with a placeholder because it didn't look like real text
+    (see this module's docstring).
+    """
+
+    warnings: list[str] = []
     title_style = ParagraphStyle(name="Title", fontName="Helvetica-Bold", fontSize=15, leading=19)
     label_style = ParagraphStyle(name="Label", fontName="Helvetica-Bold", fontSize=10, leading=14)
     body_style = ParagraphStyle(name="Body", fontName="Helvetica", fontSize=10, leading=14)
@@ -179,15 +212,32 @@ def _render_header_pdf(data: _EmailData, dest_path: Path) -> str | None:
     flowables.append(Paragraph("Message body:", label_style))
     flowables.append(Spacer(1, 4))
     body = data.body_text.strip() or "(This message has no text body.)"
-    # REAL USER-FACING BUG: this used to always render the body with a
-    # monospace font in a Preformatted flowable, regardless of content --
-    # an ordinary email body read exactly like a block of code, not a
-    # message. Reflowed into normal paragraphs with the same proportional
-    # font as everything else on this page. See
-    # base.text_to_paragraph_chunks's docstring.
-    for chunk in text_to_paragraph_chunks(body):
-        flowables.append(Paragraph(escape(chunk), body_style))
-        flowables.append(Spacer(1, 4))
+    if looks_like_garbled_non_prose(body):
+        # General safety net (see this module's docstring): never
+        # silently render content that doesn't look like real prose --
+        # a clearly labeled placeholder instead, and a warning the
+        # report surfaces, so this is never mistaken for a working page.
+        warnings.append(
+            "This message's body did not look like readable text (it may be corrupted or "
+            "mis-encoded) and was not displayed."
+        )
+        flowables.append(
+            Paragraph(
+                "(This message's body could not be verified as readable text and was not "
+                "displayed. See the processing report.)",
+                body_style,
+            )
+        )
+    else:
+        # REAL USER-FACING BUG: this used to always render the body with
+        # a monospace font in a Preformatted flowable, regardless of
+        # content -- an ordinary email body read exactly like a block of
+        # code, not a message. Reflowed into normal paragraphs with the
+        # same proportional font as everything else on this page. See
+        # base.text_to_paragraph_chunks's docstring.
+        for chunk in text_to_paragraph_chunks(body):
+            flowables.append(Paragraph(escape(chunk), body_style))
+            flowables.append(Spacer(1, 4))
 
     if data.attachments:
         flowables.append(Spacer(1, 14))
@@ -210,9 +260,9 @@ def _render_header_pdf(data: _EmailData, dest_path: Path) -> str | None:
     try:
         doc.build(flowables)
     except Exception as exc:
-        return str(exc)
+        return str(exc), warnings
     is_valid, _, error = validate_pdf(dest_path)
-    return None if is_valid else error
+    return (None, warnings) if is_valid else (error, warnings)
 
 
 def _render_divider_pdf(name: str, size_bytes: int, dest_path: Path) -> None:
@@ -258,11 +308,27 @@ def _parse_eml(path: Path) -> _EmailData:
             except (LookupError, ValueError):
                 payload = b""
             attachments.append((filename or f"attachment_{len(attachments) + 1}", payload))
-        elif content_type == "text/plain" and not body_text:
+        elif content_type == "text/plain":
             try:
-                body_text = part.get_content()
+                candidate = part.get_content()
             except (LookupError, ValueError):
-                body_text = ""
+                candidate = ""
+            # A part with no Content-Type/Content-Transfer-Encoding at
+            # all defaults to "text/plain" per the MIME spec and is
+            # never base64-decoded -- see this module's docstring for
+            # the confirmed real-world failure this guards against.
+            # Checked unconditionally (not gated on `not body_text`,
+            # unlike the plain body-text assignment below it) -- a
+            # disguised attachment can appear anywhere among a
+            # message's parts, not only before the real body text, and
+            # must never be silently dropped just because an earlier
+            # part already supplied the body.
+            disguised = decode_if_disguised_binary_attachment(candidate)
+            if disguised is not None:
+                decoded_bytes, ext, kind = disguised
+                attachments.append((f"embedded_{kind.split('/')[0].lower()}_{len(attachments) + 1}{ext}", decoded_bytes))
+            elif not body_text:
+                body_text = candidate
         elif content_type == "text/html" and not body_text:
             try:
                 html_content = part.get_content()
@@ -298,6 +364,16 @@ def _parse_msg(path: Path) -> _EmailData:
             data = getattr(att, "data", None)
             if isinstance(data, (bytes, bytearray)):
                 attachments.append((name, bytes(data)))
+
+        # Defense in depth -- same guard as _parse_eml, for the (less
+        # likely, since .msg properties are normally well-formed, but
+        # still worth covering) case body_text itself is disguised
+        # undecoded binary data.
+        disguised = decode_if_disguised_binary_attachment(body_text)
+        if disguised is not None:
+            decoded_bytes, ext, kind = disguised
+            attachments.insert(0, (f"embedded_{kind.split('/')[0].lower()}_1{ext}", decoded_bytes))
+            body_text = ""
 
         return _EmailData(subject, from_, to, cc, date, body_text, attachments)
     finally:

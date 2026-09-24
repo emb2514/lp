@@ -1,5 +1,50 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 8): PRECISELY REPRODUCED AND FIXED the real "full page of base64" bug,
+## plus a general safety net so this class of bug can never silently reach a final package again
+
+Direct follow-up to parts 6-7. The user pasted the actual garbage text they were seeing. Decoded
+it directly (not guessed) -- it was the literal raw bytes of a real PDF (title "Closing Disclosure
+(Kevin Michael Jones)", producer "Docutech Corporation"/iTextSharp). That ruled out the font and
+HTML-rendering fixes as the cause and pointed at something email-attachment-related. Root cause,
+reproduced EXACTLY via a constructed test message before touching any code: a MIME part carrying an
+attachment with NO `Content-Type` and NO `Content-Transfer-Encoding` header at all -- a malformed
+but real pattern some document-delivery systems produce -- defaults to `text/plain` per the MIME
+spec itself and is therefore never base64-decoded by Python's own email library. Its raw, still-
+encoded text then looks like one very long paragraph with no blank lines, and `_parse_eml` was
+treating it as the message body verbatim.
+
+**Fixed** with two layers:
+1. **Precise recovery** (`base.decode_if_disguised_binary_attachment`): detects base64-shaped text
+   that decodes to a RECOGNIZED file signature (PDF, ZIP/Office, legacy Office, JPEG, PNG) -- never
+   guesses on merely base64-shaped short strings, only long content that decodes to an actual known
+   file. `_parse_eml` (and defensively `_parse_msg`, for the less-likely case a `.msg`'s own body
+   property is similarly affected) now checks EVERY text/plain part for this, not just whichever
+   part happens to arrive before the real body text is already set (a real gap caught by the
+   pipeline-level test: a message with a genuine body-text part FIRST and the disguised attachment
+   SECOND silently dropped the attachment entirely under the initial version of this fix, since the
+   check was wrongly gated behind `not body_text`) -- recovered content is routed through the
+   normal attachment pipeline (divider page + real converted PDF pages), so the actual document
+   shows up as a real, readable page instead of vanishing OR showing as garbage.
+2. **General safety net** (`base.looks_like_garbled_non_prose`): ordinary prose is always roughly
+   15-20% whitespace; base64/hex/other encoded binary data has under 3%, even accounting for MIME's
+   76-character line wraps. Applied to email body rendering (`email.py::_render_header_pdf`, which
+   now returns `(error, warnings)` instead of just `error`) and HTML's last-resort text-extraction
+   branch (`html.py`) -- either replaces the content with a clearly labeled "could not be verified
+   as readable text" placeholder and a report warning, instead of ever silently rendering it. This
+   directly delivers the "bad conversion detection... must not silently continue and call the
+   package successful" requirement from earlier in this session, scoped to the specific, now-
+   confirmed failure mode instead of guessing at a broader mechanism.
+
+10 new tests in `test_html_email_rendering.py`: direct unit coverage for both `base.py` helpers
+(recognizes a real embedded PDF; never guesses on ordinary text, short base64-shaped strings, or
+valid base64 of unrecognized content), a constructed-MIME reproduction of the exact real-world
+malformed message (proves the body text is clean AND the real PDF is recovered as an actual page,
+never appearing as raw base64 anywhere in the final PDF's text), and a message whose body is
+garbled but not a recognized file (proves the general safety net still catches it). Confirmed all
+10 fail against the pre-fix code with the stash-revert-restore method already established this
+session. Full suite: 501 passing (was 491).
+
 ## RC3 IN PROGRESS (part 7): HTML files now render via a REAL LibreOffice "Print to PDF"-quality
 ## conversion, not a hand-reconstructed text-extraction one
 
