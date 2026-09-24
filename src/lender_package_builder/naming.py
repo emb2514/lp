@@ -78,17 +78,26 @@ def _borrower_prefix(identity: PackageIdentity) -> str:
 
 
 def main_folder_name(identity: PackageIdentity) -> str:
-    """The main output folder name, e.g. "True, Michael, 6192278785" or,
-    for a non-proceeding file, "True, Michael, Adverse, 6192278785".
-    Falls back to a generic name only when no identity field at all was
-    provided (defense in depth -- the GUI always collects at least a
-    last name before processing).
+    """The main output folder name, e.g. "True, Michael, UWM, 6192278785"
+    or, for a non-proceeding file, "True, Michael, Adverse, UWM,
+    6192278785". Falls back to a generic name only when no identity
+    field at all was provided (defense in depth -- the GUI always
+    collects at least a last name before processing).
+
+    REAL USER-FACING BUG: `identity.lender` was never included here at
+    all, even though every filename inside the folder
+    (`package_part_filename`, `key_document_filename`) already includes
+    it when set -- the one place a user would look first (the folder
+    name itself, and its live preview in Advanced Settings) silently
+    left it out.
     """
 
     identity = clean_identity(identity)
     parts = [p for p in (identity.last_name, identity.first_name) if p]
     if identity.is_adverse:
         parts.append("Adverse")
+    if identity.lender:
+        parts.append(identity.lender)
     if identity.loan_number:
         parts.append(identity.loan_number)
     return ", ".join(parts) if parts else "Lender Package"

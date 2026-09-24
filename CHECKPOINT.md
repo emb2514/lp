@@ -1,5 +1,23 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 10): real bug -- the Lender field was missing from the main output
+## folder name (and its live Advanced Settings preview), even though every filename inside that
+## folder already included it
+
+User report: "the Lender isnt included id the file or folder name." Verified directly (not
+guessed): `package_part_filename()` and `key_document_filename()` already included
+`identity.lender` correctly -- confirmed end-to-end through a real build
+("Doe, John, Lender Package, UWM, 123456.pdf") -- but `main_folder_name()`, the ONLY function that
+computes the actual output folder name (`cli.py::_compute_output_dir`) and its live preview in
+Advanced Settings, never referenced `identity.lender` at all. The one place a user would look
+first silently left it out.
+
+**Fixed**: `main_folder_name()` now includes the lender segment (ordered after "Adverse", before
+the loan number, matching the same relative order already used in the file-naming functions) --
+verified end-to-end: `Doe, John, UWM, 123456` instead of `Doe, John, 123456`. 5 new tests in
+`test_naming.py` (lender alone, lender + adverse together, lender without a loan number, plus the
+existing test suite confirms nothing else changed). Full suite: 511 passing (was 508).
+
 ## RC3 IN PROGRESS (part 9): MISMO/ULDD loan-data XML delivered as a `.txt` file now renders
 ## indented and readable instead of blindly chopped every 100 characters
 

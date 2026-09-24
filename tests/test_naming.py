@@ -26,6 +26,28 @@ def test_main_folder_name_adverse():
     assert naming.main_folder_name(identity) == "True, Michael, Adverse, 6192278785"
 
 
+# REAL USER-FACING BUG: identity.lender was never included in the main
+# folder name at all, even though every filename inside that folder
+# already included it -- the one place a user would look first (the
+# folder itself, and its live preview in Advanced Settings) silently
+# left it out.
+def test_main_folder_name_includes_lender():
+    identity = _identity(last_name="True", first_name="Michael", loan_number="6192278785", lender="UWM")
+    assert naming.main_folder_name(identity) == "True, Michael, UWM, 6192278785"
+
+
+def test_main_folder_name_lender_and_adverse_together():
+    identity = _identity(
+        last_name="True", first_name="Michael", loan_number="6192278785", lender="UWM", is_adverse=True
+    )
+    assert naming.main_folder_name(identity) == "True, Michael, Adverse, UWM, 6192278785"
+
+
+def test_main_folder_name_lender_without_loan_number():
+    identity = _identity(last_name="True", first_name="Michael", lender="UWM")
+    assert naming.main_folder_name(identity) == "True, Michael, UWM"
+
+
 # TEST 3 - invalid Windows filename characters are stripped
 def test_main_folder_name_strips_invalid_windows_characters():
     identity = _identity(last_name='O"Brien:<Test>', first_name="Mich/ael\\", loan_number="619|2278*785?")
