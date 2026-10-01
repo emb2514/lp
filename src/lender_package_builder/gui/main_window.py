@@ -9,6 +9,7 @@ to the structured events/results they emit.
 from __future__ import annotations
 
 import dataclasses
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -35,7 +36,7 @@ from ..models import PackageIdentity
 from ..progress import ProgressEvent, ProgressStage
 from . import dialogs
 from .formatting import format_bytes
-from .state import InputSelection, classify_input
+from .state import InputSelection, classify_input, stage_dropped_files
 from .widgets.advanced_settings import AdvancedSettingsWidget
 from .widgets.compare_workspace import CompareWorkspace
 from .widgets.drop_zone import DropZone, SelectedInputCard
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
 
         self.current_selection: InputSelection | None = None
         self.is_processing = False
+        self._staged_temp_dir: Path | None = None
 
         self._estimate_thread = None
         self._estimate_worker = None
@@ -299,6 +301,7 @@ class MainWindow(QMainWindow):
 
         self.drop_zone = DropZone()
         self.drop_zone.input_selected.connect(self._on_input_selected)
+        self.drop_zone.multiple_files_selected.connect(self._on_multiple_files_selected)
         self.drop_zone.multiple_items_rejected.connect(self._on_multiple_items_rejected)
         layout.addWidget(self.drop_zone)
 
@@ -354,10 +357,20 @@ class MainWindow(QMainWindow):
         self.build_button.setEnabled(True)
         self._start_estimate(path)
 
+    def _on_multiple_files_selected(self, paths: list[Path]) -> None:
+        try:
+            staged_dir = stage_dropped_files(paths)
+        except OSError as exc:
+            self._on_multiple_items_rejected(f"Could not bundle those files together: {exc}")
+            return
+        self._staged_temp_dir = staged_dir
+        self._on_input_selected(staged_dir)
+
     def _on_multiple_items_rejected(self, message: str) -> None:
         dialogs.show_multiple_items_message(self, message)
 
     def _on_change_input(self) -> None:
+        self._cleanup_staged_temp_dir()
         self.current_selection = None
         self.selected_card.hide()
         self.advanced_settings.hide()
@@ -365,6 +378,13 @@ class MainWindow(QMainWindow):
         self.drop_zone.show()
         self.build_button.setEnabled(False)
         self.stack.setCurrentWidget(self.input_page)
+
+    def _cleanup_staged_temp_dir(self) -> None:
+        # Only ever removes a folder THIS app created to bundle a loose
+        # multi-file drop -- never a real folder the user chose.
+        if self._staged_temp_dir is not None:
+            shutil.rmtree(self._staged_temp_dir, ignore_errors=True)
+            self._staged_temp_dir = None
 
     def _start_estimate(self, path: Path) -> None:
         worker = CallableWorker()
@@ -560,6 +580,7 @@ class MainWindow(QMainWindow):
             dialogs.warn_comparison_in_progress(self)
             event.ignore()
             return
+        self._cleanup_staged_temp_dir()
         event.accept()
 
 

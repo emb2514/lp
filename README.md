@@ -185,9 +185,11 @@ below) -- not a real lender package.
 
 Highlights:
 
-- **Drag-and-drop or Browse File/Browse Folder** -- accepts exactly one
-  ZIP, folder, or document at a time; dropping more than one shows a
-  friendly message instead of silently picking one.
+- **Drag-and-drop or Browse File/Browse Folder** -- accepts one ZIP,
+  folder, or document, or several loose files dropped at once (bundled
+  automatically into a single package, no need to put them in a folder
+  first); an ambiguous drop (a mix of files and folders, or more than
+  one folder) shows a friendly message instead of silently picking one.
 - **Advanced Settings** (collapsed by default) exposes the same
   `max_pages_per_part` / `max_size_mb_per_part` ceilings as the CLI,
   with the same "these are maximums, not targets, and no document is

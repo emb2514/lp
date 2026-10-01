@@ -1,5 +1,66 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 14): app icon re-themed to a user-supplied color palette
+
+Real user request: "make the app icon follow a theme" with a supplied pink/coral/orange/purple
+palette (two reference swatch images). Sampled the exact hex values from both images directly
+(`PIL.Image.getpixel`, not guessed) rather than eyeballing colors from the screenshots. Re-skinned
+the existing icon artwork (two overlapping documents + a checkmark badge -- unchanged composition,
+only asked to "follow a theme", not be redesigned) in `gui/assets/app_icon.svg`, the single source
+every other icon surface (window icon, taskbar, About dialog, and the generated Windows `.ico` via
+`packaging/generate_icon.py`) already renders from:
+
+- Background: a 4-stop diagonal gradient sweeping pink (`#F6A2B8`) -> coral (`#F15D5D`) -> orange
+  (`#F0B35A`) -> deep purple (`#883F8C`), spanning the hue range of both reference images.
+- Document title-bar accent: deep berry (`#97265E`); placeholder text lines recolored from a cool
+  blue-gray to a warm dusty pink-gray (`#D9BFC9`) so they read as warm-neutral against the new
+  palette instead of clashing.
+- Checkmark badge: recolored from green to the same deep purple (`#883F8C`) as the gradient's own
+  end stop, keeping every color in the icon drawn from one palette.
+
+Verified by rasterizing the regenerated `.ico` at 16/32/48/128/256px and inspecting a side-by-side
+preview -- the gradient and checkmark both stay legible down to 16px, not just at full size. No
+test asserts specific icon colors (only that the SVG file exists), so nothing needed updating there.
+
+## RC3 IN PROGRESS (part 13): new feature -- drag-and-drop several loose files at once to build one
+## package, no folder required first
+
+Real user request: "would it be possible for me to drag and drop a bunch of files in at once to
+make one package? so i can eliminate the step of creating a folder and putting them all in there
+first before i can drag and drop it into the app." Previously `DropZone` rejected ANY drop of more
+than one item outright, including plain loose files with no enclosing folder.
+
+`DropZone._handle_paths` now distinguishes three cases: one path (unchanged), two or more paths
+that are ALL plain files (new `multiple_files_selected` signal), or anything else ambiguous -- a mix
+of files and folders, or more than one folder -- which still shows the existing friendly rejection
+message (reworded to explain the new loose-files case).
+
+New `state.stage_dropped_files(paths) -> Path`: bundles the dropped files into one new folder next
+to the first dropped file (named "Dropped Files", versioned on collision via the same
+`naming.resolve_versioned_output_dir` the real output folder itself uses), so the rest of the
+pipeline treats it exactly like a real folder a user organized by hand -- zero changes needed to
+`build_package`, `inventory`, or the CLI. Files are hardlinked in when possible (instant, no extra
+disk space -- matters given the user's standing performance concerns) and copied only when a
+hardlink isn't possible (e.g. sources on different drives); the pipeline only ever reads input
+files, confirmed it never modifies them in place, so either way the originals are untouched. A
+filename collision between two dropped files from different source folders is disambiguated with a
+" (2)" suffix rather than overwriting one.
+
+`MainWindow` tracks the staged folder it created (`_staged_temp_dir`) and cleans it up -- and ONLY
+ever a folder this app created, never a real folder the user chose -- when the user changes the
+input or closes the window; a build already in flight or a "Try Again" retry is never affected,
+since cleanup only happens going into a fresh input selection.
+
+12 new tests (`test_multi_file_drop.py`): bundling, original files left untouched, hardlink used
+when possible (confirmed via inode equality) with a monkeypatched fallback-to-copy path, filename
+collision disambiguation, versioning on repeat calls, the `DropZone` signal wiring, cleanup on
+"Change Input" and on window close, and a real end-to-end build through the actual background
+QThread worker (mirrors `test_gui_end_to_end.py`'s ZIP-based version) proving two dropped documents
+really do land in one built package. Updated `test_input_selection.py`'s old "any multiple items
+rejected" test, which directly encoded the now-intentionally-changed behavior, into two tests for
+the cases that are still rejected (mixed files+folders, multiple folders). Full suite: 558 passing
+(was 545).
+
 ## RC3 IN PROGRESS (part 12): new feature -- batch mode (CLI only so far; GUI integration still
 ## pending)
 

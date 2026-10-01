@@ -38,12 +38,15 @@ def test_valid_folder_drop_is_accepted_as_one_input(window, tmp_path, qtbot):
     assert window.build_button.isEnabled()
 
 
-# TEST 4 - MULTIPLE INPUTS REJECTED
-def test_multiple_dropped_items_are_rejected_not_silently_chosen(window, tmp_path, qtbot, monkeypatch):
+# TEST 4 - AMBIGUOUS MULTIPLE INPUTS REJECTED (a mix of files and
+# folders, or more than one folder, is still ambiguous -- only a drop
+# of loose FILES alone is bundled into one package; see
+# test_multi_file_drop.py for that).
+def test_mixed_files_and_folders_dropped_together_are_rejected(window, tmp_path, qtbot, monkeypatch):
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    file_b = tmp_path / "b.txt"
-    file_b.write_text("b")
+    folder_b = tmp_path / "folder_b"
+    folder_b.mkdir()
 
     shown_messages = []
     monkeypatch.setattr(
@@ -52,10 +55,29 @@ def test_multiple_dropped_items_are_rejected_not_silently_chosen(window, tmp_pat
     )
 
     with qtbot.waitSignal(window.drop_zone.multiple_items_rejected, timeout=2000):
-        window.drop_zone._handle_paths([file_a, file_b])
+        window.drop_zone._handle_paths([file_a, folder_b])
 
     assert window.current_selection is None
     assert not window.build_button.isEnabled()
+    assert shown_messages == [MULTIPLE_ITEMS_MESSAGE]
+
+
+def test_multiple_folders_dropped_together_are_rejected(window, tmp_path, qtbot, monkeypatch):
+    folder_a = tmp_path / "folder_a"
+    folder_a.mkdir()
+    folder_b = tmp_path / "folder_b"
+    folder_b.mkdir()
+
+    shown_messages = []
+    monkeypatch.setattr(
+        "lender_package_builder.gui.dialogs.show_multiple_items_message",
+        lambda parent, message: shown_messages.append(message),
+    )
+
+    with qtbot.waitSignal(window.drop_zone.multiple_items_rejected, timeout=2000):
+        window.drop_zone._handle_paths([folder_a, folder_b])
+
+    assert window.current_selection is None
     assert shown_messages == [MULTIPLE_ITEMS_MESSAGE]
 
 

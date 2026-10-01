@@ -12,17 +12,24 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QPushBut
 from ..formatting import format_bytes
 from ..state import InputSelection
 
-MULTIPLE_ITEMS_MESSAGE = "Please select one ZIP, folder, or source file at a time."
+MULTIPLE_ITEMS_MESSAGE = (
+    "Please drop a single ZIP or folder, or drop several loose files to bundle them into one "
+    "package -- not a mix of folders and files."
+)
 
 
 class DropZone(QFrame):
     """Large drag-and-drop target with Browse File / Browse Folder
     fallback buttons. Emits `input_selected` for exactly one valid
-    path, or `multiple_items_rejected` when more than one item is
-    dropped at once.
+    path, `multiple_files_selected` when two or more loose files (no
+    folders) are dropped at once -- so a loan's documents can be
+    bundled into one package without first making a folder for them --
+    or `multiple_items_rejected` for anything else ambiguous (a mix of
+    files and folders, more than one folder, etc.).
     """
 
     input_selected = Signal(Path)
+    multiple_files_selected = Signal(list)
     multiple_items_rejected = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
@@ -37,13 +44,16 @@ class DropZone(QFrame):
         layout.setSpacing(10)
         layout.addStretch(1)
 
-        title = QLabel("Drop one lender ZIP, folder, or document here")
+        title = QLabel("Drop a lender ZIP, folder, or one or more documents here")
         title.setObjectName("DropZoneTitle")
         title.setWordWrap(True)
         title.setAlignment(_center_alignment())
         layout.addWidget(title)
 
-        hint = QLabel("Accepts a ZIP file, a folder, or a single supported document.")
+        hint = QLabel(
+            "Accepts a ZIP file, a folder, or one or more documents -- drop several loose files "
+            "at once to bundle them into a single package."
+        )
         hint.setObjectName("DropZoneHint")
         hint.setWordWrap(True)
         hint.setAlignment(_center_alignment())
@@ -107,14 +117,27 @@ class DropZone(QFrame):
     # -- shared -----------------------------------------------
 
     def _handle_paths(self, paths: list[Path]) -> None:
-        if len(paths) != 1:
-            self.multiple_items_rejected.emit(MULTIPLE_ITEMS_MESSAGE)
+        if not paths:
             return
-        path = paths[0]
-        if not path.exists():
-            self.multiple_items_rejected.emit(f"That path could not be found: {path}")
+
+        if len(paths) == 1:
+            path = paths[0]
+            if not path.exists():
+                self.multiple_items_rejected.emit(f"That path could not be found: {path}")
+                return
+            self.input_selected.emit(path)
             return
-        self.input_selected.emit(path)
+
+        missing = [p for p in paths if not p.exists()]
+        if missing:
+            self.multiple_items_rejected.emit(f"That path could not be found: {missing[0]}")
+            return
+
+        if all(p.is_file() for p in paths):
+            self.multiple_files_selected.emit(paths)
+            return
+
+        self.multiple_items_rejected.emit(MULTIPLE_ITEMS_MESSAGE)
 
 
 def _center_alignment():

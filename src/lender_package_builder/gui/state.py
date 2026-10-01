@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import os
+import shutil
 from pathlib import Path
 
-from .. import archives
+from .. import archives, naming
 
 
 class InputKind(str, enum.Enum):
@@ -78,6 +80,52 @@ def _safe_size(path: Path) -> int | None:
         return path.stat().st_size
     except OSError:
         return None
+
+
+def stage_dropped_files(paths: list[Path]) -> Path:
+    """Bundles several loose dropped files into one new folder so they
+    can be processed as a single input, exactly like a real folder --
+    eliminating the "make a folder first" step for the common case of
+    a handful of documents for one loan with no shared folder yet.
+
+    The folder is created next to the first dropped file, named
+    "Dropped Files" (versioned on collision, same convention as a
+    package's own output folder). Files are hardlinked in when
+    possible -- instant, no extra disk space -- and copied only when
+    that's not possible (e.g. sources on different drives); either way
+    the pipeline only ever reads input files, never modifies them in
+    place, so the originals are untouched. Original filenames are kept
+    (they matter for document-type detection); a name collision is
+    disambiguated with a " (2)", " (3)", ... suffix rather than
+    overwriting.
+    """
+
+    staging_dir = naming.resolve_versioned_output_dir(paths[0].parent, "Dropped Files")
+    staging_dir.mkdir(parents=True)
+
+    used_names: set[str] = set()
+    for source in paths:
+        dest_name = _unique_filename(source.name, used_names)
+        used_names.add(dest_name)
+        dest = staging_dir / dest_name
+        try:
+            os.link(source, dest)
+        except OSError:
+            shutil.copy2(source, dest)
+
+    return staging_dir
+
+
+def _unique_filename(name: str, used: set[str]) -> str:
+    if name not in used:
+        return name
+    stem, suffix = Path(name).stem, Path(name).suffix
+    counter = 2
+    while True:
+        candidate = f"{stem} ({counter}){suffix}"
+        if candidate not in used:
+            return candidate
+        counter += 1
 
 
 @dataclasses.dataclass
