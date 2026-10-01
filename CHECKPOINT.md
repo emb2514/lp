@@ -1,5 +1,52 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 18): CRITICAL FIX -- "Review Uncertain Matches" options were not
+## selectable at all, plus made the dialog's decisions actually legible
+
+Real user reports, in order: (1) looking at a real merged-containment match -- a 10-page "standalone"
+document offered as the only exclusion target against a 5-page "container" -- "im confused. theres no
+option to make here atp"; (2) immediately after, on the same dialog -- "it says 'keep both' and 'mark
+as duplicate' as what it seems like selectable options but i cant select them." The second report is
+the more serious one: confirmed directly (constructing the real dialog and simulating an actual mouse
+click, not just `.setChecked()` as every existing test in this suite already did -- a real gap in test
+coverage this exposed) that clicking the VISIBLE TEXT of either radio button did nothing.
+
+Root cause, confirmed by direct experimentation: `QRadioButton`/`QCheckBox` restrict their real
+clickable area to their own rendered content's natural size (Qt's `SE_RadioButtonClickArea`), NOT
+however wide a layout stretches the widget. Both options' labels included either a fixed sentence or,
+worse, an entire filename (`f"Mark as duplicate to exclude: {name}"`) as the radio button's OWN text --
+when the parent `QVBoxLayout` stretched that radio to the card's full width (routinely 600-900px) while
+the rendered content needed less (or, for a very long filename, forced a horizontal scrollbar instead,
+visible in the user's own screenshot), most of that area silently stopped registering clicks. No
+existing test caught this because every one used `.setChecked(True)` directly, never a simulated mouse
+click at a realistic position.
+
+**Fixed**: each option's own clickable radio text is now short and fixed ("Keep Both", "Exclude this
+document:"), with any filename shown in a SEPARATE, word-wrapped `QLabel` beside it, each wrapped in
+its own `QHBoxLayout` with a trailing stretch so the radio itself is never stretched beyond its natural
+width. This fixes clickability AND eliminates the horizontal scrollbar (the long filename now wraps
+instead of forcing one continuous line).
+
+Also fixed the legibility problem from report (1) in the same pass: `OverlapFinding` gained
+`standalone_page_range`-equivalent plumbing -- `UncertainMatch` gained `container_match_page_index` (the
+0-based page actually matched within the container; a container can be many pages long, so showing its
+page 0 would usually show something unrelated), populated in `cli._build_uncertain_matches()` from
+`OverlapFinding.contained_page_range`. The match detail text now states the real matched page(s) ("The
+match was found at pages 2-6 of the merged package") instead of only a bare confidence score. Each
+match card now also shows a REAL page thumbnail for both documents -- reusing the same
+`pdf_render.render_page_thumbnail_png()` Compare Packages and the duplicate swipe dialog already use --
+rendered at the actual matched page for the container side, not page 0, via the new
+`ensure_converted_pdfs_available()` call already added for the swipe dialog in part 17.
+
+20 new/extended tests: `test_build_uncertain_matches.py` (new -- page-range text and
+`container_match_page_index` for single-page and multi-page matches, omitted when there's no range,
+content_duplicate matches never set it), and `test_uncertain_review_dialog.py` gained real-mouse-click
+regression tests (confirmed one of them genuinely FAILS against the pre-fix dialog code, via a targeted
+git-stash check -- the exact rigor this bug slipping through in the first place argued for), a check
+that the radio's own label never contains the filename, and thumbnail-rendering tests including one
+confirming the container thumbnail renders at the matched page index, not page 0. Full suite: 601
+passing (was 591).
+
 ## RC3 IN PROGRESS (part 17): new feature -- "Review Possible Duplicates" swipe dialog
 
 Real user request: "i need to tripple check we arent excluding documents because it could be a

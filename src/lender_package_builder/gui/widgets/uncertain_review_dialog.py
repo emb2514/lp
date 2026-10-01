@@ -16,16 +16,44 @@ Final package (never OG, never any original source file), reruns every
 integrity check, and rewrites every report so the on-disk audit trail
 (`Uncertain_Match_Review_Log.txt` and the other reports) always
 reflects the complete, current set of decisions.
+
+Each card shows a real page thumbnail for both documents (the
+container's thumbnail is rendered at the actual page the match was
+found at, via `UncertainMatch.container_match_page_index` -- a
+container can be many pages long, so its page 0 would usually show
+something unrelated to the match) -- a real user, looking at a
+confidence score and two bare filenames with no way to see what was
+actually compared, said exactly that: "im confused. theres no option
+to make here atp."
+
+Every selectable option's own clickable label is kept short ("Keep
+Both", "Exclude this document") with any long filename shown in a
+SEPARATE label beside it, never appended into the radio button's own
+text. `QRadioButton`/`QCheckBox` restrict their actual clickable area to
+their own rendered content (`QStyle`'s click-area sub-element), not to
+whatever width a layout happens to stretch them to -- with a 100+
+character filename as the button's own label, the layout stretches the
+button far beyond that text's natural width, and most of that stretched
+area silently does not register a click at all. A second real user
+report, on this exact dialog, confirmed it directly: "it says 'keep
+both' and 'mark as duplicate' as what it seems like selectable options
+but i cant select them."
 """
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QRadioButton,
@@ -37,11 +65,14 @@ from PySide6.QtWidgets import (
 from ... import review_decisions
 from ...config import AppConfig
 from ...models import RunResult, SourceOccurrence, UncertainMatch
+from ...pdf_render import render_page_thumbnail_png
 
 _KIND_LABELS = {
     "content_duplicate": "Possible content duplicate",
     "merged_containment": "Possible merged-package containment",
 }
+
+_THUMBNAIL_MAX_DIMENSION_PX = 160
 
 
 def _describe_occurrence(occ: SourceOccurrence | None, document_id: str) -> str:
@@ -51,6 +82,26 @@ def _describe_occurrence(occ: SourceOccurrence | None, document_id: str) -> str:
     if occ.version_classification:
         detail += f"  [{occ.version_classification}]"
     return detail
+
+
+def _thumbnail_label(occ: SourceOccurrence | None, page_index: int) -> QLabel:
+    label = QLabel()
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setFixedSize(_THUMBNAIL_MAX_DIMENSION_PX, _THUMBNAIL_MAX_DIMENSION_PX)
+    label.setObjectName("Card")
+    if occ is None or occ.converted_pdf_path is None:
+        label.setText("(preview\nunavailable)")
+        return label
+    try:
+        png_bytes = render_page_thumbnail_png(occ.converted_pdf_path, page_index, _THUMBNAIL_MAX_DIMENSION_PX)
+        pixmap = QPixmap()
+        pixmap.loadFromData(png_bytes, "PNG")
+        if pixmap.isNull():
+            raise ValueError("empty pixmap")
+        label.setPixmap(pixmap)
+    except Exception:
+        label.setText("(preview\nunavailable)")
+    return label
 
 
 class UncertainReviewDialog(QDialog):
@@ -79,6 +130,13 @@ class UncertainReviewDialog(QDialog):
         # "exclude": {document_id: QRadioButton}}
         self._controls: dict[str, dict] = {}
 
+        self._tmp_dir: str | None = None
+        involved_ids = {d for m in run.uncertain_matches for d in (m.document_id_a, m.document_id_b)}
+        involved = [self.occ_by_id[d] for d in involved_ids if d in self.occ_by_id]
+        if involved:
+            self._tmp_dir = tempfile.mkdtemp(prefix="lpb_uncertain_review_")
+            review_decisions.ensure_converted_pdfs_available(run, involved, Path(self._tmp_dir))
+
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
@@ -99,6 +157,12 @@ class UncertainReviewDialog(QDialog):
         layout.addWidget(button_box)
 
         self._rebuild()
+
+    def done(self, result: int) -> None:  # noqa: N802 - Qt override
+        if self._tmp_dir is not None:
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            self._tmp_dir = None
+        super().done(result)
 
     # -- construction ----------------------------------------------
 
@@ -145,6 +209,15 @@ class UncertainReviewDialog(QDialog):
 
         occ_a = self.occ_by_id.get(match.document_id_a)
         occ_b = self.occ_by_id.get(match.document_id_b)
+
+        thumbnails_row = QHBoxLayout()
+        thumbnails_row.setSpacing(12)
+        page_b = match.container_match_page_index if match.container_match_page_index is not None else 0
+        thumbnails_row.addWidget(_thumbnail_label(occ_a, 0))
+        thumbnails_row.addWidget(_thumbnail_label(occ_b, page_b))
+        thumbnails_row.addStretch(1)
+        card_layout.addLayout(thumbnails_row)
+
         doc_a_label = QLabel(f"Document A: {_describe_occurrence(occ_a, match.document_id_a)}")
         doc_a_label.setWordWrap(True)
         card_layout.addWidget(doc_a_label)
@@ -158,19 +231,36 @@ class UncertainReviewDialog(QDialog):
         card_layout.addWidget(detail_label)
 
         if match.decision == "undecided":
+            # Each radio button's own clickable label is kept short and
+            # fixed -- a long filename lives in a SEPARATE QLabel beside
+            # it. QRadioButton restricts its real clickable area to its
+            # own rendered content, not however wide the layout stretches
+            # it -- with a long filename as the button's own text, most
+            # of that stretched width silently stopped registering
+            # clicks at all (confirmed directly: a real user could not
+            # select either option in this dialog).
             group = QButtonGroup(card)
+
+            keep_both_row = QHBoxLayout()
             keep_both = QRadioButton("Keep Both (recommended -- default, always safe)")
             keep_both.setChecked(True)
             group.addButton(keep_both)
-            card_layout.addWidget(keep_both)
+            keep_both_row.addWidget(keep_both)
+            keep_both_row.addStretch(1)
+            card_layout.addLayout(keep_both_row)
 
             exclude_radios: dict[str, QRadioButton] = {}
             for doc_id in match.excludable_ids:
                 occ = self.occ_by_id.get(doc_id)
                 name = occ.original_filename if occ else doc_id
-                radio = QRadioButton(f"Mark as duplicate to exclude: {name}")
+                exclude_row = QHBoxLayout()
+                radio = QRadioButton("Exclude this document:")
                 group.addButton(radio)
-                card_layout.addWidget(radio)
+                exclude_row.addWidget(radio)
+                name_label = QLabel(name)
+                name_label.setWordWrap(True)
+                exclude_row.addWidget(name_label, stretch=1)
+                card_layout.addLayout(exclude_row)
                 exclude_radios[doc_id] = radio
 
             self._controls[match.match_id] = {

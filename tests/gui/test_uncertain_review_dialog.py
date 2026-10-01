@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QMessageBox
 
 from fixtures import builders
 from lender_package_builder import merging, naming
@@ -285,3 +286,117 @@ def test_result_view_review_button_opens_dialog_with_config(window, tmp_path, mo
     assert opened["exec_called"] is True
     assert opened["run"] is run
     assert opened["config"] is config
+
+
+# =======================================================================
+# REGRESSION: a real user could not select either "Keep Both" or
+# "Exclude this document" at all -- confirmed directly that a long
+# filename AS the radio button's own label stretches the widget far
+# beyond its real clickable area (QRadioButton restricts clicks to its
+# own rendered content, not however wide the layout stretches it), so a
+# click anywhere past the short visible text silently did nothing.
+# =======================================================================
+
+
+
+# TEST - a real (simulated) mouse click at the CENTER of the exclude
+# option actually selects it, even with a very long filename
+def test_real_mouse_click_selects_the_exclude_option(qtbot, tmp_path):
+    config = AppConfig()
+    run = _make_run(tmp_path, config)
+    # Give D2 a long filename -- the exact shape that broke this before.
+    occ_d2 = next(o for o in run.occurrences if o.document_id == "D2")
+    occ_d2.original_filename = "Sales Contract - Purchase Agreement Addendums.14092563682798948500.pdf"
+
+    dialog = UncertainReviewDialog(run, config)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    radio = dialog._controls["UM-0001"]["exclude"]["D2"]
+    assert radio.isChecked() is False
+    # Explicit center position: a real user clicks somewhere in the
+    # middle of the visible, readable row, not literally pixel (0, 0) --
+    # qtbot.mouseClick's own default position IS (0, 0) (a direct
+    # passthrough to QTest.mouseClick), which always lands on/near the
+    # indicator regardless of this bug, so it would never have caught it.
+    qtbot.mouseClick(radio, Qt.MouseButton.LeftButton, pos=radio.rect().center())
+
+    assert radio.isChecked() is True
+    assert dialog.selected_action("UM-0001") == "D2"
+
+
+# TEST - a real mouse click also selects "Keep Both"
+def test_real_mouse_click_selects_keep_both_after_switching_away(qtbot, tmp_path):
+    config = AppConfig()
+    run = _make_run(tmp_path, config)
+    dialog = UncertainReviewDialog(run, config)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    controls = dialog._controls["UM-0001"]
+    exclude_radio = controls["exclude"]["D2"]
+    qtbot.mouseClick(exclude_radio, Qt.MouseButton.LeftButton, pos=exclude_radio.rect().center())
+    assert dialog.selected_action("UM-0001") == "D2"
+
+    keep_both_radio = controls["keep_both"]
+    qtbot.mouseClick(keep_both_radio, Qt.MouseButton.LeftButton, pos=keep_both_radio.rect().center())
+    assert dialog.selected_action("UM-0001") == "keep_both"
+
+
+# TEST - the radio button's OWN label stays short; the filename is a
+# separate label beside it, never appended into the clickable text
+def test_exclude_radio_label_never_contains_the_filename(qtbot, tmp_path):
+    config = AppConfig()
+    run = _make_run(tmp_path, config)
+    occ_d2 = next(o for o in run.occurrences if o.document_id == "D2")
+    occ_d2.original_filename = "a_very_long_filename_that_used_to_break_clicking.pdf"
+
+    dialog = UncertainReviewDialog(run, config)
+    qtbot.addWidget(dialog)
+
+    radio = dialog._controls["UM-0001"]["exclude"]["D2"]
+    assert "a_very_long_filename_that_used_to_break_clicking.pdf" not in radio.text()
+    assert len(radio.text()) < 40
+
+
+# TEST - each card shows a real, non-null thumbnail for both documents
+def test_match_card_shows_real_thumbnails_for_both_documents(qtbot, tmp_path):
+    config = AppConfig()
+    run = _make_run(tmp_path, config)
+    dialog = UncertainReviewDialog(run, config)
+    qtbot.addWidget(dialog)
+
+    card = dialog._build_match_card(run.uncertain_matches[0])
+    # The two thumbnail QLabels share objectName "Card" with the match
+    # card itself (for QSS styling) but are QLabel, not QFrame.
+    thumbnails = [w for w in card.findChildren(QLabel) if w.objectName() == "Card"]
+    assert len(thumbnails) == 2
+    for thumb in thumbnails:
+        assert thumb.pixmap() is not None
+        assert not thumb.pixmap().isNull()
+
+
+# TEST - a merged-containment match's container thumbnail is rendered at
+# the actual matched page, not page 0 of a potentially unrelated page
+def test_containment_card_renders_container_thumbnail_at_matched_page(qtbot, tmp_path, monkeypatch):
+    config = AppConfig()
+    run = _make_run(tmp_path, config, kind="merged_containment")
+    run.uncertain_matches[0].container_match_page_index = 1
+
+    rendered_pages = []
+    import lender_package_builder.gui.widgets.uncertain_review_dialog as dialog_module
+    real_render = dialog_module.render_page_thumbnail_png
+
+    def _spy_render(path, page_index, max_dim):
+        rendered_pages.append(page_index)
+        return real_render(path, page_index, max_dim)
+
+    monkeypatch.setattr(dialog_module, "render_page_thumbnail_png", _spy_render)
+
+    dialog = UncertainReviewDialog(run, config)
+    qtbot.addWidget(dialog)
+    dialog._build_match_card(run.uncertain_matches[0])
+
+    assert 1 in rendered_pages

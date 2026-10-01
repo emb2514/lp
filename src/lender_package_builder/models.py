@@ -328,6 +328,15 @@ class UncertainMatch:
     detail: str
     excludable_ids: tuple[str, ...] = ()
 
+    # "merged_containment" only: the 0-based page index into
+    # document_id_b (the container) where document_id_a's (the
+    # standalone copy's) content was actually found -- a container can
+    # be many pages long, so showing its page 0 as a representative
+    # thumbnail would usually show something unrelated to the match
+    # being reviewed. None for "content_duplicate" (whole-document
+    # comparison; page 0 of each document is shown instead).
+    container_match_page_index: int | None = None
+
     # "undecided" | "keep_both" | "excluded" -- set only by
     # review_decisions.apply_review_decision(); a decision, once made,
     # is never silently overwritten (re-deciding raises an error).

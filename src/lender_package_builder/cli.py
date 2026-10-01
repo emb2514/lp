@@ -1080,6 +1080,16 @@ def _build_uncertain_matches(
     for finding in overlap_findings:
         if finding.classification != "uncertain_overlap":
             continue
+        page_range_text = ""
+        match_page_index = None
+        if finding.contained_page_range is not None:
+            start, end = finding.contained_page_range
+            match_page_index = start
+            page_range_text = (
+                f" The match was found at page {start + 1} of the merged package."
+                if start == end
+                else f" The match was found at pages {start + 1}-{end + 1} of the merged package."
+            )
         matches.append(
             UncertainMatch(
                 match_id=f"UM-{seq:04d}",
@@ -1089,11 +1099,12 @@ def _build_uncertain_matches(
                 confidence=finding.confidence,
                 detail=(
                     f"Uncertain merged-package containment match (confidence {finding.confidence:.2f}, "
-                    f"below the {content_dedup.AUTO_REMOVE_THRESHOLD:.2f} safe auto-exclusion threshold). "
-                    "Only the standalone copy may be excluded -- the merged package is never a valid "
-                    "exclusion target."
+                    f"below the {content_dedup.AUTO_REMOVE_THRESHOLD:.2f} safe auto-exclusion threshold)."
+                    f"{page_range_text} Only the standalone copy may be excluded -- the merged package is "
+                    "never a valid exclusion target."
                 ),
                 excludable_ids=(finding.standalone_document_id,),
+                container_match_page_index=match_page_index,
             )
         )
         seq += 1
