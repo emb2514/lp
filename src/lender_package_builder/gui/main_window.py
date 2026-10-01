@@ -37,6 +37,7 @@ from ..progress import ProgressEvent, ProgressStage
 from . import dialogs
 from .formatting import format_bytes
 from .state import InputSelection, classify_input, stage_dropped_files
+from .svg_render import render_svg_pixmap
 from .widgets.advanced_settings import AdvancedSettingsWidget
 from .widgets.compare_workspace import CompareWorkspace
 from .widgets.drop_zone import DropZone, SelectedInputCard
@@ -221,10 +222,23 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(180)
+        sidebar.setFixedWidth(196)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(14, 24, 14, 20)
+        layout.setContentsMargins(16, 22, 16, 20)
         layout.setSpacing(4)
+
+        logo_row = QHBoxLayout()
+        logo_row.setSpacing(9)
+        self.sidebar_logo = QLabel()
+        self.sidebar_logo.setPixmap(render_svg_pixmap(_ASSETS_DIR / "app_icon.svg", 28))
+        self.sidebar_logo.setFixedSize(28, 28)
+        logo_row.addWidget(self.sidebar_logo)
+        self.sidebar_brand_label = QLabel(PRODUCT_NAME)
+        self.sidebar_brand_label.setObjectName("SidebarBrand")
+        self.sidebar_brand_label.setWordWrap(True)
+        logo_row.addWidget(self.sidebar_brand_label, stretch=1)
+        layout.addLayout(logo_row)
+        layout.addSpacing(22)
 
         self.nav_package_button = QPushButton("Package")
         self.nav_package_button.setObjectName("NavButton")

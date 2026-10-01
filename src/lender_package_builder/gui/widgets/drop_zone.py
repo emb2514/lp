@@ -11,11 +11,33 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QPushBut
 
 from ..formatting import format_bytes
 from ..state import InputSelection
+from ..svg_render import render_svg_pixmap
 
 MULTIPLE_ITEMS_MESSAGE = (
     "Please drop a single ZIP or folder, or drop several loose files to bundle them into one "
     "package -- not a mix of folders and files."
 )
+
+# A gradient-filled upload badge, matching the brand gradient used
+# throughout the app (gui/assets/app_icon.svg, the primary button).
+_UPLOAD_BADGE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F6A2B8"/>
+      <stop offset="35%" stop-color="#F15D5D"/>
+      <stop offset="65%" stop-color="#F0B35A"/>
+      <stop offset="100%" stop-color="#883F8C"/>
+    </linearGradient>
+  </defs>
+  <circle cx="12" cy="12" r="12" fill="url(#g)"/>
+  <path d="M7 15.3a2.7 2.7 0 0 1-.4-5.37A3.7 3.7 0 0 1 13.8 8a2.7 2.7 0 0 1-.3 5.4H7Z"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10.2 10v3.6" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="m8.9 11.3 1.3-1.3 1.3 1.3" fill="none" stroke="#FFFFFF" stroke-width="1.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+"""
 
 
 class DropZone(QFrame):
@@ -39,10 +61,27 @@ class DropZone(QFrame):
         self.setMinimumHeight(220)
         self.setProperty("dragActive", "false")
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.accent_bar = QFrame()
+        self.accent_bar.setObjectName("DropZoneAccentBar")
+        self.accent_bar.setFixedHeight(6)
+        outer.addWidget(self.accent_bar)
+
+        layout = QVBoxLayout()
         layout.setContentsMargins(32, 32, 32, 32)
         layout.setSpacing(10)
+        outer.addLayout(layout, stretch=1)
+
         layout.addStretch(1)
+
+        self.icon_badge = QLabel()
+        self.icon_badge.setPixmap(render_svg_pixmap(_UPLOAD_BADGE_SVG, 64))
+        self.icon_badge.setFixedSize(64, 64)
+        self.icon_badge.setAlignment(_center_alignment())
+        layout.addWidget(self.icon_badge, alignment=_center_alignment())
 
         title = QLabel("Drop a lender ZIP, folder, or one or more documents here")
         title.setObjectName("DropZoneTitle")

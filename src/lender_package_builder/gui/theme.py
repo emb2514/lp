@@ -1,9 +1,12 @@
 """Visual theme: color palette, fonts, and the application stylesheet.
 
-One professional accent color (deep blue-teal), a light neutral
-background, white cards, rounded corners, and clear success/warning/
-error colors. No remote fonts or assets are ever loaded -- everything
-here is a literal color/QSS string compiled into the app.
+A warm pink/coral/orange/purple brand gradient (the same one used in
+`gui/assets/app_icon.svg`), a light neutral background, white cards,
+rounded corners, and clear success/warning/error colors. No remote
+fonts or assets are ever loaded -- everything here is a literal
+color/QSS string compiled into the app; the one serif display font
+used for headings is a system font stack, not a bundled/downloaded
+font file.
 """
 
 from __future__ import annotations
@@ -12,14 +15,47 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
-BACKGROUND = "#F4F6F8"
+BACKGROUND = "#FAFAFA"
 CARD_BACKGROUND = "#FFFFFF"
 CARD_BORDER = "#E2E6EA"
 
-ACCENT = "#0E6E8C"
-ACCENT_HOVER = "#0B5A73"
-ACCENT_PRESSED = "#094859"
-ACCENT_DISABLED = "#A9C4CD"
+# Solid accent (links, focus/hover borders, progress bar) -- the deep
+# purple end of the brand gradient below.
+ACCENT = "#883F8C"
+ACCENT_HOVER = "#6B2F70"
+ACCENT_PRESSED = "#52235A"
+ACCENT_DISABLED = "#D8C3DA"
+
+# The full brand gradient (pink -> coral -> orange -> purple), used
+# wherever a gradient fill reads better than a flat color: the primary
+# button, the drop zone's icon badge, the sidebar logo mark.
+GRADIENT_PINK = "#F6A2B8"
+GRADIENT_CORAL = "#F15D5D"
+GRADIENT_ORANGE = "#F0B35A"
+GRADIENT_PURPLE = "#883F8C"
+BRAND_GRADIENT_CSS = (
+    f"qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+    f"stop:0 {GRADIENT_PINK}, stop:0.35 {GRADIENT_CORAL}, stop:0.65 {GRADIENT_ORANGE}, stop:1 {GRADIENT_PURPLE})"
+)
+BRAND_GRADIENT_HOVER_CSS = f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {GRADIENT_CORAL}, stop:1 {ACCENT_HOVER})"
+BRAND_GRADIENT_HORIZONTAL_CSS = (
+    f"qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    f"stop:0 {GRADIENT_PINK}, stop:0.35 {GRADIENT_CORAL}, stop:0.65 {GRADIENT_ORANGE}, stop:1 {GRADIENT_PURPLE})"
+)
+
+# The sidebar's own paler version of the same four hues, plus the dark
+# ink used for text/icons on top of it (the gradient is too light for
+# white text to stay readable).
+SIDEBAR_GRADIENT_CSS = (
+    "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+    "stop:0 #F9C3D1, stop:0.38 #F69696, stop:0.68 #F5CE94, stop:1 #B282B4)"
+)
+SIDEBAR_TEXT = "#3A2640"
+SIDEBAR_TEXT_MUTED = "rgba(58, 38, 64, 0.65)"
+SIDEBAR_ACTIVE_BG = "rgba(255, 255, 255, 0.55)"
+SIDEBAR_ACTIVE_BORDER = "#883F8C"
+SIDEBAR_BADGE_BG = "rgba(255, 255, 255, 0.45)"
+SIDEBAR_BADGE_BORDER = "rgba(58, 38, 64, 0.25)"
 
 TEXT_PRIMARY = "#1F2733"
 TEXT_SECONDARY = "#5B6673"
@@ -31,8 +67,14 @@ WARNING = "#B7791F"
 WARNING_BG = "#FEF3E2"
 ERROR = "#C5221F"
 ERROR_BG = "#FCE8E6"
+DRAG_ACTIVE_BG = "#FDEEF2"
 
 FONT_FAMILIES = ["Segoe UI", "Segoe UI Variable", "-apple-system", "Helvetica Neue", "Arial", "sans-serif"]
+
+# A serif display stack for headings/brand text -- Cambria and Georgia
+# ship with Windows/macOS by default, so this reads as an intentional
+# editorial pairing without bundling a font file.
+DISPLAY_FONT_FAMILIES = ["Cambria", "Georgia", "Constantia", "Times New Roman", "serif"]
 
 RADIUS = 10
 
@@ -59,6 +101,7 @@ def apply_theme(app: QApplication) -> None:
 
 def build_stylesheet() -> str:
     font_family = ", ".join(f'"{f}"' if " " in f else f for f in FONT_FAMILIES)
+    display_font_family = ", ".join(f'"{f}"' if " " in f else f for f in DISPLAY_FONT_FAMILIES)
     return f"""
     QWidget {{
         background: {BACKGROUND};
@@ -76,7 +119,8 @@ def build_stylesheet() -> str:
     }}
 
     QLabel#AppTitle {{
-        font-size: 19pt;
+        font-family: {display_font_family};
+        font-size: 20pt;
         font-weight: 600;
         color: {TEXT_PRIMARY};
     }}
@@ -87,13 +131,13 @@ def build_stylesheet() -> str:
     }}
 
     QLabel#PrivacyBadge {{
-        color: {ACCENT};
+        color: {SIDEBAR_TEXT};
         font-size: 9pt;
-        font-weight: 600;
-        padding: 3px 10px;
-        border: 1px solid {ACCENT};
-        border-radius: {RADIUS + 4}px;
-        background: {CARD_BACKGROUND};
+        font-weight: 700;
+        padding: 5px 12px;
+        border: 1px solid {SIDEBAR_BADGE_BORDER};
+        border-radius: {RADIUS + 9}px;
+        background: {SIDEBAR_BADGE_BG};
     }}
 
     QFrame#Card {{
@@ -104,13 +148,19 @@ def build_stylesheet() -> str:
 
     QFrame#DropZone {{
         background: {CARD_BACKGROUND};
-        border: 2px dashed {CARD_BORDER};
+        border: 1px solid {CARD_BORDER};
         border-radius: {RADIUS + 4}px;
     }}
 
     QFrame#DropZone[dragActive="true"] {{
-        border: 2px dashed {ACCENT};
-        background: {SUCCESS_BG};
+        border: 1px solid {ACCENT};
+        background: {DRAG_ACTIVE_BG};
+    }}
+
+    QFrame#DropZoneAccentBar {{
+        background: {BRAND_GRADIENT_HORIZONTAL_CSS};
+        border-top-left-radius: {RADIUS + 3}px;
+        border-top-right-radius: {RADIUS + 3}px;
     }}
 
     QLabel#DropZoneTitle {{
@@ -141,7 +191,7 @@ def build_stylesheet() -> str:
     }}
 
     QPushButton#PrimaryButton {{
-        background: {ACCENT};
+        background: {BRAND_GRADIENT_CSS};
         color: {TEXT_ON_ACCENT};
         border: none;
         font-weight: 600;
@@ -150,7 +200,7 @@ def build_stylesheet() -> str:
     }}
 
     QPushButton#PrimaryButton:hover {{
-        background: {ACCENT_HOVER};
+        background: {BRAND_GRADIENT_HOVER_CSS};
     }}
 
     QPushButton#PrimaryButton:pressed {{
@@ -249,27 +299,37 @@ def build_stylesheet() -> str:
     }}
 
     QFrame#Sidebar {{
-        background: {CARD_BACKGROUND};
-        border-right: 1px solid {CARD_BORDER};
+        background: {SIDEBAR_GRADIENT_CSS};
+        border-right: none;
+    }}
+
+    QLabel#SidebarBrand {{
+        font-family: {display_font_family};
+        font-style: italic;
+        font-weight: 600;
+        font-size: 12.5pt;
+        color: {SIDEBAR_TEXT};
     }}
 
     QPushButton#NavButton {{
         text-align: left;
         border: none;
+        border-left: 3px solid transparent;
         border-radius: {RADIUS - 2}px;
-        padding: 9px 12px;
+        padding: 9px 12px 9px 9px;
         font-weight: 600;
-        color: {TEXT_SECONDARY};
+        color: {SIDEBAR_TEXT_MUTED};
         background: transparent;
     }}
 
     QPushButton#NavButton:hover {{
-        background: {BACKGROUND};
-        color: {TEXT_PRIMARY};
+        background: rgba(255, 255, 255, 0.30);
+        color: {SIDEBAR_TEXT};
     }}
 
     QPushButton#NavButton:checked {{
-        background: {ACCENT};
-        color: {TEXT_ON_ACCENT};
+        background: {SIDEBAR_ACTIVE_BG};
+        border-left: 3px solid {SIDEBAR_ACTIVE_BORDER};
+        color: {SIDEBAR_TEXT};
     }}
     """

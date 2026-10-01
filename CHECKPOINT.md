@@ -1,5 +1,51 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 15): full visual redesign -- sidebar, drop zone, and primary button
+## re-themed to the pink/coral/orange/purple brand palette
+
+Real user request: "create some possible redesigns for the look of the app... make it look pretty.
+i want it to not look like its from 1995." Explored three full-screen mockups of the Package home
+screen on a Design canvas artifact (Soft Gradient, Bold Rail, Minimal Editorial), all built on the
+same palette as part 14's app icon and using the app's own real copy throughout (not placeholder
+text). User picked "Bold Rail" with two refinements: a paler sidebar gradient, and the same
+Fraunces/Manrope font pairing as the Minimal Editorial concept.
+
+Implemented in the real app (not just the mockup):
+
+- `gui/theme.py`: new tokens -- a solid `ACCENT` (deep purple, replacing the old teal) for borders/
+  links/progress bar, `BRAND_GRADIENT_CSS` (the full 4-stop pink->coral->orange->purple gradient, as
+  a `qlineargradient` QSS string) for the primary button and drop zone accent bar, and a separate,
+  paler `SIDEBAR_GRADIENT_CSS` with a dark ink text color (`SIDEBAR_TEXT`) -- the sidebar's own
+  gradient is too light for white text to stay readable, which is why "paler" also meant "switch
+  sidebar text from white to dark ink" to keep it legible. `DISPLAY_FONT_FAMILIES`: a system serif
+  stack (Cambria/Georgia/Constantia) for brand headings, standing in for the mockup's Fraunces --
+  the real app bundles no remote/downloaded fonts (see this module's own docstring), so an actual
+  Fraunces font file was deliberately not vendored in for this pass; the system stack delivers the
+  same "editorial serif" feel with zero new packaging/licensing surface.
+- New `gui/svg_render.py`: `render_svg_pixmap(source, size) -> QPixmap`, rendering an SVG file or
+  raw SVG markup at 2x for HiDPI. Lets the sidebar logo reuse the real `app_icon.svg` (one source of
+  truth, not a second hand-drawn mark) and lets the drop zone's upload-icon badge be authored as a
+  small inline SVG with a gradient fill.
+- `gui/main_window.py`: `_build_sidebar()` now shows the actual app icon + "Document Merger"
+  wordmark (serif) above the nav list; widened 180px -> 196px, since the serif wordmark needed a
+  little more room than the old sans-serif one did.
+- `gui/widgets/drop_zone.py`: added a 6px gradient accent bar across the top of the card (a plain
+  nested `QVBoxLayout` rather than a wrapping `QWidget`, specifically to avoid the generic
+  `QWidget { background: ... }` rule in the global stylesheet painting over the card's white
+  background) and a gradient-circle upload-icon badge above the existing title/hint text.
+
+9 new tests (`test_redesign_theme.py`): SVG rasterization from both a file and raw markup (at 2x),
+the new tokens actually appear in the compiled stylesheet, the sidebar shows a non-null logo pixmap
+and the right brand text, and the drop zone's accent bar and icon badge both render. Caught one real
+test-isolation bug in the process: a test calling `render_svg_pixmap` with no `qtbot`/`window`
+fixture requested crashed (Qt painting requires a `QApplication` instance to already exist, which
+pytest-qt only guarantees once something requests its fixture) -- fixed by requesting `qtbot`, not a
+production bug. Verified visually with real screenshots of the running app (offscreen-rendered, not
+just asserted in tests) at both the idle and input-selected states; caught and fixed one real visual
+bug this way (the sidebar's original two-line subtitle was being clipped -- "Builder" rendered as
+"Builc" -- removed as redundant with the main header's own subtitle rather than fought with). Full
+suite: 567 passing (was 558).
+
 ## RC3 IN PROGRESS (part 14): app icon re-themed to a user-supplied color palette
 
 Real user request: "make the app icon follow a theme" with a supplied pink/coral/orange/purple
