@@ -24,6 +24,7 @@ from .. import os_actions
 from ..formatting import format_elapsed
 from ... import naming
 from ...models import ProcessingStatus, RunResult
+from .duplicate_swipe_dialog import DuplicateSwipeDialog
 from .flow_layout import FlowLayout
 from .uncertain_review_dialog import UncertainReviewDialog
 
@@ -95,6 +96,10 @@ class ResultView(QWidget):
         self.review_uncertain_button.clicked.connect(self._open_uncertain_review_dialog)
         button_row.addWidget(self.review_uncertain_button)
 
+        self.review_duplicates_button = QPushButton("Review Possible Duplicates")
+        self.review_duplicates_button.clicked.connect(self._open_duplicate_swipe_dialog)
+        button_row.addWidget(self.review_duplicates_button)
+
         self.process_another_button = QPushButton("Process Another Package")
         self.process_another_button.setObjectName("PrimaryButton")
         self.process_another_button.clicked.connect(self.process_another_requested.emit)
@@ -114,10 +119,26 @@ class ResultView(QWidget):
             "Completed with items to review" if is_warning else "Lender packages built successfully"
         )
         if is_warning:
-            self.banner_message.setText(
-                "Processing completed and every integrity check passed, but some source files need "
-                "review (see the placeholder/warning counts below and the Reports folder)."
-            )
+            password_protected = [
+                o for o in run.occurrences
+                if not o.is_ignored_artifact and o.conversion_failed_password_protected
+            ]
+            if password_protected:
+                shown = [o.original_filename for o in password_protected[:4]]
+                names = ", ".join(shown)
+                if len(password_protected) > 4:
+                    names += f", and {len(password_protected) - 4} more"
+                self.banner_message.setText(
+                    f"{len(password_protected)} document(s) are password-protected and could not be "
+                    f"opened: {names}. A copy of each original is preserved in Unconverted_Files -- "
+                    "unlock them and re-run to include their real content. See the placeholder/"
+                    "warning counts below and the Reports folder for anything else that needs review."
+                )
+            else:
+                self.banner_message.setText(
+                    "Processing completed and every integrity check passed, but some source files need "
+                    "review (see the placeholder/warning counts below and the Reports folder)."
+                )
         else:
             self.banner_message.setText(
                 "All source documents were processed and every integrity check passed."
@@ -145,6 +166,7 @@ class ResultView(QWidget):
         placeholder_count = sum(
             1 for o in non_ignored if o.status == ProcessingStatus.UNCONVERTED_PLACEHOLDER
         )
+        password_protected_count = sum(1 for o in non_ignored if o.conversion_failed_password_protected)
         final_doc_count = sum(len(p.document_ids) for p in run.final_parts)
         og_pages = sum(p.page_count for p in run.og_parts)
         final_pages = sum(p.page_count for p in run.final_parts)
@@ -171,6 +193,7 @@ class ResultView(QWidget):
             ("Uncertain matches retained for review", str(needs_review_count)),
             ("Unique documents in Final", str(final_doc_count)),
             ("Unconverted placeholders", str(placeholder_count)),
+            ("  -- of which password-protected", str(password_protected_count)),
             ("OG output parts", str(len(run.og_parts))),
             ("Final output parts", str(len(run.final_parts))),
             ("OG total pages", str(og_pages)),
@@ -216,6 +239,13 @@ class ResultView(QWidget):
         if self._run is None or self._config is None:
             return
         dialog = UncertainReviewDialog(self._run, self._config, self._allow_large_input, self)
+        dialog.decisions_applied.connect(self._on_review_decisions_applied)
+        dialog.exec()
+
+    def _open_duplicate_swipe_dialog(self) -> None:
+        if self._run is None or self._config is None:
+            return
+        dialog = DuplicateSwipeDialog(self._run, self._config, self._allow_large_input, self)
         dialog.decisions_applied.connect(self._on_review_decisions_applied)
         dialog.exec()
 

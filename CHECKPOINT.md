@@ -1,5 +1,82 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 17): new feature -- "Review Possible Duplicates" swipe dialog
+
+Real user request: "i need to tripple check we arent excluding documents because it could be a
+dupe... once the package is ready add an option to check if certain docs are dupes or not. kinda
+like those 'tinder' type apps to delete duplicate pictures... press enter for keep and delete for
+keeping it out of the final package."
+
+This is a genuinely different worry from the existing "Review Uncertain Matches" dialog, which only
+ever covers matches the engine was NOT confident about (`needs_review=True`) -- those are never
+auto-excluded from Final in the first place, so there was nothing to double-check there. The new
+worry is the opposite: a document the engine WAS confident enough to exclude automatically
+(`is_content_duplicate` or `is_contained_in_merged_document`, with `needs_review=False`) that a human
+wants a second look at anyway. Scoped deliberately to exclude exact SHA-256 duplicates
+(`is_duplicate`) -- those are byte-for-byte identical, a mathematical certainty with no judgment call
+possible, so reviewing them would be pure noise against the whole point of a fast swipe session.
+
+`models.SourceOccurrence` gained `duplicate_review_decision` (None | "confirmed_duplicate" |
+"restored") and `duplicate_review_decided_at`, plus `is_confident_duplicate_candidate` (the dialog's
+candidate filter) and `_confident_duplicate_exclusion`. `included_in_final` now treats
+`duplicate_review_decision == "restored"` as the only thing that can override a confident
+duplicate/containment exclusion.
+
+`review_decisions.py` gained `record_duplicate_review_decision()` -- deliberately cheap, records a
+decision on one occurrence and rebuilds nothing. A swipe session may run through many documents in
+one sitting, and rebuilding Final after every keystroke (as a naive per-decision implementation
+would) would make reviewing more than a couple of documents painfully slow, given this app's own
+standing performance concerns this session. The dialog instead calls the now-public
+`rebuild_final_and_reports()` (renamed from `_rebuild_final_and_reports`, alongside
+`ensure_converted_pdfs_available`, also now public so the dialog can use it directly for thumbnails)
+itself exactly ONCE, when the review session ends, and only if at least one document was restored --
+confirming every candidate as a genuine duplicate never rebuilds anything at all.
+
+New `gui/widgets/duplicate_swipe_dialog.py`: one document at a time, real page-1 thumbnails (via the
+same `pdf_render.render_page_thumbnail_png()` Compare Packages already uses) of the excluded document
+side by side with the document it was matched against, detection method and confidence shown. Enter
+(or "Keep in Final") restores it; Delete/Backspace (or "Confirm Duplicate -- Exclude") confirms the
+exclusion as a deliberate, recorded human decision rather than a silent automatic one. Wired into
+ResultView as a new "Review Possible Duplicates" button alongside the existing "Review Uncertain
+Matches" one.
+
+22 new tests: `test_review_decisions.py` (candidate-eligibility property logic, `record_duplicate_
+review_decision`'s happy paths and every rejection case, confirmed-then-rebuild integration), `test_
+duplicate_swipe_dialog.py` (candidate gathering, Enter/Delete behavior, multi-candidate advancement,
+closing early leaves the rest undecided, and -- directly testing the one-rebuild-per-session
+guarantee via a call-counting monkeypatch -- confirmed three restorations in a row trigger exactly
+one rebuild, not three), and one `test_results.py` test wiring the new button through to a real
+`DuplicateSwipeDialog` construction. Verified visually with a real offscreen screenshot of the dialog
+showing two genuinely rendered page thumbnails side by side. Full suite: 591 passing (was 567).
+
+## RC3 IN PROGRESS (part 16): password-protected documents now named explicitly, not folded into a
+## generic placeholder count
+
+Real user question, then request: "how does the app go about [password-protected documents]?"
+(answered: an empty-password decrypt is tried; a real password fails the conversion like any other,
+producing a placeholder + a preserved original copy in Unconverted_Files) followed by "i need to make
+it more obvious if there are passwords the system cant get past." Previously a locked PDF was
+indistinguishable, in the GUI, from any other conversion failure -- just one more count inside the
+generic "Unconverted placeholders" stat, with the actual reason and filename buried in the Processing
+Report text file.
+
+`ConversionResult` gained `failure_is_password_protected: bool`, set by `conversion/pdf.py`'s two
+password-failure branches (both the "empty password didn't open it" and the "decrypt raised an
+exception" cases) via a new `password_protected` kwarg on `conversion.base.failed_result()`.
+`SourceOccurrence` gained the mirrored `conversion_failed_password_protected`, set in `cli.py`'s
+conversion loop alongside `conversion_failure_reason`.
+
+`ResultView`'s warning banner now names the affected files directly when any are password-protected
+-- "2 document(s) are password-protected and could not be opened: a.pdf, b.pdf. A copy of each
+original is preserved in Unconverted_Files -- unlock them and re-run..." -- instead of the generic
+"some source files need review" text, and the stats grid gained its own "-- of which
+password-protected" row broken out from the general placeholder count.
+
+5 new/extended tests: `test_conversion.py`'s existing password and corrupt-PDF tests now also assert
+the flag is set/unset correctly (a corrupt file is a different failure, not a lock), and a new
+`test_results.py` test confirms the banner names the file and mentions Unconverted_Files, and that
+the new stats row renders. Full suite: 567 passing (was 558).
+
 ## RC3 IN PROGRESS (part 15): full visual redesign -- sidebar, drop zone, and primary button
 ## re-themed to the pink/coral/orange/purple brand palette
 

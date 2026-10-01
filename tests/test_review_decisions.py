@@ -40,6 +40,57 @@ def _occ(doc_id: str, pdf_path: Path, pages: int = 2) -> SourceOccurrence:
     )
 
 
+def _build_confident_duplicate_run(tmp_path: Path, config: AppConfig) -> RunResult:
+    """A run where D2 is a CONFIDENT content duplicate of D1 (needs_review
+    is False, unlike `_build_run` above) -- the engine excluded it from
+    Final automatically, with no `UncertainMatch` at all, since it was
+    never in doubt. This is the "Review Possible Duplicates" swipe
+    dialog's territory, distinct from `_build_run`'s uncertain-match case.
+    """
+
+    output_path = tmp_path / "output"
+    (output_path / "Final").mkdir(parents=True)
+    (output_path / "Reports").mkdir(parents=True)
+
+    identity = PackageIdentity(last_name="Test", first_name="Borrower")
+
+    a_pdf = make_pdf(tmp_path / "D1.pdf", pages=2, text_prefix="A")
+    b_pdf = make_pdf(tmp_path / "D2.pdf", pages=2, text_prefix="B")
+    occ_a = _occ("D1", a_pdf)
+    occ_a.needs_review = False
+    occ_b = _occ("D2", b_pdf)
+    occ_b.needs_review = False
+    occ_b.is_content_duplicate = True
+    occ_b.content_duplicate_of_document_id = "D1"
+    occ_b.duplicate_detection_method = "content_equivalent"
+    occ_b.duplicate_confidence = 0.97
+
+    occ_by_id = {"D1": occ_a, "D2": occ_b}
+
+    final_parts = merging.write_package(
+        [occ_a], output_path / "Final", identity, naming.FINAL_PACKAGE_KIND, "Final",
+        config.max_pages_per_part, config.max_size_bytes_per_part,
+    )
+    og_parts = merging.write_package(
+        [occ_a, occ_b], output_path / "Final", identity, naming.OG_PACKAGE_KIND, "OG",
+        config.max_pages_per_part, config.max_size_bytes_per_part,
+    )
+    for part in og_parts:
+        for doc_id in part.document_ids:
+            occ_by_id[doc_id].og_part_index = part.index
+    for part in final_parts:
+        for doc_id in part.document_ids:
+            occ_by_id[doc_id].final_part_index = part.index
+
+    return RunResult(
+        input_path=tmp_path, output_path=output_path, start_time="t",
+        identity=identity,
+        occurrences=[occ_a, occ_b], og_parts=og_parts, final_parts=final_parts,
+        integrity_checks=[IntegrityCheckResult("x", True, "ok")],
+        uncertain_matches=[],
+    )
+
+
 def _build_run(tmp_path: Path, config: AppConfig, kind: str = "content_duplicate") -> RunResult:
     output_path = tmp_path / "output"
     (output_path / "Final").mkdir(parents=True)
@@ -416,3 +467,181 @@ def test_full_pipeline_manual_exclusion_rescues_orphaned_content_duplicate(tmp_p
     assert run.success is True
     for check in run.integrity_checks:
         assert check.passed, f"{check.name}: {check.detail}"
+
+
+# =======================================================================
+# "Review Possible Duplicates" swipe dialog's engine support -- real
+# user request: "i need to tripple check we arent excluding documents
+# because it could be a dupe... once the package is ready add an option
+# to check if certain docs are dupes or not... press enter for keep and
+# delete for keeping it out of the final package." Distinct from
+# everything above: a CONFIDENT automatic duplicate/containment
+# exclusion (never an UncertainMatch) that a human wants to double-check
+# anyway. "restored" is the only way to bring one back into Final.
+# =======================================================================
+
+
+# TEST - a confident, unreviewed content duplicate is a candidate
+def test_confident_content_duplicate_is_a_review_candidate():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_content_duplicate=True, needs_review=False,
+    )
+    assert occ.is_confident_duplicate_candidate is True
+
+
+# TEST - an exact (SHA-256) duplicate is never a candidate -- there is no
+# judgment call possible there, nothing to "triple check"
+def test_exact_duplicate_is_not_a_review_candidate():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_duplicate=True,
+    )
+    assert occ.is_confident_duplicate_candidate is False
+
+
+# TEST - an UNCERTAIN match (needs_review=True) is not a candidate here --
+# that one is never auto-excluded in the first place, and is already
+# covered by "Review Uncertain Matches"
+def test_uncertain_match_is_not_a_confident_duplicate_candidate():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_content_duplicate=True, needs_review=True,
+    )
+    assert occ.is_confident_duplicate_candidate is False
+    assert occ.included_in_final is True  # never auto-excluded while uncertain
+
+
+# TEST - once decided (either way), it drops out of the candidate pool
+def test_already_decided_confident_duplicate_is_not_a_candidate():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_content_duplicate=True, needs_review=False,
+        duplicate_review_decision="confirmed_duplicate",
+    )
+    assert occ.is_confident_duplicate_candidate is False
+
+
+# TEST - "restored" is the only decision that brings a confident
+# duplicate exclusion back into Final
+def test_restored_decision_overrides_confident_exclusion():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_content_duplicate=True, needs_review=False,
+    )
+    assert occ.included_in_final is False
+
+    occ.duplicate_review_decision = "restored"
+    assert occ.included_in_final is True
+
+
+# TEST - "confirmed_duplicate" changes nothing about included_in_final --
+# it only records that a human looked and agreed
+def test_confirmed_duplicate_decision_changes_nothing_about_inclusion():
+    occ = SourceOccurrence(
+        document_id="D2", traversal_index=2, original_filename="D2.pdf",
+        original_relative_path="D2.pdf", original_extension=".pdf", original_size_bytes=100,
+        status=ProcessingStatus.CONVERTED, is_content_duplicate=True, needs_review=False,
+    )
+    occ.duplicate_review_decision = "confirmed_duplicate"
+    assert occ.included_in_final is False
+
+
+# TEST - record_duplicate_review_decision("confirmed_duplicate") records
+# the decision but never touches any output file (no rebuild)
+def test_record_confirmed_duplicate_does_not_rebuild(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    final_mtime_before = (run.output_path / "Final").stat().st_mtime
+
+    review_decisions.record_duplicate_review_decision(run, "D2", "confirmed_duplicate")
+
+    occ_d2 = next(o for o in run.occurrences if o.document_id == "D2")
+    assert occ_d2.duplicate_review_decision == "confirmed_duplicate"
+    assert occ_d2.duplicate_review_decided_at is not None
+    assert occ_d2.included_in_final is False
+    assert (run.output_path / "Final").stat().st_mtime == final_mtime_before
+
+
+# TEST - record_duplicate_review_decision("restored") alone does not
+# rebuild Final either -- the caller (the swipe dialog) must call
+# rebuild_final_and_reports() itself
+def test_record_restored_alone_does_not_rebuild(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    final_ids_before = {doc_id for p in run.final_parts for doc_id in p.document_ids}
+
+    review_decisions.record_duplicate_review_decision(run, "D2", "restored")
+
+    occ_d2 = next(o for o in run.occurrences if o.document_id == "D2")
+    assert occ_d2.duplicate_review_decision == "restored"
+    assert occ_d2.included_in_final is True  # the in-memory state already flips
+    final_ids_after = {doc_id for p in run.final_parts for doc_id in p.document_ids}
+    assert final_ids_after == final_ids_before  # but the actual Final package has not been rebuilt yet
+
+
+# TEST - calling rebuild_final_and_reports() after a "restored" decision
+# actually brings the document back into the Final package on disk
+def test_restored_decision_followed_by_rebuild_brings_document_back(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+
+    review_decisions.record_duplicate_review_decision(run, "D2", "restored")
+    review_decisions.rebuild_final_and_reports(run, config, allow_large_input=False)
+
+    final_ids = {doc_id for p in run.final_parts for doc_id in p.document_ids}
+    assert final_ids == {"D1", "D2"}
+    for check in run.integrity_checks:
+        assert check.passed, f"{check.name}: {check.detail}"
+
+
+# TEST - an unknown document_id raises rather than silently no-op'ing
+def test_record_duplicate_review_decision_unknown_document_raises(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    try:
+        review_decisions.record_duplicate_review_decision(run, "D9999", "restored")
+        assert False, "expected ReviewDecisionError"
+    except review_decisions.ReviewDecisionError:
+        pass
+
+
+# TEST - an unrecognized decision value raises
+def test_record_duplicate_review_decision_invalid_value_raises(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    try:
+        review_decisions.record_duplicate_review_decision(run, "D2", "delete_forever")
+        assert False, "expected ReviewDecisionError"
+    except review_decisions.ReviewDecisionError:
+        pass
+
+
+# TEST - a document that is not a confident-duplicate exclusion at all
+# (e.g. D1, the canonical copy that was kept) is rejected, not silently
+# accepted
+def test_record_duplicate_review_decision_rejects_non_candidate(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    try:
+        review_decisions.record_duplicate_review_decision(run, "D1", "restored")
+        assert False, "expected ReviewDecisionError"
+    except review_decisions.ReviewDecisionError:
+        pass
+
+
+# TEST - a document already decided cannot be re-decided silently
+def test_record_duplicate_review_decision_rejects_already_decided(tmp_path):
+    config = AppConfig()
+    run = _build_confident_duplicate_run(tmp_path, config)
+    review_decisions.record_duplicate_review_decision(run, "D2", "confirmed_duplicate")
+    try:
+        review_decisions.record_duplicate_review_decision(run, "D2", "restored")
+        assert False, "expected ReviewDecisionError"
+    except review_decisions.ReviewDecisionError:
+        pass

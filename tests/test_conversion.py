@@ -65,6 +65,7 @@ def test_corrupt_pdf_becomes_placeholder_no_crash(tmp_path, run_build):
 
     assert occ.status == ProcessingStatus.UNCONVERTED_PLACEHOLDER
     assert occ.unconverted_copy_path is not None and occ.unconverted_copy_path.exists()
+    assert occ.conversion_failed_password_protected is False  # a different failure, not a lock
     assert run.success is True  # one bad document must not fail the whole run
 
 
@@ -78,6 +79,7 @@ def test_password_protected_pdf_becomes_placeholder(tmp_path, run_build):
 
     assert occ.status == ProcessingStatus.UNCONVERTED_PLACEHOLDER
     assert occ.unconverted_copy_path is not None and occ.unconverted_copy_path.exists()
+    assert occ.conversion_failed_password_protected is True
     assert run.success is True
 
 

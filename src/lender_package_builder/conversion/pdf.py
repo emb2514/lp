@@ -39,10 +39,13 @@ def convert(occurrence, dest_path: Path, config, workspace=None, cancellation_to
         try:
             result = reader.decrypt("")
         except Exception as exc:  # pypdf raises various error types on bad crypto
-            return failed_result(f"PDF is password-protected and could not be opened: {exc}")
+            return failed_result(
+                f"PDF is password-protected and could not be opened: {exc}", password_protected=True
+            )
         if result == 0:
             return failed_result(
-                "PDF is password-protected; an empty password did not open it."
+                "PDF is password-protected; an empty password did not open it.",
+                password_protected=True,
             )
         warnings.append("PDF was encrypted with an empty user password; it was decrypted.")
 

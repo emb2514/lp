@@ -31,12 +31,25 @@ finished, once its temporary conversion workspace has already been
 cleaned up (see `workspace.Workspace.cleanup()`) -- so a document's own
 `converted_pdf_path` may no longer exist on disk by the time a decision
 is applied. Rather than requiring the temp workspace to be kept around
-indefinitely, `_ensure_converted_pdfs_available()` transparently
+indefinitely, `ensure_converted_pdfs_available()` transparently
 re-extracts any missing document's exact page range from its own
 permanent OG output part instead (OG's page-order and per-document page
 count are already independently proven by validation.py's own integrity
 checks, so this is exactly as trustworthy as the original converted
 file).
+
+A second, independent decision flow lives here too:
+`record_duplicate_review_decision()`, for the GUI's "Review Possible
+Duplicates" swipe dialog -- a human-initiated double-check of every
+document the engine was CONFIDENT enough to exclude automatically as a
+duplicate/containment match (as opposed to an `UncertainMatch`, which
+the engine was never confident about in the first place, and which is
+never auto-excluded). Recording a decision there is deliberately cheap
+and never rebuilds anything by itself -- a swipe session may review many
+documents in a row, and rebuilding Final after every single keystroke
+would make that session painfully slow. The caller (the swipe dialog)
+calls `rebuild_final_and_reports()` itself exactly once, at the end of
+the session, and only if at least one document was actually restored.
 """
 
 from __future__ import annotations
@@ -53,6 +66,7 @@ from .config import AppConfig
 from .models import RunResult, SourceOccurrence
 
 VALID_DECISIONS = ("keep_both", "excluded")
+VALID_DUPLICATE_DECISIONS = ("confirmed_duplicate", "restored")
 
 
 class ReviewDecisionError(ValueError):
@@ -113,7 +127,40 @@ def apply_review_decision(
 
     _rescue_orphaned_dependents(run, excluded_document_id)
 
-    _rebuild_final_and_reports(run, config, allow_large_input)
+    rebuild_final_and_reports(run, config, allow_large_input)
+
+
+def record_duplicate_review_decision(run: RunResult, document_id: str, decision: str) -> None:
+    """Records one decision from the "Review Possible Duplicates" swipe
+    dialog for a single occurrence. Deliberately does NOT rebuild
+    anything -- a review session may record many of these in a row, and
+    the caller is responsible for calling `rebuild_final_and_reports()`
+    itself exactly once at the end, and only if at least one decision
+    was "restored" (a "confirmed_duplicate" decision changes nothing
+    about `included_in_final`, so no rebuild is ever needed for it).
+
+    Raises `ReviewDecisionError` for an unknown document, an unknown
+    decision value, or a document that is not an undecided confident
+    duplicate/containment exclusion -- the same "never silently no-op or
+    guess" contract as `apply_review_decision()`.
+    """
+
+    if decision not in VALID_DUPLICATE_DECISIONS:
+        raise ReviewDecisionError(
+            f"Unknown decision {decision!r}; must be one of {VALID_DUPLICATE_DECISIONS}."
+        )
+
+    occ_by_id = {o.document_id: o for o in run.occurrences}
+    occ = occ_by_id.get(document_id)
+    if occ is None:
+        raise ReviewDecisionError(f"Document {document_id!r} not found in this run.")
+    if not occ.is_confident_duplicate_candidate:
+        raise ReviewDecisionError(
+            f"Document {document_id!r} is not an undecided confident duplicate/containment exclusion."
+        )
+
+    occ.duplicate_review_decision = decision
+    occ.duplicate_review_decided_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _rescue_orphaned_dependents(run: RunResult, excluded_document_id: str) -> None:
@@ -150,7 +197,7 @@ def _rescue_orphaned_dependents(run: RunResult, excluded_document_id: str) -> No
             occ.contained_page_range = None
 
 
-def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_input: bool) -> None:
+def rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_input: bool) -> None:
     """Rebuilds ONLY the Final package from the current
     `included_in_final` state, reruns every integrity check against the
     updated run, and rewrites every report. OG and every original
@@ -184,7 +231,7 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
 
     non_ignored = [o for o in run.occurrences if not o.is_ignored_artifact]
     with tempfile.TemporaryDirectory(prefix="lpb_review_rebuild_") as tmp_dir:
-        _ensure_converted_pdfs_available(run, non_ignored, Path(tmp_dir))
+        ensure_converted_pdfs_available(run, non_ignored, Path(tmp_dir))
 
         final_docs = [o for o in run.occurrences if o.included_in_final]
         final_parts = merging.write_package(
@@ -219,7 +266,7 @@ def _rebuild_final_and_reports(run: RunResult, config: AppConfig, allow_large_in
     reporting.write_all_reports(run, config, meta, reports_dir)
 
 
-def _ensure_converted_pdfs_available(
+def ensure_converted_pdfs_available(
     run: RunResult, occurrences: list[SourceOccurrence], tmp_dir: Path
 ) -> None:
     """For any occurrence whose `converted_pdf_path` no longer exists on
@@ -230,7 +277,10 @@ def _ensure_converted_pdfs_available(
     own standalone PDF) and `validation.run_integrity_checks()` (re-opens
     EVERY non-ignored document's `converted_pdf_path` to independently
     verify its page count) require this for every non-ignored occurrence,
-    not just the ones affected by the current decision.
+    not just the ones affected by the current decision. Also used
+    directly by the "Review Possible Duplicates" swipe dialog, to
+    guarantee a thumbnail can be rendered for any candidate regardless
+    of whether its temp conversion file still exists.
     """
 
     og_parts_by_index = {p.index: p for p in run.og_parts}

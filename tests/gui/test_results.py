@@ -155,6 +155,32 @@ def test_result_view_stores_config_for_review_dialog(window, tmp_path):
     assert window.result_view._config is not None
 
 
+# TEST - "Review Possible Duplicates" button opens the swipe dialog with
+# the run's config, and refreshes stats once it reports decisions applied
+def test_review_duplicates_button_opens_dialog_and_refreshes_stats(window, tmp_path, monkeypatch):
+    from lender_package_builder.config import AppConfig
+    from lender_package_builder.gui.widgets.duplicate_swipe_dialog import DuplicateSwipeDialog
+
+    window._last_run_config = AppConfig()
+    run = _make_successful_run(tmp_path)
+    window._on_build_finished(run)
+
+    opened = []
+
+    def _fake_exec(self):
+        opened.append(self)
+        self.decisions_applied.emit()
+        return 0
+
+    monkeypatch.setattr(DuplicateSwipeDialog, "exec", _fake_exec)
+
+    window.result_view.review_duplicates_button.click()
+
+    assert len(opened) == 1
+    assert opened[0].run is run
+    assert opened[0].config is window._last_run_config
+
+
 def _make_integrity_failure_run(tmp_path: Path) -> RunResult:
     run = _make_successful_run(tmp_path)
     run.integrity_checks.append(
@@ -195,6 +221,52 @@ def test_success_with_warnings_shows_warning_state(window, tmp_path):
     assert window.stack.currentWidget() is window.result_view
     assert window.result_view.banner.property("status") == "warning"
     assert "review" in window.result_view.banner_title.text().lower()
+
+
+# TEST - PASSWORD-PROTECTED DOCUMENTS ARE CALLED OUT BY NAME, NOT JUST A
+# GENERIC PLACEHOLDER COUNT
+def test_password_protected_documents_are_named_in_the_warning_banner(window, tmp_path):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    locked = _make_occurrence("DOC-000001", status=ProcessingStatus.UNCONVERTED_PLACEHOLDER)
+    locked.original_filename = "closing_disclosure_locked.pdf"
+    locked.conversion_failed_password_protected = True
+    locked.conversion_failure_reason = "PDF is password-protected; an empty password did not open it."
+    clean = _make_occurrence("DOC-000002")
+
+    final_part = OutputPart(
+        package="Final", index=1, file_path=output_path / "Final" / "part1.pdf",
+        document_ids=["DOC-000002"], page_count=3, file_size_bytes=5000,
+    )
+    checks = [IntegrityCheckResult(name="Check 1", passed=True, detail="ok")]
+    run = RunResult(
+        input_path=tmp_path / "input.zip",
+        output_path=output_path,
+        start_time="2026-01-01T00:00:00",
+        end_time="2026-01-01T00:01:00",
+        elapsed_seconds=10.0,
+        occurrences=[locked, clean],
+        og_parts=[],
+        final_parts=[final_part],
+        integrity_checks=checks,
+    )
+    assert run.success is True
+
+    window._on_build_finished(run)
+
+    assert window.result_view.banner.property("status") == "warning"
+    banner_text = window.result_view.banner_message.text()
+    assert "closing_disclosure_locked.pdf" in banner_text
+    assert "password-protected" in banner_text
+    assert "Unconverted_Files" in banner_text
+
+    grid_values = [
+        window.result_view._stats_layout.itemAt(i).widget().text()
+        for i in range(window.result_view._stats_layout.count())
+    ]
+    assert "  -- of which password-protected" in grid_values
+    assert grid_values[grid_values.index("  -- of which password-protected") + 1] == "1"
 
 
 # TEST 12 - FAILED RUN VIEW

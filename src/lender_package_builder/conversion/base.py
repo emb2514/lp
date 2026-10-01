@@ -214,9 +214,12 @@ def make_placeholder_pdf(
     return 1
 
 
-def failed_result(reason: str, warnings: list[str] | None = None) -> ConversionResult:
+def failed_result(
+    reason: str, warnings: list[str] | None = None, password_protected: bool = False
+) -> ConversionResult:
     return ConversionResult(
         outcome=ConversionOutcome.FAILED,
         failure_reason=reason,
         warnings=warnings or [],
+        failure_is_password_protected=password_protected,
     )

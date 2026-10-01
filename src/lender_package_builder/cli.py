@@ -809,6 +809,7 @@ def _execute_pipeline(
         if occ.conversion_failure_reason and occ.status == ProcessingStatus.DISCOVERED:
             result_outcome_failed = True
             failure_reason = occ.conversion_failure_reason
+            password_protected = False
             warnings: list[str] = []
             extra_preserved: list[tuple[str, Path]] = []
         else:
@@ -818,6 +819,7 @@ def _execute_pipeline(
                 result = convert_occurrence(occ, dest, config, workspace, cancellation_token)
             result_outcome_failed = result.outcome == ConversionOutcome.FAILED
             failure_reason = result.failure_reason
+            password_protected = result.failure_is_password_protected
             warnings = result.warnings
             extra_preserved = result.extra_preserved_files
 
@@ -835,6 +837,7 @@ def _execute_pipeline(
         if result_outcome_failed:
             occ.status = ProcessingStatus.UNCONVERTED_PLACEHOLDER
             occ.conversion_failure_reason = failure_reason
+            occ.conversion_failed_password_protected = password_protected
             occ.conversion_warnings.extend(warnings)
             placeholder_path = workspace.new_convert_path(occ.document_id)
             page_count = make_placeholder_pdf(

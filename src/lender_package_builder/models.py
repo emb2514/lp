@@ -41,6 +41,12 @@ class ConversionResult:
     backend: str = "unknown"
     warnings: list[str] = dataclasses.field(default_factory=list)
     failure_reason: str | None = None
+    # True only when conversion failed because the source is encrypted
+    # with a real (non-empty) password the app could not try to guess --
+    # distinct from any other failure reason, so the GUI can call this
+    # out specifically rather than lump it into a generic placeholder
+    # count (see gui/widgets/result_view.py).
+    failure_is_password_protected: bool = False
 
     # Used only by the email converter: (display_name, path_in_workspace)
     # for each email attachment that failed to convert and must be
@@ -85,6 +91,7 @@ class SourceOccurrence:
     conversion_backend: str | None = None
     conversion_warnings: list[str] = dataclasses.field(default_factory=list)
     conversion_failure_reason: str | None = None
+    conversion_failed_password_protected: bool = False
     used_fallback_renderer: bool = False
 
     is_duplicate: bool = False
@@ -149,14 +156,51 @@ class SourceOccurrence:
     manually_excluded: bool = False
     manually_excluded_match_id: str | None = None
 
+    # --- RC3: "confirm possible duplicates" swipe review ---
+    # Separate from needs_review/UncertainMatch above, which covers
+    # matches the ENGINE itself was not confident about (and which are
+    # never auto-excluded in the first place -- see "Keep Both" in
+    # UncertainReviewDialog). This covers the opposite, and genuinely
+    # different, worry: a document the engine WAS confident enough to
+    # exclude automatically, that a human wants to double-check anyway.
+    # "restored" is the only mechanism that can bring a confident
+    # content_duplicate/merged-containment exclusion back into Final;
+    # set ONLY by review_decisions.record_duplicate_review_decision(),
+    # from the GUI's "Review Possible Duplicates" swipe dialog.
+    duplicate_review_decision: str | None = None  # None | "confirmed_duplicate" | "restored"
+    duplicate_review_decided_at: str | None = None
+
+    @property
+    def _confident_duplicate_exclusion(self) -> bool:
+        """True for a content-duplicate/merged-containment exclusion the
+        engine was confident enough to apply automatically (as opposed to
+        a needs_review=True match, which is never auto-excluded).
+        """
+
+        return (self.is_content_duplicate or self.is_contained_in_merged_document) and not self.needs_review
+
+    @property
+    def is_confident_duplicate_candidate(self) -> bool:
+        """Eligible for the "Review Possible Duplicates" swipe dialog:
+        a confident automatic duplicate/containment exclusion that no
+        human has weighed in on yet.
+        """
+
+        return (
+            not self.is_ignored_artifact
+            and not self.manually_excluded
+            and self.duplicate_review_decision is None
+            and self._confident_duplicate_exclusion
+        )
+
     @property
     def included_in_final(self) -> bool:
+        duplicate_excluded = self._confident_duplicate_exclusion and self.duplicate_review_decision != "restored"
         return (
             not self.is_ignored_artifact
             and not self.is_duplicate
-            and not (self.is_content_duplicate and not self.needs_review)
+            and not duplicate_excluded
             and not self.is_portfolio_container
-            and not (self.is_contained_in_merged_document and not self.needs_review)
             and not self.manually_excluded
         )
 
