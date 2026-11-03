@@ -1,5 +1,41 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 19): new feature -- a pixel-cat build-complete companion
+
+Real user request: "add a little pop up notification for when its done. the pop up should be a
+pixelated cat or smth" -- refined through a quick back-and-forth to "the continuous sleeping kitty in
+the corner or the screen then when its done it wakes up stretches and does a lil dance," then "make it
+cuter and make it a brown tabby. those grayinsh brown ones."
+
+New `gui/widgets/cat_companion.py`: a frameless, always-on-top, click-to-focus-the-app companion
+widget, positioned in the bottom-right corner of the screen. Drawn procedurally (no image assets) --
+flat shapes painted onto a small 32x24 internal canvas with antialiasing off, then scaled up with a
+FAST/nearest-neighbor transform, which is what actually produces the blocky "pixelated" look (not
+hand-placed individual pixels). Grayish-brown tabby palette (dark forehead/back stripes, pink inner
+ears, blush, big round eyes for the awake poses) reusing the app's own brand tokens
+(`GRADIENT_PINK`/`GRADIENT_PURPLE`/`SIDEBAR_TEXT`) for the accent colors, so it stays visually
+consistent with the rest of the redesigned app rather than introducing an unrelated palette.
+
+Shown (sleeping, breathing/Zzz 2-frame loop) from the moment the first build of the session starts;
+`MainWindow._on_build_finished()` calls `wake_and_celebrate()` only on a genuine success/warning
+completion (never on a failed or cancelled build, which would feel tonally wrong) -- plays wake ->
+stretch (2 frames) -> a 3-loop paw-up dance with little sparkles, then returns to sleep on its own,
+ready for the next build. A full animation session is driven by one QTimer and a small pose queue,
+with decisions (which pose, how many frames, how long) kept in one place rather than scattered timer
+callbacks.
+
+12 new tests, covering the animation state machine directly (poses visited in the right order, a
+later `wake_and_celebrate()` cleanly interrupting one already in progress, every pose rendering a
+real non-null pixmap) and the MainWindow wiring (created once a build starts, wakes only on success,
+closes with the window). Caught and fixed two real bugs while writing these: a test that never
+registered its widget with `qtbot`, leaving its QTimer running unbounded for the rest of the suite --
+a real, confirmed contributor to a segfault across the full test run, reproduced and then eliminated
+by both fixing that test AND giving `CatCompanionWidget` its own `closeEvent` override that stops its
+timer explicitly (closing a widget doesn't stop timers it owns by itself); and a second test leaving
+`MainWindow.is_processing=True` across the test, which made the shared `window` fixture's own
+teardown hit the "processing in progress" close-guard and pop a real blocking confirmation dialog --
+also a hang, fixed by resetting the flag. Full suite: 613 passing (was 601).
+
 ## RC3 IN PROGRESS (part 18): CRITICAL FIX -- "Review Uncertain Matches" options were not
 ## selectable at all, plus made the dialog's decisions actually legible
 

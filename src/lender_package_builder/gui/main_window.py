@@ -39,6 +39,7 @@ from .formatting import format_bytes
 from .state import InputSelection, classify_input, stage_dropped_files
 from .svg_render import render_svg_pixmap
 from .widgets.advanced_settings import AdvancedSettingsWidget
+from .widgets.cat_companion import CatCompanionWidget
 from .widgets.compare_workspace import CompareWorkspace
 from .widgets.drop_zone import DropZone, SelectedInputCard
 from .widgets.history_view import HistoryView
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self._last_allow_large_input = False
         self._last_identity: PackageIdentity | None = None
         self._cancel_token: CancellationToken | None = None
+        self.cat_companion: CatCompanionWidget | None = None
 
         self.setWindowTitle(f"{PRODUCT_NAME} - v{USER_VERSION}")
         icon_path = _ASSETS_DIR / "app_icon.svg"
@@ -480,6 +482,10 @@ class MainWindow(QMainWindow):
         self._set_input_controls_enabled(False)
         self.progress_view.start()
 
+        if self.cat_companion is None:
+            self.cat_companion = CatCompanionWidget(parent_window=self)
+        self.cat_companion.start_sleeping()
+
         worker = CallableWorker()
         worker.set_callable(
             make_build_callable(
@@ -534,6 +540,8 @@ class MainWindow(QMainWindow):
         self.result_view.set_result(run, is_warning, self._last_run_config, self._last_allow_large_input)
         self._record_history("Warning" if is_warning else "Success", run.output_path, len(run.occurrences))
         self.stack.setCurrentWidget(self.result_view)
+        if self.cat_companion is not None:
+            self.cat_companion.wake_and_celebrate()
 
     def _on_build_failed(self, user_message: str, technical_details: str) -> None:
         self.is_processing = False
@@ -595,6 +603,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._cleanup_staged_temp_dir()
+        if self.cat_companion is not None:
+            self.cat_companion.close()
         event.accept()
 
 
