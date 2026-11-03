@@ -113,13 +113,19 @@ def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
     # reads as emanating from the face instead of floating in space
     _set(grid, 8, 2, _D)
 
-    # nose, and a couple of tabby forehead stripes
+    # nose: a small triangle, wider at the top and pointed at the
+    # bottom (toward the mouth), rather than a single flat dot
+    _set(grid, 8, 9, _P)
+    _set(grid, 8, 10, _P)
     _set(grid, 9, 10, _P)
+
+    # mouth: two small dots just under the nose's point -- a minimal
+    # ":3"-style kitty smile, not a second collar-like band
+    _set(grid, 10, 9, _D)
+
+    # a couple of tabby forehead stripes
     _set(grid, 5, 6, _D)
     _set(grid, 4, 7, _D)
-
-    # a thin collar band across the neck row, with a small tag below it
-    _fill(grid, 10, 5, _P)
 
     # body -- right side stops two columns short so the tail can show,
     # clearly wider than the head above it
@@ -128,7 +134,13 @@ def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
             grid[row][x] = _F
         for x in range(_HALF, _GRID_W - 2):
             grid[row][x] = _F
-    _set(grid, 11, 10, _EYE)  # collar tag, just below the band
+
+    # a thin collar band across the top of the body (the neck line),
+    # with a small tag below it -- kept off the face itself so it
+    # can't be mistaken for a mouth
+    _fill(grid, 11, 5, _P)
+    _set(grid, 12, 10, _EYE)  # collar tag, just below the band
+
     for row, col in [(12, 2), (12, 6), (14, 1), (16, 4)]:
         _set(grid, row, col, _D)
 
@@ -202,9 +214,17 @@ def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
     if pose == "sleep":
         grid = _build_base_grid(eyes_closed=True)
         y_offset = -1 if frame % 2 else 0
+        # a bold "Z" that blinks in and out above the head each frame --
+        # a couple of stray single pixels here read as noise at this
+        # scale, so the shape needs to be unmistakable, not subtle
         if frame % 2:
-            grid[2][_GRID_W - 1] = _PUPIL
-            grid[0][_GRID_W - 2] = _PUPIL
+            for col in (18, 19, 20, 21):
+                grid[0][col] = _PUPIL
+                grid[3][col] = _PUPIL
+            grid[1][20] = _PUPIL
+            grid[1][21] = _PUPIL
+            grid[2][18] = _PUPIL
+            grid[2][19] = _PUPIL
         _draw_grid(painter, grid, y_offset)
     elif pose == "wake":
         grid = _build_base_grid(eyes_closed=False)

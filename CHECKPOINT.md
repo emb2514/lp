@@ -1,5 +1,29 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 21): cat companion face legibility pass -- obvious zzz, real nose/mouth,
+## collar moved off the face
+
+Real user feedback on part 20's pixel-grid redraw: the sleep zzz (two stray single pixels) wasn't
+obvious; the pink collar band sat right where a mouth would be, so it read ambiguously as "is that a
+mouth?"; and there was no actual nose or smile.
+
+`cat_companion.py` changes, all within `_build_base_grid()`/`_draw_cat()`:
+
+- Nose: now a small two-row triangle (wide top, pointed bottom) instead of a single flat 2px dot.
+- Mouth: two small dark dots just under the nose's point -- a minimal ":3"-style kitty smile.
+- Collar: moved down off the face entirely, onto the top row of the body (the neck line) where it
+  can't be confused with a mouth anymore -- same pink band + gold tag, just relocated one section
+  lower so the face reads as face and the collar reads as collar.
+- Sleep zzz: replaced the two faint single pixels with a bold, unmistakably Z-shaped 4-row glyph
+  (top bar / right step / left step / bottom bar) that blinks fully in and out every other sleep
+  frame, rather than being faintly always-present.
+
+No new tests needed -- `test_cat_companion.py`'s 12 tests cover the state machine and rendering
+non-null-ness, not exact pixel placement, so they stayed valid through this pass; re-run and confirmed
+still passing, plus a full-suite run to confirm no regressions elsewhere. Verified visually the same
+way as part 20: rendered the affected frames to PNG and inspected them (including a dedicated
+high-zoom crop of just the zzz glyph) before considering it done.
+
 ## RC3 IN PROGRESS (part 20): cat companion redrawn as genuine pixel-grid art, not procedural shapes
 
 Real user follow-up, after part 19 shipped: shared a reference image of clean pixel-art cats (deliberate
