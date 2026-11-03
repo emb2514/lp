@@ -1,5 +1,52 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 20): cat companion redrawn as genuine pixel-grid art, not procedural shapes
+
+Real user follow-up, after part 19 shipped: shared a reference image of clean pixel-art cats (deliberate
+pixel-grid construction, distinct anatomy -- separate head/body, legible eyes, visible tail) and said
+"moer like this style." The part-19 cat was drawn from procedural ellipses/triangles on a small canvas;
+side by side with the reference it read as a soft blob, not a pixel-art sprite.
+
+Rewrote `cat_companion.py`'s entire drawing system around an explicit 22x22 grid of named colors
+(`_build_base_grid()`, `grid[row][col]`), built with a left-half-plus-mirror helper and scaled up with
+the same FAST/nearest-neighbor transform as before. Kept the grayish-brown tabby palette from the prior
+request (`_F`/`_D` fur tones) but fixed the actual proportions and contrast that were making it
+unreadable as a cat:
+
+- The head is now clearly narrower than the body, with a pinched-in "neck" row right before the body
+  flares out wider below it -- the old grid had the head at its OWN widest point (full canvas width)
+  while the body was slightly narrower, which is backwards and is why it read as one blob with no
+  head/body break.
+- Eyes are two rows tall with a bright amber base and a dark pupil, instead of a single dim pixel that
+  was nearly invisible at this scale.
+- The tail is drawn in the dark fur tone, not the same light fur tone as the body it curls against --
+  same-color-on-same-color was making it disappear exactly where it touched the body.
+- Added a small pink collar band with a tag, reinforcing the neck break and matching the reference
+  image's level of "distinct anatomy" detail.
+- Whiskers moved to just outside the head's edge (previously placed at a column the head silhouette
+  didn't even reach at that row, so they floated disconnected from the face).
+
+Verified visually, not just by eyeballing code: rendered all 9 pose/frame combinations to PNG and
+inspected a composited side-by-side grid before considering the rewrite done (first pass showed the
+proportion/contrast problems above directly; the fix was then re-rendered and re-inspected before
+porting into the real widget).
+
+Also investigated, while rendering frames standalone for that visual check: a native
+`Fatal Python error: none_dealloc` crash when calling `_render_frame()` repeatedly in one ad-hoc script
+process. Isolated it to interpreter-shutdown time specifically -- the real `pytest` run of
+`test_cat_companion.py` completes cleanly (`12 passed`, exit code 0) every time, and the crash only
+appears afterward, during Python's own finalization, in this freshly-reinstalled environment's PySide6
+6.12.0 build. Confirmed environment-specific, not a bug in the widget, the real test suite, or the
+packaged app; a `color_cache` dict was added to `_draw_grid()` while investigating (reused QColor
+objects instead of constructing one per filled cell) as a minor optimization, though it did not resolve
+the shutdown-time crash. No test or production code path triggers abrupt process exit the way the
+ad-hoc investigation script did, so no further mitigation was needed.
+
+No new tests needed beyond the existing 12 in `test_cat_companion.py` (they test the state machine and
+wiring, not exact pixel output, so they stayed valid unchanged through the rewrite) -- re-run and
+confirmed still passing, plus a full-suite run to confirm the rewrite and the `color_cache` addition
+didn't regress anything else.
+
 ## RC3 IN PROGRESS (part 19): new feature -- a pixel-cat build-complete companion
 
 Real user request: "add a little pop up notification for when its done. the pop up should be a

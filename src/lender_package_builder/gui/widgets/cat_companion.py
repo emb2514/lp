@@ -16,22 +16,27 @@ individual pixels one at a time.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap, QPolygon
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from ..theme import GRADIENT_PINK, GRADIENT_PURPLE, SIDEBAR_TEXT
+from ..theme import GRADIENT_PINK, GRADIENT_PURPLE
 
-_CANVAS_W, _CANVAS_H = 32, 24
-_SCALE = 5  # on-screen size: 160x120
+# A 22x22 grid of named colors (None = transparent), built and mirrored
+# left-to-right around column 10/11 -- see _build_base_grid(). Scaled
+# up with a FAST/nearest-neighbor transform, never smooth, which is
+# what keeps every square crisp ("pixelated") rather than blurred.
+_GRID_W, _GRID_H = 22, 22
+_HALF = 11  # columns 0..10, mirrored to column (21 - col)
+_SCALE = 7  # on-screen size: 154x154
 
-_FUR = QColor("#A68B70")
-_FUR_DARK = QColor("#6E5B48")
-_BELLY = QColor("#E9DFCF")
-_NOSE = QColor(GRADIENT_PINK)
-_BLUSH = QColor("#E8A6A0")
-_INK = QColor(SIDEBAR_TEXT)
-_SPARKLE = QColor(GRADIENT_PURPLE)
+_F = "#A68B70"  # fur
+_D = "#6E5B48"  # dark fur / stripes / tail / shading
+_P = GRADIENT_PINK  # inner ear, nose, collar
+_EYE = "#E8B04B"  # eye base -- bright enough to read against the fur, unlike the old single dark dot
+_PUPIL = "#2A1F2E"
+_W = "#F5F0E6"  # paw-tip highlight
+_SPARKLE = GRADIENT_PURPLE
 
 _SLEEP_FRAME_MS = 900
 _WAKE_MS = 400
@@ -47,142 +52,196 @@ _SEQUENCE_AFTER_WAKE = [
 ]
 
 
-def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    painter.setPen(Qt.PenStyle.NoPen)
-    if pose == "sleep":
-        _draw_sleeping(painter, frame)
-    elif pose == "wake":
-        _draw_waking(painter)
-    elif pose == "stretch":
-        _draw_stretching(painter, frame)
-    elif pose == "dance":
-        _draw_dancing(painter, frame)
+def _new_grid() -> list[list[str | None]]:
+    return [[None] * _GRID_W for _ in range(_GRID_H)]
 
 
-def _ears(painter: QPainter, cx: int, base_y: int, tip_y: int, spread: int) -> None:
-    painter.setBrush(_FUR)
-    painter.drawPolygon(QPolygon([QPoint(cx - spread, base_y), QPoint(cx - spread + 2, tip_y), QPoint(cx - spread + 4, base_y)]))
-    painter.drawPolygon(QPolygon([QPoint(cx + spread - 4, base_y), QPoint(cx + spread - 2, tip_y), QPoint(cx + spread, base_y)]))
-    painter.setBrush(_NOSE)
-    painter.drawPolygon(QPolygon([QPoint(cx - spread + 1, base_y - 1), QPoint(cx - spread + 2, tip_y + 1), QPoint(cx - spread + 3, base_y - 1)]))
-    painter.drawPolygon(QPolygon([QPoint(cx + spread - 3, base_y - 1), QPoint(cx + spread - 2, tip_y + 1), QPoint(cx + spread - 1, base_y - 1)]))
+def _set(grid, row: int, col: int, color: str) -> None:
+    grid[row][col] = color
+    grid[row][_GRID_W - 1 - col] = color
 
 
-def _tabby_stripes(painter: QPainter, cx: int, top_y: int) -> None:
-    """A few short forehead/back stripes -- the one detail that reads
-    as "tabby" rather than just a plain brown cat.
+def _fill(grid, row: int, left_start: int, color: str = _F, right_edge: int = _HALF - 1) -> None:
+    for x in range(left_start, right_edge + 1):
+        grid[row][x] = color
+        grid[row][_GRID_W - 1 - x] = color
+
+
+def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
+    """The sitting cat silhouette shared by every pose -- ears, a head
+    narrower than the body (the width step between them, plus a
+    pinched-in "neck" row, is what reads as a head rather than one
+    blob), a small pink collar, a body, front paws, and a dark tail
+    that stays visually distinct from the body it curls against
+    (same color as the body would make it disappear on contact) --
+    with only the eyes varying here (closed for sleep, open for
+    everything else; wake/stretch/dance widen them further on top).
     """
 
-    painter.setBrush(_FUR_DARK)
-    painter.drawRect(cx - 1, top_y, 2, 2)
-    painter.drawRect(cx - 5, top_y + 1, 2, 2)
-    painter.drawRect(cx + 3, top_y + 1, 2, 2)
+    grid = _new_grid()
+
+    # ears, centered above the head rather than out at its old full
+    # width, with a pink inner-ear patch
+    _set(grid, 0, 7, _F)
+    for c in (6, 7, 8):
+        _set(grid, 1, c, _F)
+    for c in (5, 6, 7, 8):
+        _set(grid, 2, c, _F)
+    _set(grid, 2, 6, _P)
+    for c in (5, 6, 7, 8, 9):
+        _set(grid, 3, c, _F)
+    _set(grid, 3, 6, _P)
+
+    # head -- narrows toward the top (near the ears), widens slightly
+    # at the cheeks, then pinches in again at row 10 (the neck) before
+    # the body flares out wider below
+    for row, start in {4: 6, 5: 4, 6: 3, 7: 3, 8: 3, 9: 4, 10: 5}.items():
+        _fill(grid, row, start)
+
+    # eyes: two rows tall, a bright base with a dark pupil -- far more
+    # legible at this scale than the old single dim pixel
+    if eyes_closed:
+        _set(grid, 7, 4, _D)
+        _set(grid, 7, 5, _D)
+    else:
+        for row in (6, 7):
+            _set(grid, row, 4, _EYE)
+            _set(grid, row, 5, _EYE)
+        _set(grid, 7, 5, _PUPIL)
+
+    # whisker, just outside the head's edge at the cheek row so it
+    # reads as emanating from the face instead of floating in space
+    _set(grid, 8, 2, _D)
+
+    # nose, and a couple of tabby forehead stripes
+    _set(grid, 9, 10, _P)
+    _set(grid, 5, 6, _D)
+    _set(grid, 4, 7, _D)
+
+    # a thin collar band across the neck row, with a small tag below it
+    _fill(grid, 10, 5, _P)
+
+    # body -- right side stops two columns short so the tail can show,
+    # clearly wider than the head above it
+    for row in range(11, 19):
+        for x in range(0, _HALF):
+            grid[row][x] = _F
+        for x in range(_HALF, _GRID_W - 2):
+            grid[row][x] = _F
+    _set(grid, 11, 10, _EYE)  # collar tag, just below the band
+    for row, col in [(12, 2), (12, 6), (14, 1), (16, 4)]:
+        _set(grid, row, col, _D)
+
+    # front paws, with a gap between them
+    for row in range(19, 21):
+        _fill(grid, row, 2, right_edge=_HALF - 2)
+    for c in range(2, _HALF - 1):
+        grid[21][c] = _W
+        grid[21][_GRID_W - 1 - c] = _W
+
+    # tail, curling in the gap left open on the body's right side --
+    # dark rather than fur-colored so it stays visible where it meets
+    # the body's edge
+    for (row, col), color in {
+        (10, 19): _D, (11, 20): _D, (12, 21): _D, (13, 21): _D,
+        (14, 21): _D, (15, 21): _D, (16, 20): _D, (17, 19): _D,
+    }.items():
+        grid[row][col] = color
+
+    return grid
 
 
-def _blush(painter: QPainter, left_x: int, right_x: int, y: int) -> None:
-    painter.setBrush(_BLUSH)
-    painter.drawRect(left_x, y, 2, 1)
-    painter.drawRect(right_x, y, 2, 1)
+def _widen_eyes(grid) -> None:
+    """A bright highlight pixel added to each pupil -- used for
+    wake/stretch/dance, layered on top of the shared base grid's
+    already-open eyes to give a wide-eyed "just woke up" sparkle.
+    """
+
+    _set(grid, 6, 5, _W)
 
 
-def _draw_sleeping(painter: QPainter, frame: int) -> None:
-    bob = 1 if frame % 2 else 0
-    painter.setBrush(_FUR_DARK)
-    painter.drawEllipse(QRect(2, 15 - bob, 8, 6))  # curled tail
-    painter.setBrush(_FUR)
-    painter.drawEllipse(QRect(7, 11 - bob, 20, 11))  # loaf body
-    _ears(painter, 16, 10 - bob, 6 - bob, 7)
-    _tabby_stripes(painter, 16, 9 - bob)
-    _blush(painter, 10, 20, 16 - bob)
-    painter.setBrush(_INK)
-    painter.drawRect(11, 14 - bob, 4, 1)  # closed eyes, a soft curved line
-    painter.drawRect(17, 14 - bob, 4, 1)
-    painter.setBrush(_NOSE)
-    painter.drawRect(15, 16 - bob, 2, 1)
-    if frame % 2:
-        painter.setBrush(_INK)
-        painter.drawRect(25, 4, 2, 2)
-        painter.drawRect(28, 1, 2, 2)
+def _raised_arm(grid, side: str) -> None:
+    """A paw raised straight up from the shoulder -- "left"/"right" as
+    seen on screen (mirrored automatically for the opposite side isn't
+    applicable here since this is explicitly one-sided, unlike the
+    symmetric body/head helpers above).
+    """
+
+    col = 1 if side == "left" else _GRID_W - 2
+    for row in (7, 8, 9, 10):
+        grid[row][col] = _F
+    grid[6][col] = _D
 
 
-def _draw_waking(painter: QPainter) -> None:
-    painter.setBrush(_FUR_DARK)
-    painter.drawEllipse(QRect(2, 15, 8, 6))
-    painter.setBrush(_FUR)
-    painter.drawEllipse(QRect(7, 11, 20, 11))
-    _ears(painter, 16, 9, 3, 7)
-    _tabby_stripes(painter, 16, 8)
-    _blush(painter, 9, 20, 15)
-    painter.setBrush(_INK)
-    painter.drawEllipse(QRect(11, 12, 4, 4))  # big round eyes, just opened
-    painter.drawEllipse(QRect(17, 12, 4, 4))
-    painter.setBrush(_NOSE)
-    painter.drawRect(15, 17, 2, 1)
+def _sparkle(grid, row: int, col: int) -> None:
+    grid[row][col] = _SPARKLE
 
 
-def _draw_stretching(painter: QPainter, frame: int) -> None:
-    reach = frame  # 0 -> starting to lean in, 1 -> full stretch
-    painter.setBrush(_FUR_DARK)
-    painter.drawRect(26 - reach * 2, 16, 4, 2)  # tail up, slightly forward
-    painter.setBrush(_FUR)
-    # arched back body, higher at the rear
-    painter.drawEllipse(QRect(9, 9 - reach, 17, 10))
-    # front legs stretched forward along the ground, paw tips a shade darker
-    leg_x = 4 - reach * 3
-    leg_w = 9 + reach * 3
-    painter.drawRect(leg_x, 18, leg_w, 3)
-    painter.setBrush(_FUR_DARK)
-    painter.drawRect(leg_x, 18, 3, 3)
-    _ears(painter, 14, 8 - reach, 4 - reach, 6)
-    _tabby_stripes(painter, 14, 7 - reach)
-    _blush(painter, 8, 17, 14 - reach)
-    painter.setBrush(_INK)
-    painter.drawEllipse(QRect(9, 10 - reach, 4, 4))
-    painter.drawEllipse(QRect(15, 10 - reach, 4, 4))
-    painter.setBrush(_NOSE)
-    painter.drawRect(13, 15 - reach, 2, 1)
+def _draw_grid(painter: QPainter, grid, y_offset: int = 0) -> None:
+    # QColor objects are built once per distinct hex string and reused
+    # -- constructing a fresh QColor for every filled cell (100+ per
+    # frame) triggered a real native refcount crash in this
+    # environment's PySide6 build; caching sidesteps it and is cheaper
+    # regardless.
+    color_cache: dict[str, QColor] = {}
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for y, row in enumerate(grid):
+        for x, color in enumerate(row):
+            if color is None:
+                continue
+            qcolor = color_cache.get(color)
+            if qcolor is None:
+                qcolor = QColor(color)
+                color_cache[color] = qcolor
+            painter.setBrush(qcolor)
+            painter.drawRect(x, y + y_offset, 1, 1)
 
 
-def _draw_dancing(painter: QPainter, frame: int) -> None:
-    tilt = [-2, 0, 2, 0][frame % 4]
-    lift = [0, 1, 0, 1][frame % 4]
-    cx = 16 + tilt // 2
-    painter.setBrush(_FUR_DARK)
-    painter.drawRect(cx + 7, 17 - lift, 3, 5)  # tail swishing
-    painter.setBrush(_FUR)
-    painter.drawEllipse(QRect(cx - 8, 10 - lift, 16, 10))  # upright body
-    painter.drawRect(cx - 7, 18 - lift, 5, 3)  # left foot
-    painter.drawRect(cx + 2, 18 - lift, 5, 3)  # right foot
-    # paws up, alternating sides
-    left_up = frame % 4 in (0, 1)
-    right_up = frame % 4 in (2, 3)
-    painter.drawRect(cx - 10, (6 if left_up else 12) - lift, 3, 5)
-    painter.drawRect(cx + 7, (6 if right_up else 12) - lift, 3, 5)
-    _ears(painter, cx, 8 - lift, 4 - lift, 6)
-    _tabby_stripes(painter, cx, 7 - lift)
-    _blush(painter, cx - 6, cx + 4, 13 - lift)
-    painter.setBrush(_INK)
-    painter.drawEllipse(QRect(cx - 5, 11 - lift, 4, 4))
-    painter.drawEllipse(QRect(cx + 1, 11 - lift, 4, 4))
-    painter.setBrush(_NOSE)
-    painter.drawRect(cx - 1, 16 - lift, 2, 1)
-    if frame % 2 == 0:
-        painter.setBrush(_SPARKLE)
-        painter.drawRect(cx - 13, 4 - lift, 2, 2)
-        painter.drawRect(cx + 12, 8 - lift, 2, 2)
+def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
+    if pose == "sleep":
+        grid = _build_base_grid(eyes_closed=True)
+        y_offset = -1 if frame % 2 else 0
+        if frame % 2:
+            grid[2][_GRID_W - 1] = _PUPIL
+            grid[0][_GRID_W - 2] = _PUPIL
+        _draw_grid(painter, grid, y_offset)
+    elif pose == "wake":
+        grid = _build_base_grid(eyes_closed=False)
+        _widen_eyes(grid)
+        _draw_grid(painter, grid)
+    elif pose == "stretch":
+        grid = _build_base_grid(eyes_closed=frame == 0)
+        if frame == 1:
+            _widen_eyes(grid)
+        _raised_arm(grid, "left")
+        _raised_arm(grid, "right")
+        _draw_grid(painter, grid)
+    elif pose == "dance":
+        grid = _build_base_grid(eyes_closed=False)
+        _widen_eyes(grid)
+        left_up = frame % 4 in (0, 1)
+        right_up = frame % 4 in (2, 3)
+        if left_up:
+            _raised_arm(grid, "left")
+        if right_up:
+            _raised_arm(grid, "right")
+        if frame % 2 == 0:
+            _sparkle(grid, 0, 0 if left_up else _GRID_W - 1)
+        lift = 1 if frame % 2 else 0
+        _draw_grid(painter, grid, -lift)
 
 
 def _render_frame(pose: str, frame: int) -> QPixmap:
-    image = QImage(_CANVAS_W, _CANVAS_H, QImage.Format.Format_ARGB32)
+    image = QImage(_GRID_W, _GRID_H, QImage.Format.Format_ARGB32)
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
     _draw_cat(painter, pose, frame)
     painter.end()
     pixmap = QPixmap.fromImage(image)
     return pixmap.scaled(
-        _CANVAS_W * _SCALE,
-        _CANVAS_H * _SCALE,
+        _GRID_W * _SCALE,
+        _GRID_H * _SCALE,
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.FastTransformation,
     )
@@ -205,7 +264,7 @@ class CatCompanionWidget(QWidget):
         self._parent_window = parent_window
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(_CANVAS_W * _SCALE, _CANVAS_H * _SCALE)
+        self.setFixedSize(_GRID_W * _SCALE, _GRID_H * _SCALE)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
