@@ -1,5 +1,31 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 22): cat companion slimmed down, sleep zzz now actually rises
+
+Real user feedback on part 21: "make it a bit cuter/skinnier. also make the zzz for the sleepy one
+animated yk like z z z going up."
+
+`cat_companion.py`: the body is now 4 columns narrower (inset 2 columns on each side), with the front
+paws and their white tips inset to match and the stripe-dot positions nudged in so none of them end up
+floating outside the new silhouette -- a visibly slimmer build without losing the head/body/neck
+read established in part 20. The tail's gap from the body is incidentally larger now too, if anything
+more legible than before.
+
+The sleep zzz (part 21's single bold Z that blinked fully on/off) is now a 3-stage climb across a
+4-frame sleep cycle: nothing, then a small mark low near the ear, a medium one a step up and to the
+right, and a bigger one higher still near the top edge, before the cycle resets -- an actual rising
+"z z z" rather than one mark appearing and disappearing in place. This needed the sleep pose's own
+frame count raised from 2 to 4 (`_SLEEP_CYCLE_FRAMES`); `CatCompanionWidget._advance()`'s idle-sleep
+branch and `_render()`'s frame selection both generalized from a hardcoded mod-2 to mod-4 for sleep
+(dance already used mod-4).
+
+No test changes needed -- `test_cat_companion.py`'s 12 tests check the state machine and non-null
+rendering, not exact pixel geometry or frame count, so they stayed valid unchanged; re-run and
+confirmed still passing, plus a full-suite run. Verified visually: rendered sleep frames 0-3 side by
+side to confirm the zzz actually reads as climbing (not just relocating), and rendered old-vs-new
+`sleep[0]` side by side (checking out the pre-this-change file into a throwaway copy of the package)
+to confirm the slimming was real and not just a code change with no visible effect.
+
 ## RC3 IN PROGRESS (part 21): cat companion face legibility pass -- obvious zzz, real nose/mouth,
 ## collar moved off the face
 

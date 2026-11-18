@@ -43,6 +43,7 @@ _WAKE_MS = 400
 _STRETCH_FRAME_MS = 450
 _DANCE_FRAME_MS = 220
 _DANCE_LOOPS = 3
+_SLEEP_CYCLE_FRAMES = 4  # breathe, small z, medium z, big z -- then a beat with none
 
 # (pose, frame_count, frame_duration_ms, next_pose_or_None)
 _SEQUENCE_AFTER_WAKE = [
@@ -127,12 +128,12 @@ def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
     _set(grid, 5, 6, _D)
     _set(grid, 4, 7, _D)
 
-    # body -- right side stops two columns short so the tail can show,
-    # clearly wider than the head above it
+    # body -- narrower than before (a slimmer build reads cuter), right
+    # side still stops short so the tail can show
     for row in range(11, 19):
-        for x in range(0, _HALF):
+        for x in range(2, _HALF):
             grid[row][x] = _F
-        for x in range(_HALF, _GRID_W - 2):
+        for x in range(_HALF, _GRID_W - 4):
             grid[row][x] = _F
 
     # a thin collar band across the top of the body (the neck line),
@@ -141,13 +142,14 @@ def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
     _fill(grid, 11, 5, _P)
     _set(grid, 12, 10, _EYE)  # collar tag, just below the band
 
-    for row, col in [(12, 2), (12, 6), (14, 1), (16, 4)]:
+    for row, col in [(12, 3), (12, 7), (14, 2), (16, 5)]:
         _set(grid, row, col, _D)
 
-    # front paws, with a gap between them
+    # front paws, with a gap between them -- inset to match the
+    # slimmer body above them
     for row in range(19, 21):
-        _fill(grid, row, 2, right_edge=_HALF - 2)
-    for c in range(2, _HALF - 1):
+        _fill(grid, row, 4, right_edge=_HALF - 2)
+    for c in range(4, _HALF - 1):
         grid[21][c] = _W
         grid[21][_GRID_W - 1 - c] = _W
 
@@ -214,17 +216,24 @@ def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
     if pose == "sleep":
         grid = _build_base_grid(eyes_closed=True)
         y_offset = -1 if frame % 2 else 0
-        # a bold "Z" that blinks in and out above the head each frame --
-        # a couple of stray single pixels here read as noise at this
-        # scale, so the shape needs to be unmistakable, not subtle
-        if frame % 2:
-            for col in (18, 19, 20, 21):
-                grid[0][col] = _PUPIL
-                grid[3][col] = _PUPIL
-            grid[1][20] = _PUPIL
-            grid[1][21] = _PUPIL
+        # a little "z" that climbs up and to the right over the 4-frame
+        # sleep cycle (small and low -> medium -> big and high), then
+        # disappears for a beat before starting over -- a single static
+        # mark, even a bold one, didn't read as "sleeping" so much as
+        # just "there's a mark here"; the rise is what sells it
+        if frame == 1:
+            grid[3][16] = _PUPIL
+            grid[3][17] = _PUPIL
+        elif frame == 2:
             grid[2][18] = _PUPIL
             grid[2][19] = _PUPIL
+            grid[1][17] = _PUPIL
+            grid[1][18] = _PUPIL
+        elif frame == 3:
+            for col in (18, 19, 20, 21):
+                grid[0][col] = _PUPIL
+            grid[1][20] = _PUPIL
+            grid[1][21] = _PUPIL
         _draw_grid(painter, grid, y_offset)
     elif pose == "wake":
         grid = _build_base_grid(eyes_closed=False)
@@ -349,11 +358,11 @@ class CatCompanionWidget(QWidget):
             self._timer.start(interval)
             return
 
-        self._frame = (self._frame + 1) % 2
+        self._frame = (self._frame + 1) % _SLEEP_CYCLE_FRAMES
         self._render()
 
     def _render(self) -> None:
-        frame_in_pose = self._frame % 2 if self._pose != "dance" else self._frame % 4
+        frame_in_pose = self._frame % 4 if self._pose in ("sleep", "dance") else self._frame % 2
         if self._pose == "stretch":
             frame_in_pose = min(self._frame, 1)
         self._label.setPixmap(_render_frame(self._pose, frame_in_pose))
