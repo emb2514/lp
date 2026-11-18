@@ -1,5 +1,23 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 26): shading, so it stops reading as "a two-toned turd"
+
+Real user feedback, verbatim: "why is it shaped like that like shade it in and stuff. it looks like a
+two toned turd." Fair -- a flat 50/50 vertical color split with no modeling reads as a flat blob no
+matter how correct the silhouette underneath it is.
+
+Added `_F_HI`/`_F_LO`/`_D_HI`/`_D_LO` -- lightened/darkened variants of both existing tones, computed
+once at import time via a small `_mix(hex, target_rgb, amount)` helper rather than hand-picked hex
+values, so the relationship to the base colors stays explicit in code. New `_apply_shading()` step in
+`_build_base_grid()` (runs right after the left/right patch split, before any face feature is drawn):
+a lighter band across the ears/forehead, the base tone through the main face/body, and a darker band
+across the lower body just above the legs -- lit from above, giving the round silhouette actual
+visual volume instead of two flat fields of color. Legs and tail stay plain `_D` (drawn after, small
+enough that they don't need their own shading).
+
+No test changes needed. Re-ran `test_cat_companion.py` (12 passed) and the full suite. Verified
+visually at both composite and zoomed-in scale.
+
 ## RC3 IN PROGRESS (part 25): three more concrete bugs found by zooming in after "still looks a
 ## little funky. like think of a cat"
 

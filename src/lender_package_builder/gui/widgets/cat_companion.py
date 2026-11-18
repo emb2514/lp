@@ -42,8 +42,24 @@ _TAIL_GAP = 3  # columns reserved on the right for the raised tail
 _TOP_CLEARANCE = 3  # blank rows above the ears so the raised tail can clear head height
 _SCALE = 7
 
+def _mix(hex_color: str, target: tuple[int, int, int], amount: float) -> str:
+    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+    tr, tg, tb = target
+    r = round(r + (tr - r) * amount)
+    g = round(g + (tg - g) * amount)
+    b = round(b + (tb - b) * amount)
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
 _F = "#A68B70"  # fur
 _D = "#6E5B48"  # dark fur -- the asymmetric ear/side/tail patch
+# A flat, single-tone fill for both halves read as a flat two-color
+# blob rather than a rounded, lit creature -- lightened/darkened
+# bands (see _apply_shading) break that up, lit-from-above.
+_F_HI = _mix(_F, (255, 255, 255), 0.22)
+_F_LO = _mix(_F, (0, 0, 0), 0.18)
+_D_HI = _mix(_D, (255, 255, 255), 0.22)
+_D_LO = _mix(_D, (0, 0, 0), 0.18)
 _P = GRADIENT_PINK  # inner ear, nose
 _PUPIL = "#2A1F2E"
 _HIGHLIGHT = "#F5F0E6"  # eye-sparkle highlight
@@ -149,6 +165,21 @@ def _build_base_grid(eyes_closed: bool, tail_raised: bool) -> list[list[str | No
         for c in range(center, _GRID_W):
             if row[c] == _F:
                 row[c] = _D
+
+    # shading: a lighter band near the top (ears/forehead catch the
+    # light), a darker band near the bottom (the rump curves away from
+    # it) -- lit from above, like the body actually has volume instead
+    # of being two flat color fields
+    for row, (light, dark) in {
+        **{r: (_F_HI, _D_HI) for r in range(0, 6)},
+        **{r: (_F_LO, _D_LO) for r in range(14, 20)},
+    }.items():
+        actual_row = grid[row + _TOP_CLEARANCE]
+        for x in range(_GRID_W):
+            if actual_row[x] == _F:
+                actual_row[x] = light
+            elif actual_row[x] == _D:
+                actual_row[x] = dark
 
     # pink inner ear, on both sides regardless of the patch above
     _set(grid, 1, 7, _P)
