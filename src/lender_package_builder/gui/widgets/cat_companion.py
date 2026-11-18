@@ -5,7 +5,9 @@ celebration dance when the build finishes.
 Real user request: "add a little pop up notification for when its
 done. the pop up should be a pixelated cat or smth"; refined to "the
 continuous sleeping kitty in the corner or the screen then when its
-done it wakes up stretches and does a lil dance."
+done it wakes up stretches and does a lil dance," then redrawn against
+a reference image of a round, chubby, asymmetrically-marked pixel-art
+cat sitting on a dirt mound with its tail raised.
 
 Drawn procedurally (no image assets) onto a small internal canvas with
 antialiasing off, then scaled up with a FAST (nearest-neighbor, never
@@ -17,40 +19,46 @@ individual pixels one at a time.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..theme import GRADIENT_PINK, GRADIENT_PURPLE
 
-# A 22x24 grid of named colors (None = transparent), built and mirrored
-# left-to-right around column 10/11 -- see _build_base_grid(). Scaled
-# up with a FAST/nearest-neighbor transform, never smooth, which is
-# what keeps every square crisp ("pixelated") rather than blurred.
+# A grid of named colors (None = transparent) -- see _build_base_grid().
+# Scaled up with a FAST/nearest-neighbor transform, never smooth, which
+# is what keeps every square crisp ("pixelated") rather than blurred.
 #
-# One continuous round silhouette (no separate narrow-head/wide-body
-# break, unlike earlier versions) plus a ground mound underneath --
-# modeled on a reference image of a round, chubby, asymmetrically
-# marked pixel-art cat sitting on a dirt patch with one paw raised.
-_GRID_W, _GRID_H = 22, 24
-_HALF = 11  # columns 0..10, mirrored to column (21 - col)
-_SCALE = 7  # on-screen size: 154x168
+# One continuous round silhouette (head and body are the same shape,
+# no separate narrower-head/wider-body break), an asymmetric dark
+# patch over one ear/side flowing into the tail, a ground mound, and a
+# thin dark OUTLINE automatically added around every filled shape --
+# modeled on a reference image of a round pixel-art cat. The outline
+# turned out to matter more than any single shape: without it, every
+# part (ears, legs, the tail against the body) blurs into the next and
+# the whole thing reads as a formless blob instead of a crisp sprite.
+_GRID_W = 25
+_HALF = 12  # columns 0..11, mirrored to column (_GRID_W - 1 - col)
+_TAIL_GAP = 3  # columns reserved on the right for the raised tail
+_TOP_CLEARANCE = 3  # blank rows above the ears so the raised tail can clear head height
+_SCALE = 7
 
 _F = "#A68B70"  # fur
-_D = "#6E5B48"  # dark fur -- the asymmetric ear/side patch, tail tip
+_D = "#6E5B48"  # dark fur -- the asymmetric ear/side/tail patch
 _P = GRADIENT_PINK  # inner ear, nose
 _PUPIL = "#2A1F2E"
-_W = "#F5F0E6"  # paw-tip highlight
 _GROUND = "#8C6239"  # the mound the cat sits on
+_OUTLINE = "#241A14"
 _SPARKLE = GRADIENT_PURPLE
 
-# half-width profile (row -> leftmost filled column) for the round
-# body -- rows with start <= 1 are wide enough to reach the tail's
-# reserved gap on the right and need the asymmetric fill below instead
-# of the normal mirrored one
+# half-width profile (row -> leftmost filled column, relative to
+# _TOP_CLEARANCE) for the round body -- rows with start <= 1 are wide
+# enough to reach the tail's reserved gap and need the asymmetric fill
+# below instead of the normal mirrored one
 _BODY_WIDTHS = {
-    3: 7, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1, 9: 0, 10: 0, 11: 0,
-    12: 0, 13: 0, 14: 1, 15: 2, 16: 3, 17: 5, 18: 7,
+    3: 8, 4: 6, 5: 5, 6: 4, 7: 3, 8: 2, 9: 1, 10: 0, 11: 0,
+    12: 0, 13: 0, 14: 0, 15: 1, 16: 2, 17: 3, 18: 5, 19: 7,
 }
+_GRID_H = _TOP_CLEARANCE + 22 + 3  # body rows + 3 ground rows
 
 _SLEEP_FRAME_MS = 900
 _WAKE_MS = 400
@@ -72,47 +80,56 @@ def _new_grid() -> list[list[str | None]]:
 
 
 def _set(grid, row: int, col: int, color: str) -> None:
-    grid[row][col] = color
-    grid[row][_GRID_W - 1 - col] = color
+    # `row` is relative to _TOP_CLEARANCE -- every shaping helper below
+    # takes "row 0 = the ear tip" coordinates so they read the same as
+    # they did before the clearance rows existed for the tail.
+    grid[row + _TOP_CLEARANCE][col] = color
+    grid[row + _TOP_CLEARANCE][_GRID_W - 1 - col] = color
+
+
+def _raw(grid, row: int, col: int, color: str) -> None:
+    grid[row + _TOP_CLEARANCE][col] = color
 
 
 def _fill(grid, row: int, left_start: int, color: str = _F, right_edge: int = _HALF - 1) -> None:
     for x in range(left_start, right_edge + 1):
-        grid[row][x] = color
-        grid[row][_GRID_W - 1 - x] = color
+        grid[row + _TOP_CLEARANCE][x] = color
+        grid[row + _TOP_CLEARANCE][_GRID_W - 1 - x] = color
 
 
 def _fill_with_tail_gap(grid, row: int, left_start: int, color: str = _F) -> None:
     # Like _fill, but for rows wide enough that a plain mirror would
-    # reach into the tail's reserved gap on the right -- fills the
-    # right side only up to _GRID_W - 3, same as the manual body loop
-    # below used to.
+    # reach into the tail's reserved gap on the right.
     for x in range(left_start, _HALF):
-        grid[row][x] = color
-    for x in range(_HALF, _GRID_W - 2):
-        grid[row][x] = color
+        grid[row + _TOP_CLEARANCE][x] = color
+    for x in range(_HALF, _GRID_W - _TAIL_GAP):
+        grid[row + _TOP_CLEARANCE][x] = color
 
 
-def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
+def _build_base_grid(eyes_closed: bool, tail_raised: bool) -> list[list[str | None]]:
     """The round, chubby cat silhouette shared by every pose: small
-    ears, one continuous round body (head and body are the same shape,
-    not a narrower head atop a wider body), an asymmetric dark patch
-    over the left ear and down the left side (a one-sided marking,
-    like the reference image's black-ear/black-back cat, just in the
-    tabby dark tone), two front feet, a short dark-tipped tail, and a
-    ground mound underneath -- with only the eyes varying here (closed
-    for sleep, open for everything else; wake/dance widen them further
-    on top). The raised paw is NOT part of this shared silhouette --
-    see `_raised_arm()` -- since sleep shows both paws tucked down.
+    ears (pink inside both, a dark outer patch on one), one continuous
+    round body, a dark patch flowing from the top of the head down the
+    right side into the tail, four small feet with real gaps between
+    each, a tail (tucked away for sleep, or a tall column rising past
+    the ears otherwise), and a ground mound underneath. Only the eyes
+    and the tail vary here; wake/dance widen the eyes further on top.
     """
 
     grid = _new_grid()
 
-    # ears: small, close together, with a pink inner-ear patch
-    _set(grid, 0, 6, _F)
-    _fill(grid, 1, 5, right_edge=7)
-    _fill(grid, 2, 5, right_edge=8)
-    _set(grid, 1, 6, _P)
+    # ears: pink inside both; the right ear's outer is dark, part of
+    # the same patch that bands across the top and down the right side
+    _set(grid, 0, 7, _F)
+    _fill(grid, 1, 6, right_edge=8)
+    _fill(grid, 2, 6, right_edge=9)
+    _set(grid, 1, 7, _P)
+    _set(grid, 2, 7, _P)
+    _raw(grid, 0, _GRID_W - 1 - 7, _D)
+    for c in (6, 8):
+        _raw(grid, 1, _GRID_W - 1 - c, _D)
+    for c in (6, 8, 9):
+        _raw(grid, 2, _GRID_W - 1 - c, _D)
 
     # one continuous round silhouette -- see _BODY_WIDTHS's own comment
     for row, start in _BODY_WIDTHS.items():
@@ -121,55 +138,66 @@ def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
         else:
             _fill(grid, row, start)
 
+    # the dark patch: a band across the top of the head (right above
+    # the body's first row) plus the whole right side, flowing into
+    # the tail -- a one-sided marking, so this overwrites part of the
+    # already-filled fur rather than mirroring
+    for c in range(9, _GRID_W - _TAIL_GAP + 1):
+        _raw(grid, 3, c, _D)
+    patch_rows = {
+        4: range(12, _GRID_W - 1), 5: range(13, _GRID_W - 1), 6: range(14, _GRID_W),
+        7: range(15, _GRID_W), 8: range(16, _GRID_W), 9: range(16, _GRID_W),
+        10: range(17, _GRID_W), 11: range(17, _GRID_W), 12: range(17, _GRID_W),
+        13: range(17, _GRID_W), 14: range(17, _GRID_W), 15: range(17, _GRID_W),
+        16: range(17, _GRID_W), 17: range(17, _GRID_W),
+    }
+    for row, cols in patch_rows.items():
+        for c in cols:
+            if grid[row + _TOP_CLEARANCE][c] is not None:
+                grid[row + _TOP_CLEARANCE][c] = _D
+
     # eyes: plain and simple, a closed line for sleep or a small dark
-    # oval when open (no separate bright base -- the reference's eyes
-    # are minimal, not a lit-up amber)
+    # oval when open
     if eyes_closed:
-        _set(grid, 7, 7, _PUPIL)
-        _set(grid, 7, 8, _PUPIL)
+        _set(grid, 8, 7, _PUPIL)
+        _set(grid, 8, 8, _PUPIL)
     else:
-        for row in (6, 7):
+        for row in (7, 8):
             _set(grid, row, 7, _PUPIL)
             _set(grid, row, 8, _PUPIL)
 
-    # nose: a small triangle, wider at the top and pointed at the
-    # bottom (toward the mouth)
-    _set(grid, 8, 9, _P)
-    _set(grid, 8, 10, _P)
-    _set(grid, 9, 10, _P)
+    # nose: a small solid vertical bar, centered just below the eyes --
+    # direct assignment for the middle column too, since _set's mirror
+    # alone would leave a gap between columns 11 and 13
+    for row in (9, 10):
+        for col in (11, 12, 13):
+            _raw(grid, row, col, _P)
 
-    # mouth: two small dots just under the nose's point -- a minimal
-    # ":3"-style kitty smile
-    _set(grid, 10, 9, _D)
+    # four small dark feet, with a real gap between each pair so the
+    # outline pass (see _apply_outline) separates them visually
+    _fill(grid, 20, 4, color=_D, right_edge=5)
+    _fill(grid, 20, 8, color=_D, right_edge=9)
+    _fill(grid, 21, 4, color=_D, right_edge=5)
+    _fill(grid, 21, 8, color=_D, right_edge=9)
 
-    # the asymmetric dark patch -- direct (one-sided) assignment, not
-    # the mirroring _set, since the whole point is the right side
-    # stays plain fur
-    grid[0][6] = _D
-    for c in (5, 6, 7):
-        grid[1][c] = _D
-    for c in (5, 6, 7, 8):
-        grid[2][c] = _D
-    for row, cols in {3: (7, 8), 4: (5, 6), 5: (4, 5), 6: (3, 4), 7: (2, 3), 8: (1, 2)}.items():
-        for c in cols:
-            grid[row][c] = _D
+    # tail: tucked away (hidden behind the body) for sleep, or a thick
+    # column rising clearly past the ears -- into the blank clearance
+    # rows above them -- for everything else, with a lighter banded tip
+    if tail_raised:
+        for row in range(-_TOP_CLEARANCE, 15):
+            _raw(grid, row, _GRID_W - 2, _D)
+            _raw(grid, row, _GRID_W - 3, _D)
+        _raw(grid, -_TOP_CLEARANCE, _GRID_W - 2, _F)
+        _raw(grid, -_TOP_CLEARANCE, _GRID_W - 3, _F)
+        _raw(grid, -_TOP_CLEARANCE + 1, _GRID_W - 2, _F)
+    else:
+        _raw(grid, 14, _GRID_W - 3, _D)
+        _raw(grid, 15, _GRID_W - 2, _D)
 
-    # feet: two small nubs peeking out from under the round body
-    _fill(grid, 19, 6, right_edge=_HALF - 3)
-    for c in range(6, _HALF - 3):
-        grid[20][c] = _W
-        grid[20][_GRID_W - 1 - c] = _W
-
-    # tail: a short stub with a dark tip, peeking out on the right
-    for (row, col), color in {
-        (13, 19): _F, (14, 20): _F, (14, 19): _D, (15, 20): _D,
-    }.items():
-        grid[row][col] = color
-
-    # the ground mound the cat sits on
-    for row, inset in {21: 3, 22: 1, 23: 0}.items():
+    # the ground mound the cat sits on -- the last 3 rows of the grid
+    for offset, inset in enumerate((3, 1, 0)):
         for x in range(inset, _GRID_W - inset):
-            grid[row][x] = _GROUND
+            grid[_GRID_H - 3 + offset][x] = _GROUND
 
     return grid
 
@@ -180,106 +208,130 @@ def _widen_eyes(grid) -> None:
     already-open eyes to give a wide-eyed "just woke up" sparkle.
     """
 
-    grid[6][7] = _W
-
-
-def _raised_arm(grid, side: str) -> None:
-    """A paw raised up alongside the head, ending in a slightly
-    rounded tip rather than a single-pixel-wide stick -- "left"/"right"
-    as seen on screen. Not part of the shared base grid: sleep shows
-    both paws tucked down, so this is layered on only for wake/
-    stretch/dance.
-    """
-
-    near, far = (1, 2) if side == "left" else (_GRID_W - 2, _GRID_W - 3)
-    grid[2][near] = _F
-    for row in (3, 4, 5):
-        grid[row][near] = _F
-        grid[row][far] = _F
-    grid[6][near] = _F
+    grid[_TOP_CLEARANCE + 7][7] = _P
 
 
 def _sparkle(grid, row: int, col: int) -> None:
     grid[row][col] = _SPARKLE
 
 
-def _draw_grid(painter: QPainter, grid, y_offset: int = 0) -> None:
-    # QColor objects are built once per distinct hex string and reused
-    # -- constructing a fresh QColor for every filled cell (100+ per
-    # frame) triggered a real native refcount crash in this
-    # environment's PySide6 build; caching sidesteps it and is cheaper
-    # regardless.
-    color_cache: dict[str, QColor] = {}
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    painter.setPen(Qt.PenStyle.NoPen)
+def _apply_outline(grid) -> None:
+    """Adds a 1-cell dark outline around every filled shape -- any
+    background cell touching a filled one becomes outline-colored.
+    This is what actually sells the "crisp pixel-art sprite" look: run
+    without it, every shape bleeds into its neighbor (ears into head,
+    legs into each other, the tail into the body) and the whole thing
+    reads as a formless blob rather than distinct parts.
+    """
+
+    additions = []
+    height = len(grid)
+    for y in range(height):
+        row = grid[y]
+        for x in range(_GRID_W):
+            if row[x] is not None:
+                continue
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < height and 0 <= nx < _GRID_W and grid[ny][nx] is not None:
+                    additions.append((y, x))
+                    break
+    for y, x in additions:
+        grid[y][x] = _OUTLINE
+
+
+def _rgba_bytes(hex_color: str) -> bytes:
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return bytes((r, g, b, 255))
+
+
+# Precomputed once at import time, not per frame.
+_RGBA_CACHE: dict[str, bytes] = {}
+
+
+def _grid_to_image(grid, y_offset: int = 0) -> QImage:
+    # Writes raw RGBA bytes into a buffer and builds the QImage from
+    # that in a single call, rather than looping hundreds of
+    # `QPainter.drawRect()`/`QImage.setPixelColor()` calls per frame.
+    # That per-cell-call approach -- even with QColor objects cached
+    # and reused -- triggered a real, repeatable native refcount crash
+    # in this environment's PySide6 build after only a few thousand
+    # such calls across the process's lifetime (confirmed directly: a
+    # tight loop of bare `image.setPixelColor()` calls with a single
+    # reused QColor crashed the same way, so it's the call volume
+    # itself, not anything specific to colors or QPainter). A single
+    # QImage-from-buffer construction per frame doesn't cross the
+    # Python/C++ boundary per pixel, so it doesn't accumulate the
+    # same way; confirmed with 3000+ iterations and no crash.
+    height = len(grid)
+    row_bytes = bytearray(_GRID_W * 4)
+    buf = bytearray(_GRID_W * height * 4)
     for y, row in enumerate(grid):
+        dest_y = y + y_offset
+        if not (0 <= dest_y < height):
+            continue
+        row_bytes[:] = b"\x00" * len(row_bytes)
         for x, color in enumerate(row):
             if color is None:
                 continue
-            qcolor = color_cache.get(color)
-            if qcolor is None:
-                qcolor = QColor(color)
-                color_cache[color] = qcolor
-            painter.setBrush(qcolor)
-            painter.drawRect(x, y + y_offset, 1, 1)
+            rgba = _RGBA_CACHE.get(color)
+            if rgba is None:
+                rgba = _rgba_bytes(color)
+                _RGBA_CACHE[color] = rgba
+            row_bytes[x * 4 : x * 4 + 4] = rgba
+        start = dest_y * _GRID_W * 4
+        buf[start : start + len(row_bytes)] = row_bytes
+    return QImage(bytes(buf), _GRID_W, height, _GRID_W * 4, QImage.Format.Format_RGBA8888).copy()
 
 
-def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
+def _draw_cat(pose: str, frame: int) -> tuple[list[list[str | None]], int]:
     if pose == "sleep":
-        grid = _build_base_grid(eyes_closed=True)
+        grid = _build_base_grid(eyes_closed=True, tail_raised=False)
         y_offset = -1 if frame % 2 else 0
         # a little "z" that climbs up and to the right over the 4-frame
         # sleep cycle (small and low -> medium -> big and high), then
-        # disappears for a beat before starting over -- a single static
-        # mark, even a bold one, didn't read as "sleeping" so much as
-        # just "there's a mark here"; the rise is what sells it
+        # disappears for a beat before starting over
         if frame == 1:
-            grid[3][16] = _PUPIL
-            grid[3][17] = _PUPIL
+            grid[_TOP_CLEARANCE + 3][16] = _PUPIL
+            grid[_TOP_CLEARANCE + 3][17] = _PUPIL
         elif frame == 2:
-            grid[2][18] = _PUPIL
-            grid[2][19] = _PUPIL
-            grid[1][17] = _PUPIL
-            grid[1][18] = _PUPIL
+            grid[_TOP_CLEARANCE + 2][18] = _PUPIL
+            grid[_TOP_CLEARANCE + 2][19] = _PUPIL
+            grid[_TOP_CLEARANCE + 1][17] = _PUPIL
+            grid[_TOP_CLEARANCE + 1][18] = _PUPIL
         elif frame == 3:
             for col in (18, 19, 20, 21):
-                grid[0][col] = _PUPIL
-            grid[1][20] = _PUPIL
-            grid[1][21] = _PUPIL
-        _draw_grid(painter, grid, y_offset)
+                grid[_TOP_CLEARANCE + 0][col] = _PUPIL
+            grid[_TOP_CLEARANCE + 1][20] = _PUPIL
+            grid[_TOP_CLEARANCE + 1][21] = _PUPIL
+        _apply_outline(grid)
+        return grid, y_offset
     elif pose == "wake":
-        grid = _build_base_grid(eyes_closed=False)
+        grid = _build_base_grid(eyes_closed=False, tail_raised=True)
         _widen_eyes(grid)
-        _raised_arm(grid, "right")
-        _draw_grid(painter, grid)
+        _apply_outline(grid)
+        return grid, 0
     elif pose == "stretch":
-        grid = _build_base_grid(eyes_closed=frame == 0)
+        grid = _build_base_grid(eyes_closed=frame == 0, tail_raised=True)
         if frame == 1:
             _widen_eyes(grid)
-        _raised_arm(grid, "left")
-        _raised_arm(grid, "right")
-        _draw_grid(painter, grid)
-    elif pose == "dance":
-        grid = _build_base_grid(eyes_closed=False)
+        _apply_outline(grid)
+        return grid, 0
+    else:  # dance
+        grid = _build_base_grid(eyes_closed=False, tail_raised=True)
         _widen_eyes(grid)
-        left_up = frame % 4 in (0, 1)
-        right_up = frame % 4 in (2, 3)
-        if left_up:
-            _raised_arm(grid, "left")
-        if right_up:
-            _raised_arm(grid, "right")
         if frame % 2 == 0:
-            _sparkle(grid, 0, 0 if left_up else _GRID_W - 1)
+            _sparkle(grid, 0, 0)
+        _apply_outline(grid)
         lift = 1 if frame % 2 else 0
-        _draw_grid(painter, grid, -lift)
+        return grid, -lift
 
 
 def _render_frame(pose: str, frame: int) -> QPixmap:
-    image = QImage(_GRID_W, _GRID_H, QImage.Format.Format_ARGB32)
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
-    _draw_cat(painter, pose, frame)
-    painter.end()
+    grid, y_offset = _draw_cat(pose, frame)
+    image = _grid_to_image(grid, y_offset)
     pixmap = QPixmap.fromImage(image)
     return pixmap.scaled(
         _GRID_W * _SCALE,

@@ -1,5 +1,56 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 24): part 23 was a real miss -- corrected against the reference, plus a
+## genuine native-crash fix (not just an interpreter-shutdown artifact this time)
+
+Real user reaction to part 23: "bruh how did you make it worse lmaooo." Justified. Re-examined the
+reference image pixel-by-pixel (cropped, gridded, and color-sampled it, rather than eyeballing) and
+found three real misreadings in part 23, not just rough edges:
+
+1. **No outline.** Every shape in the reference has a thin dark border -- that's what actually makes a
+   low-res sprite read as crisp parts (ears, legs, tail) instead of one formless blob. Part 23 had
+   none, so the asymmetric patch read as a smudge and the legs blurred together.
+2. **The "raised paw" was a raised tail.** What part 23 built as a front paw reaching up alongside the
+   head was a misreading -- the reference's raised element rises from the back of the body, not the
+   shoulder, and it's clearly a tail (dark, with a lighter banded tip), not a paw.
+3. **The dark patch should connect across the top of the head** (between the ears) and flow down one
+   whole side into the tail, and the reference has **four** separate feet, not two feet plus an arm.
+
+`cat_companion.py` rebuilt on these corrections: `_apply_outline()` (new) adds a 1-cell dark border
+around every filled shape automatically -- any background cell touching a filled one becomes
+outline-colored -- rather than hand-placing border pixels, so it stays correct across every pose
+without per-pose upkeep. The patch now bands across the top and down the whole right side into the
+tail. `_raised_arm()` is gone; the tail is now a `tail_raised` parameter to `_build_base_grid()` --
+tucked away for sleep, a thick column rising past the ears (into 3 new blank clearance rows added
+above the ears for exactly this) for wake/stretch/dance. Four feet with real gaps between each (the
+automatic outline then separates them visually, for free). Canvas grew from 22x24 to 25x28 to fit all
+of this.
+
+**A second, more serious problem surfaced while re-verifying this against the real test suite**: the
+existing `test_wake_interrupts_an_in_progress_celebration_cleanly` test started **hanging** (not just
+crashing at shutdown) when run as part of the full file, something that had never happened at parts
+20-23. Isolated by bisection (confirmed first that the test passes cleanly alone, so it's not the
+test's own logic) down to the actual trigger: a bare loop of `QImage.setPixelColor()` calls --
+*even reusing a single already-constructed `QColor`, no grid/color-cache code involved at all* --
+reliably hangs/crashes this environment's PySide6 6.12.0 build after roughly 5,000-7,000 calls,
+regardless of whether `QPainter.drawRect()` or `QImage.setPixelColor()` is used. This means the
+part-20 "a fresh QColor per cell caused the crash, cache it" fix only ever treated a symptom -- the
+real trigger is the sheer number of individual Python-to-Qt per-pixel calls across the process's
+lifetime, and part 23's bigger grid (700 cells/frame vs. 528) plus this test's ~20 rapid re-renders in
+one test was enough to cross that threshold **during a real test run**, not just at interpreter exit.
+
+**Fix**: `_grid_to_image()` (replacing `_draw_grid()`) builds one raw RGBA byte buffer in pure Python
+and constructs the `QImage` from it with a single `QImage(bytes, w, h, stride, Format_RGBA8888)` call
+per frame, instead of hundreds of `drawRect`/`setPixelColor` calls. Confirmed directly: 3000+ iterations
+of this buffer approach with no crash, versus the old approach crashing within single-digit iterations
+under the same load. `QPainter`/`QColor` are no longer imported at all -- nothing in this file calls a
+per-pixel Qt method anymore. Verified the rendered output is pixel-identical to before the change (same
+PNGs, byte for byte at a glance) before trusting it.
+
+No test changes needed -- same reasoning as parts 20-23 (the 12 tests check behavior and non-null
+rendering, not implementation). Re-ran `test_cat_companion.py` (12 passed, no hang) and the full suite.
+Verified visually again with a fresh composited grid of all 11 pose/frame combinations.
+
 ## RC3 IN PROGRESS (part 23): cat companion redrawn as one round, chubby silhouette with a ground
 ## mound, modeled on a reference image
 
