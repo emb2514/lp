@@ -46,6 +46,7 @@ _F = "#A68B70"  # fur
 _D = "#6E5B48"  # dark fur -- the asymmetric ear/side/tail patch
 _P = GRADIENT_PINK  # inner ear, nose
 _PUPIL = "#2A1F2E"
+_HIGHLIGHT = "#F5F0E6"  # eye-sparkle highlight
 _GROUND = "#8C6239"  # the mound the cat sits on
 _OUTLINE = "#241A14"
 _SPARKLE = GRADIENT_PURPLE
@@ -56,7 +57,7 @@ _SPARKLE = GRADIENT_PURPLE
 # below instead of the normal mirrored one
 _BODY_WIDTHS = {
     3: 8, 4: 6, 5: 5, 6: 4, 7: 3, 8: 2, 9: 1, 10: 0, 11: 0,
-    12: 0, 13: 0, 14: 0, 15: 1, 16: 2, 17: 3, 18: 5, 19: 7,
+    12: 0, 13: 0, 14: 0, 15: 0, 16: 1, 17: 2, 18: 3, 19: 4,
 }
 _GRID_H = _TOP_CLEARANCE + 22 + 3  # body rows + 3 ground rows
 
@@ -91,7 +92,11 @@ def _raw(grid, row: int, col: int, color: str) -> None:
     grid[row + _TOP_CLEARANCE][col] = color
 
 
-def _fill(grid, row: int, left_start: int, color: str = _F, right_edge: int = _HALF - 1) -> None:
+def _fill(grid, row: int, left_start: int, color: str = _F, right_edge: int = _HALF) -> None:
+    # Default right_edge is _HALF (not _HALF - 1): mirroring up to
+    # _HALF - 1 leaves the true center column (mirror of itself)
+    # unfilled, which showed up as a spurious 1-pixel outline seam
+    # running down the middle of the head once _apply_outline ran.
     for x in range(left_start, right_edge + 1):
         grid[row + _TOP_CLEARANCE][x] = color
         grid[row + _TOP_CLEARANCE][_GRID_W - 1 - x] = color
@@ -118,43 +123,36 @@ def _build_base_grid(eyes_closed: bool, tail_raised: bool) -> list[list[str | No
 
     grid = _new_grid()
 
-    # ears: pink inside both; the right ear's outer is dark, part of
-    # the same patch that bands across the top and down the right side
+    # the silhouette, both ears and the whole body, all one fur color
+    # for now -- the asymmetric dark patch and every face feature are
+    # layered on afterward, in that order, so each one always shows up
+    # correctly regardless of what's underneath
     _set(grid, 0, 7, _F)
     _fill(grid, 1, 6, right_edge=8)
     _fill(grid, 2, 6, right_edge=9)
-    _set(grid, 1, 7, _P)
-    _set(grid, 2, 7, _P)
-    _raw(grid, 0, _GRID_W - 1 - 7, _D)
-    for c in (6, 8):
-        _raw(grid, 1, _GRID_W - 1 - c, _D)
-    for c in (6, 8, 9):
-        _raw(grid, 2, _GRID_W - 1 - c, _D)
-
-    # one continuous round silhouette -- see _BODY_WIDTHS's own comment
     for row, start in _BODY_WIDTHS.items():
         if start <= 1:
             _fill_with_tail_gap(grid, row, start)
         else:
             _fill(grid, row, start)
 
-    # the dark patch: a band across the top of the head (right above
-    # the body's first row) plus the whole right side, flowing into
-    # the tail -- a one-sided marking, so this overwrites part of the
-    # already-filled fur rather than mirroring
-    for c in range(9, _GRID_W - _TAIL_GAP + 1):
-        _raw(grid, 3, c, _D)
-    patch_rows = {
-        4: range(12, _GRID_W - 1), 5: range(13, _GRID_W - 1), 6: range(14, _GRID_W),
-        7: range(15, _GRID_W), 8: range(16, _GRID_W), 9: range(16, _GRID_W),
-        10: range(17, _GRID_W), 11: range(17, _GRID_W), 12: range(17, _GRID_W),
-        13: range(17, _GRID_W), 14: range(17, _GRID_W), 15: range(17, _GRID_W),
-        16: range(17, _GRID_W), 17: range(17, _GRID_W),
-    }
-    for row, cols in patch_rows.items():
-        for c in cols:
-            if grid[row + _TOP_CLEARANCE][c] is not None:
-                grid[row + _TOP_CLEARANCE][c] = _D
+    # the dark patch: everything right of center -- ear, head, and
+    # body alike -- recolored in one pass. This is deliberately
+    # computed from whatever's already filled at each row, rather than
+    # a hand-picked column range per row: a hand-picked range that
+    # doesn't exactly match the silhouette's actual taper is what
+    # created an ugly flat "shelf" where the ear met the head in the
+    # previous version. Reading it off the real silhouette guarantees
+    # the patch edge always follows the body's actual outline.
+    center = _GRID_W // 2
+    for row in grid:
+        for c in range(center, _GRID_W):
+            if row[c] == _F:
+                row[c] = _D
+
+    # pink inner ear, on both sides regardless of the patch above
+    _set(grid, 1, 7, _P)
+    _set(grid, 2, 7, _P)
 
     # eyes: plain and simple, a closed line for sleep or a small dark
     # oval when open
@@ -172,6 +170,11 @@ def _build_base_grid(eyes_closed: bool, tail_raised: bool) -> list[list[str | No
     for row in (9, 10):
         for col in (11, 12, 13):
             _raw(grid, row, col, _P)
+
+    # mouth: two small dots just under the nose -- a minimal
+    # ":3"-style kitty smile, the one thing missing that most made the
+    # face read as blank rather than a cat's
+    _set(grid, 11, 10, _D)
 
     # four small dark feet, with a real gap between each pair so the
     # outline pass (see _apply_outline) separates them visually
@@ -203,12 +206,14 @@ def _build_base_grid(eyes_closed: bool, tail_raised: bool) -> list[list[str | No
 
 
 def _widen_eyes(grid) -> None:
-    """A bright highlight pixel added to one eye -- used for
-    wake/stretch/dance, layered on top of the shared base grid's
+    """A small light-colored glint in the corner of one eye -- used
+    for wake/stretch/dance, layered on top of the shared base grid's
     already-open eyes to give a wide-eyed "just woke up" sparkle.
+    (Previously this used the nose's pink, which overwrote part of
+    the eye itself rather than adding a highlight to it.)
     """
 
-    grid[_TOP_CLEARANCE + 7][7] = _P
+    grid[_TOP_CLEARANCE + 7][8] = _HIGHLIGHT
 
 
 def _sparkle(grid, row: int, col: int) -> None:

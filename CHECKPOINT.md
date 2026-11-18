@@ -1,5 +1,38 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 25): three more concrete bugs found by zooming in after "still looks a
+## little funky. like think of a cat"
+
+Zoomed into a real rendered frame (not just the small composite thumbnail) to actually look hard at
+what read as "funky," rather than guessing from vibes, and found three real, fixable bugs:
+
+1. **The eye "sparkle" was overwriting part of the eye with the nose's pink color** instead of adding
+   a highlight -- `_widen_eyes()` used `_P` (meant for the nose) instead of a light highlight color. A
+   new `_HIGHLIGHT` constant fixes it.
+2. **A hand-picked column range for the dark patch didn't exactly match the silhouette's real taper**,
+   creating an ugly flat "shelf" right where the ear met the head. Replaced the whole per-row column-
+   range approach with one pass: recolor every already-filled cell right of center to the dark tone, for
+   the ear and body alike. This can never mismatch the silhouette, because it reads the silhouette's own
+   shape instead of guessing it, and the ears no longer need their own special-cased dark-overwrite code
+   at all. Order matters here: the patch pass runs right after the plain silhouette and before every
+   face feature (ear-pink, eyes, nose, mouth), so those features always render correctly on top
+   regardless of which side of the patch they land on.
+3. **`_fill()`'s default right edge stopped one column short of true center** (mirroring only up to
+   `_HALF - 1`, never filling the true center column), which was invisible back when the whole head was
+   one flat color but became a glaring 1-pixel vertical seam straight down the face once the bicolor
+   patch and the outline pass (part 24) existed to actually show it. Fixed the default to `_HALF`.
+
+Also added a mouth (two small dots under the nose, the same minimal ":3" style from parts 21-22 --
+dropped by accident in the part-23 rewrite, and genuinely missing from the face), and softened the
+lower body's taper (`_BODY_WIDTHS`' last few rows) so it rounds off above the legs instead of coming to
+a point.
+
+No test changes needed. Re-ran `test_cat_companion.py` (12 passed) and the full suite. Verified
+visually at both the normal composite scale and a direct 5x crop of a single frame, specifically
+because the composite-scale view was what let the shelf/seam/eye bugs go unnoticed in part 24's own
+"looks good" check -- the lesson being that composite-grid screenshots are good for checking pose
+coverage, not for catching small per-pixel bugs.
+
 ## RC3 IN PROGRESS (part 24): part 23 was a real miss -- corrected against the reference, plus a
 ## genuine native-crash fix (not just an interpreter-shutdown artifact this time)
 
