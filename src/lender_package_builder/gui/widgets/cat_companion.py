@@ -22,21 +22,35 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..theme import GRADIENT_PINK, GRADIENT_PURPLE
 
-# A 22x22 grid of named colors (None = transparent), built and mirrored
+# A 22x24 grid of named colors (None = transparent), built and mirrored
 # left-to-right around column 10/11 -- see _build_base_grid(). Scaled
 # up with a FAST/nearest-neighbor transform, never smooth, which is
 # what keeps every square crisp ("pixelated") rather than blurred.
-_GRID_W, _GRID_H = 22, 22
+#
+# One continuous round silhouette (no separate narrow-head/wide-body
+# break, unlike earlier versions) plus a ground mound underneath --
+# modeled on a reference image of a round, chubby, asymmetrically
+# marked pixel-art cat sitting on a dirt patch with one paw raised.
+_GRID_W, _GRID_H = 22, 24
 _HALF = 11  # columns 0..10, mirrored to column (21 - col)
-_SCALE = 7  # on-screen size: 154x154
+_SCALE = 7  # on-screen size: 154x168
 
 _F = "#A68B70"  # fur
-_D = "#6E5B48"  # dark fur / stripes / tail / shading
-_P = GRADIENT_PINK  # inner ear, nose, collar
-_EYE = "#E8B04B"  # eye base -- bright enough to read against the fur, unlike the old single dark dot
+_D = "#6E5B48"  # dark fur -- the asymmetric ear/side patch, tail tip
+_P = GRADIENT_PINK  # inner ear, nose
 _PUPIL = "#2A1F2E"
 _W = "#F5F0E6"  # paw-tip highlight
+_GROUND = "#8C6239"  # the mound the cat sits on
 _SPARKLE = GRADIENT_PURPLE
+
+# half-width profile (row -> leftmost filled column) for the round
+# body -- rows with start <= 1 are wide enough to reach the tail's
+# reserved gap on the right and need the asymmetric fill below instead
+# of the normal mirrored one
+_BODY_WIDTHS = {
+    3: 7, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1, 9: 0, 10: 0, 11: 0,
+    12: 0, 13: 0, 14: 1, 15: 2, 16: 3, 17: 5, 18: 7,
+}
 
 _SLEEP_FRAME_MS = 900
 _WAKE_MS = 400
@@ -68,123 +82,121 @@ def _fill(grid, row: int, left_start: int, color: str = _F, right_edge: int = _H
         grid[row][_GRID_W - 1 - x] = color
 
 
+def _fill_with_tail_gap(grid, row: int, left_start: int, color: str = _F) -> None:
+    # Like _fill, but for rows wide enough that a plain mirror would
+    # reach into the tail's reserved gap on the right -- fills the
+    # right side only up to _GRID_W - 3, same as the manual body loop
+    # below used to.
+    for x in range(left_start, _HALF):
+        grid[row][x] = color
+    for x in range(_HALF, _GRID_W - 2):
+        grid[row][x] = color
+
+
 def _build_base_grid(eyes_closed: bool) -> list[list[str | None]]:
-    """The sitting cat silhouette shared by every pose -- ears, a head
-    narrower than the body (the width step between them, plus a
-    pinched-in "neck" row, is what reads as a head rather than one
-    blob), a small pink collar, a body, front paws, and a dark tail
-    that stays visually distinct from the body it curls against
-    (same color as the body would make it disappear on contact) --
-    with only the eyes varying here (closed for sleep, open for
-    everything else; wake/stretch/dance widen them further on top).
+    """The round, chubby cat silhouette shared by every pose: small
+    ears, one continuous round body (head and body are the same shape,
+    not a narrower head atop a wider body), an asymmetric dark patch
+    over the left ear and down the left side (a one-sided marking,
+    like the reference image's black-ear/black-back cat, just in the
+    tabby dark tone), two front feet, a short dark-tipped tail, and a
+    ground mound underneath -- with only the eyes varying here (closed
+    for sleep, open for everything else; wake/dance widen them further
+    on top). The raised paw is NOT part of this shared silhouette --
+    see `_raised_arm()` -- since sleep shows both paws tucked down.
     """
 
     grid = _new_grid()
 
-    # ears, centered above the head rather than out at its old full
-    # width, with a pink inner-ear patch
-    _set(grid, 0, 7, _F)
-    for c in (6, 7, 8):
-        _set(grid, 1, c, _F)
-    for c in (5, 6, 7, 8):
-        _set(grid, 2, c, _F)
-    _set(grid, 2, 6, _P)
-    for c in (5, 6, 7, 8, 9):
-        _set(grid, 3, c, _F)
-    _set(grid, 3, 6, _P)
+    # ears: small, close together, with a pink inner-ear patch
+    _set(grid, 0, 6, _F)
+    _fill(grid, 1, 5, right_edge=7)
+    _fill(grid, 2, 5, right_edge=8)
+    _set(grid, 1, 6, _P)
 
-    # head -- narrows toward the top (near the ears), widens slightly
-    # at the cheeks, then pinches in again at row 10 (the neck) before
-    # the body flares out wider below
-    for row, start in {4: 6, 5: 4, 6: 3, 7: 3, 8: 3, 9: 4, 10: 5}.items():
-        _fill(grid, row, start)
+    # one continuous round silhouette -- see _BODY_WIDTHS's own comment
+    for row, start in _BODY_WIDTHS.items():
+        if start <= 1:
+            _fill_with_tail_gap(grid, row, start)
+        else:
+            _fill(grid, row, start)
 
-    # eyes: two rows tall, a bright base with a dark pupil -- far more
-    # legible at this scale than the old single dim pixel
+    # eyes: plain and simple, a closed line for sleep or a small dark
+    # oval when open (no separate bright base -- the reference's eyes
+    # are minimal, not a lit-up amber)
     if eyes_closed:
-        _set(grid, 7, 4, _D)
-        _set(grid, 7, 5, _D)
+        _set(grid, 7, 7, _PUPIL)
+        _set(grid, 7, 8, _PUPIL)
     else:
         for row in (6, 7):
-            _set(grid, row, 4, _EYE)
-            _set(grid, row, 5, _EYE)
-        _set(grid, 7, 5, _PUPIL)
-
-    # whisker, just outside the head's edge at the cheek row so it
-    # reads as emanating from the face instead of floating in space
-    _set(grid, 8, 2, _D)
+            _set(grid, row, 7, _PUPIL)
+            _set(grid, row, 8, _PUPIL)
 
     # nose: a small triangle, wider at the top and pointed at the
-    # bottom (toward the mouth), rather than a single flat dot
+    # bottom (toward the mouth)
     _set(grid, 8, 9, _P)
     _set(grid, 8, 10, _P)
     _set(grid, 9, 10, _P)
 
     # mouth: two small dots just under the nose's point -- a minimal
-    # ":3"-style kitty smile, not a second collar-like band
+    # ":3"-style kitty smile
     _set(grid, 10, 9, _D)
 
-    # a couple of tabby forehead stripes
-    _set(grid, 5, 6, _D)
-    _set(grid, 4, 7, _D)
+    # the asymmetric dark patch -- direct (one-sided) assignment, not
+    # the mirroring _set, since the whole point is the right side
+    # stays plain fur
+    grid[0][6] = _D
+    for c in (5, 6, 7):
+        grid[1][c] = _D
+    for c in (5, 6, 7, 8):
+        grid[2][c] = _D
+    for row, cols in {3: (7, 8), 4: (5, 6), 5: (4, 5), 6: (3, 4), 7: (2, 3), 8: (1, 2)}.items():
+        for c in cols:
+            grid[row][c] = _D
 
-    # body -- narrower than before (a slimmer build reads cuter), right
-    # side still stops short so the tail can show
-    for row in range(11, 19):
-        for x in range(2, _HALF):
-            grid[row][x] = _F
-        for x in range(_HALF, _GRID_W - 4):
-            grid[row][x] = _F
+    # feet: two small nubs peeking out from under the round body
+    _fill(grid, 19, 6, right_edge=_HALF - 3)
+    for c in range(6, _HALF - 3):
+        grid[20][c] = _W
+        grid[20][_GRID_W - 1 - c] = _W
 
-    # a thin collar band across the top of the body (the neck line),
-    # with a small tag below it -- kept off the face itself so it
-    # can't be mistaken for a mouth
-    _fill(grid, 11, 5, _P)
-    _set(grid, 12, 10, _EYE)  # collar tag, just below the band
-
-    for row, col in [(12, 3), (12, 7), (14, 2), (16, 5)]:
-        _set(grid, row, col, _D)
-
-    # front paws, with a gap between them -- inset to match the
-    # slimmer body above them
-    for row in range(19, 21):
-        _fill(grid, row, 4, right_edge=_HALF - 2)
-    for c in range(4, _HALF - 1):
-        grid[21][c] = _W
-        grid[21][_GRID_W - 1 - c] = _W
-
-    # tail, curling in the gap left open on the body's right side --
-    # dark rather than fur-colored so it stays visible where it meets
-    # the body's edge
+    # tail: a short stub with a dark tip, peeking out on the right
     for (row, col), color in {
-        (10, 19): _D, (11, 20): _D, (12, 21): _D, (13, 21): _D,
-        (14, 21): _D, (15, 21): _D, (16, 20): _D, (17, 19): _D,
+        (13, 19): _F, (14, 20): _F, (14, 19): _D, (15, 20): _D,
     }.items():
         grid[row][col] = color
+
+    # the ground mound the cat sits on
+    for row, inset in {21: 3, 22: 1, 23: 0}.items():
+        for x in range(inset, _GRID_W - inset):
+            grid[row][x] = _GROUND
 
     return grid
 
 
 def _widen_eyes(grid) -> None:
-    """A bright highlight pixel added to each pupil -- used for
+    """A bright highlight pixel added to one eye -- used for
     wake/stretch/dance, layered on top of the shared base grid's
     already-open eyes to give a wide-eyed "just woke up" sparkle.
     """
 
-    _set(grid, 6, 5, _W)
+    grid[6][7] = _W
 
 
 def _raised_arm(grid, side: str) -> None:
-    """A paw raised straight up from the shoulder -- "left"/"right" as
-    seen on screen (mirrored automatically for the opposite side isn't
-    applicable here since this is explicitly one-sided, unlike the
-    symmetric body/head helpers above).
+    """A paw raised up alongside the head, ending in a slightly
+    rounded tip rather than a single-pixel-wide stick -- "left"/"right"
+    as seen on screen. Not part of the shared base grid: sleep shows
+    both paws tucked down, so this is layered on only for wake/
+    stretch/dance.
     """
 
-    col = 1 if side == "left" else _GRID_W - 2
-    for row in (7, 8, 9, 10):
-        grid[row][col] = _F
-    grid[6][col] = _D
+    near, far = (1, 2) if side == "left" else (_GRID_W - 2, _GRID_W - 3)
+    grid[2][near] = _F
+    for row in (3, 4, 5):
+        grid[row][near] = _F
+        grid[row][far] = _F
+    grid[6][near] = _F
 
 
 def _sparkle(grid, row: int, col: int) -> None:
@@ -238,6 +250,7 @@ def _draw_cat(painter: QPainter, pose: str, frame: int) -> None:
     elif pose == "wake":
         grid = _build_base_grid(eyes_closed=False)
         _widen_eyes(grid)
+        _raised_arm(grid, "right")
         _draw_grid(painter, grid)
     elif pose == "stretch":
         grid = _build_base_grid(eyes_closed=frame == 0)

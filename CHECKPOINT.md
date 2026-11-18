@@ -1,5 +1,45 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 23): cat companion redrawn as one round, chubby silhouette with a ground
+## mound, modeled on a reference image
+
+Real user request: shared a reference image of a round, chubby pixel-art cat (asymmetric black
+ear/back patch, simple dot eyes, one paw raised, sitting on a dirt mound) and said "like so." Asked
+whether to keep the existing grayish-brown tabby coloring or switch to the reference's white/black --
+user chose to keep the tabby coloring, adopting only the reference's shape and composition.
+
+This is a bigger change than parts 20-22's refinements: the whole silhouette in `cat_companion.py` is
+rebuilt around `_BODY_WIDTHS`, a single continuous round shape from the ears down (no more separate
+narrower-head/wider-body/neck-pinch structure from parts 20-22 -- the reference cat's head and body
+are one uninterrupted round blob, with the face simply sitting in the upper portion of it). Also new:
+
+- An asymmetric dark patch -- the whole left ear plus a solid stripe down the left side -- via direct,
+  one-sided grid assignment rather than the mirroring `_set()` helper every other marking uses, since
+  the point is the right side stays plain fur. Matches the reference's one-sided black-ear/black-back
+  look, just in the existing tabby dark tone instead of black.
+- A ground mound (`_GROUND`, a brown tone) in 3 new rows at the bottom of a taller 22x24 grid (was
+  22x22) -- the cat now visibly sits on something, like the reference, instead of floating.
+- The raised paw moved out of the shared base silhouette into `_raised_arm()` (already existed, just
+  repositioned for the new proportions and given a slightly rounded tip instead of a single-pixel-wide
+  stick) and made pose-conditional: tucked down for sleep (both paws down, resting), one paw raised for
+  wake, both raised for stretch/dance -- matching the reference's "one paw up" look for every pose
+  except actually asleep, where a raised paw would read wrong.
+- Eyes simplified to plain small dark ovals (closed line for sleep) instead of part 20's bright amber
+  base -- closer to the reference's minimal eyes; the wake/dance highlight-sparkle mechanic from part
+  20 was kept, just repositioned.
+- The collar + tag from parts 20-22 were dropped: there's no natural "neck" location left on a single
+  continuous round shape, and the reference doesn't have one either. Nose and mouth were kept (not
+  part of the reference, but a deliberate earlier request, and they still have a natural place on the
+  round face).
+
+No new tests needed -- `test_cat_companion.py`'s 12 tests check the state machine and non-null
+rendering, not exact pixel geometry, so they stayed valid through the rewrite and the grid-size change
+(`_GRID_W`/`_GRID_H` are read live, nothing hardcoded 22x22 in the tests); re-run and confirmed still
+passing, plus a full-suite run. Verified visually: rendered all 11 pose/frame combinations to PNG and
+inspected a composited grid before considering it done, checking in particular that the zzz animation
+(part 22) and the dance sparkle still land in empty space now that the silhouette and canvas size
+changed underneath them.
+
 ## RC3 IN PROGRESS (part 22): cat companion slimmed down, sleep zzz now actually rises
 
 Real user feedback on part 21: "make it a bit cuter/skinnier. also make the zzz for the sleepy one
