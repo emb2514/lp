@@ -1,5 +1,70 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 27): cat companion rebuilt entirely on real, properly-licensed sprites,
+## with a new walk-to-center/click-to-poof behavior replacing sleep/wake/stretch/dance
+
+After five-plus rounds of the hand-drawn pixel cat never quite landing (parts 19-26), the user asked:
+"can you just find pixelated ones already created that can be used? like someone else already made
+one and I can use it without repercussions." Searched OpenGameArt/itch.io for CC0 candidates (couldn't
+fetch/browse those sites directly from this sandboxed session -- only a narrow allowlist including
+GitHub and package registries is reachable, confirmed by direct connection tests), presented license
+info from search results, and the user downloaded and sent over a cat idle+walk sprite pack
+themselves. Confirmed directly from a screenshot of its OpenGameArt page: **"cute kitty animated set"
+by kotnaszynce, CC0/Public Domain** -- free for any use, no attribution required.
+
+Also, separately, the whole intended BEHAVIOR changed: no more sleep/wake/stretch/dance. New flow,
+confirmed with the user step by step before building any of it:
+- build starts -> cat appears in the corner, **idle** loop
+- build finishes -> cat **walks** to the middle of the screen
+- arrives -> a little **heart** appears above it and beats
+- cat sits there (idle + beating heart) until clicked
+- click -> brings the main window to the front, cat **poofs** away (fast -- explicitly requested)
+- stays gone until the next batch starts processing
+
+**Assets** (all in `gui/assets/cat/`, all real pixel art, none hand-drawn by me except the poof):
+- `idle_0/1/2.png`, `walk_0/1/2/3.png`: the CC0 kotnaszynce cat, recolored from its original brown to
+  a grey tabby with a top-to-bottom ombre (dark at the head/back, fading to near-white at the paws) --
+  several rounds of real back-and-forth here: an initial relative light/dark adjustment barely showed
+  up because the original art's own shading already ran the opposite direction (confirmed by
+  inspecting row colors directly) and nearly canceled it out; the fix was a direct row-position color
+  replacement instead of a relative adjustment.
+- `heart_0` through `heart_7.png`: the heart row of a CC0 speech-bubble emote sheet the user found and
+  shared as a reference image, cropped out of the full sheet (confirmed it was a clean 8-col x 4-row,
+  16x16-per-cell grid by inspecting pixel coordinates directly, not estimating). Kept WITH its
+  speech-bubble frame per explicit request (an initial version stripped the bubble out, leaving just
+  the heart, before the user asked for the bubble back).
+- `poof_0` through `poof_4.png`: hand-drawn here, since no free pixel-art poof turned up at the right
+  tiny scale and the user's own smoothly-shaded sparkle-swirl reference image would have clashed
+  stylistically with the pixel-art sprites if used directly. Went through several rounds against that
+  reference: rounder puff-cloud shapes with their own shading+outline (not flat squares), the burst
+  rotated ~25 degrees so it isn't perfectly symmetrical, the first frame redone as an actual 4-point
+  twinkle (long thin arms + a diamond bulge at the center, tapering to each point) rather than a round
+  blob or a plain 1px-wide cross, and a stray unmirrored highlight pixel removed once the user caught
+  that frame being asymmetric.
+
+**`cat_companion.py`**: completely rewritten. All procedural pixel-grid drawing code from parts 19-26
+is gone (`_build_base_grid`, `_apply_outline`, the raw-RGBA-buffer renderer, all of it) -- sprites are
+now loaded from PNG files once and cached (`_load`/`_load_flipped`, keyed by filename), scaled with the
+same FAST/nearest-neighbor transform as before. New state machine: `"idle"` / `"walking"` /
+`"celebrating"` / `"poofing"` / `"hidden"`, driven by three separate `QTimer`s (cat-sprite frame timer,
+heart frame timer, walk-position timer) instead of the old single-timer pose-queue design, since the
+walk now needs to animate both a sprite AND a screen position simultaneously and the heart needs its
+own independent frame cadence (grow once, then loop the beat frames forever) while the cat underneath
+it keeps idling on its own cadence. The walk sprite is flipped horizontally (`QTransform().scale(-1,
+1)`) while walking/celebrating, since the sprite faces right by default but the corner-to-center walk
+goes left; back to idle's natural un-flipped orientation when idling in the corner. Public API renamed
+to match the new behavior: `start_sleeping()` -> `start_idle()`, `wake_and_celebrate()` -> `celebrate()`
+(both `main_window.py` call sites updated). Click handling: brings the main window to front always (as
+before), and additionally triggers the poof-and-hide sequence, but only when `_state == "celebrating"`
+-- clicking the cat while it's idling mid-build does nothing extra.
+
+`tests/gui/test_cat_companion.py` rewritten to match: 18 tests covering the new state machine directly
+(idle, walking, celebrating, poofing, hidden, and the transitions between them, including interrupting
+an in-progress walk with a second `celebrate()` call and a real `qtbot.mouseClick` proving the poof is
+wired to actual click events, not just the internal method) plus the `MainWindow` wiring (renamed
+accordingly) and the timer-cleanup regression test from earlier parts (now covering all three timers).
+Full suite re-run clean.
+
 ## RC3 IN PROGRESS (part 26): shading, so it stops reading as "a two-toned turd"
 
 Real user feedback, verbatim: "why is it shaped like that like shade it in and stuff. it looks like a

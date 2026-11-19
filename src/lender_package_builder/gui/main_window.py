@@ -484,7 +484,7 @@ class MainWindow(QMainWindow):
 
         if self.cat_companion is None:
             self.cat_companion = CatCompanionWidget(parent_window=self)
-        self.cat_companion.start_sleeping()
+        self.cat_companion.start_idle()
 
         worker = CallableWorker()
         worker.set_callable(
@@ -541,7 +541,7 @@ class MainWindow(QMainWindow):
         self._record_history("Warning" if is_warning else "Success", run.output_path, len(run.occurrences))
         self.stack.setCurrentWidget(self.result_view)
         if self.cat_companion is not None:
-            self.cat_companion.wake_and_celebrate()
+            self.cat_companion.celebrate()
 
     def _on_build_failed(self, user_message: str, technical_details: str) -> None:
         self.is_processing = False

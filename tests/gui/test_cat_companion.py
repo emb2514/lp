@@ -1,111 +1,205 @@
-"""Tests for the pixel-cat build-complete companion. Real user request:
-"add a little pop up notification for when its done. the pop up should
-be a pixelated cat or smth" -- refined to "the continuous sleeping
-kitty in the corner or the screen then when its done it wakes up
-stretches and does a lil dance."
+"""Tests for the cat companion that idles in the corner while a build
+runs, walks to the middle of the screen with a beating heart when it
+finishes, and poofs away on click.
 
-Covers the animation state machine directly (sleep -> wake -> stretch
--> dance -> back to sleep, with no manual QTimer waits needed --
-`_advance()` is called directly, the same method the real QTimer
-calls) and its wiring into MainWindow's build lifecycle.
+Real user request, evolved over several rounds: a hand-drawn pixel cat
+never quite landed visually, so the user asked to source pre-made,
+properly-licensed sprites instead ("can you just find pixelated ones
+already created that can be used? ... without repercussions"), then
+redefined the behavior itself: "we can scratch the sleeping [cat] and
+just have an idle cat when its working and the cat walk over when its
+done ... it stays in the middle till you click on it. once you click
+on it, it brings up the LP builder app page and the cat goes *poof*."
+
+Covers the state machine directly (idle -> walking -> celebrating ->
+poofing -> hidden, with no manual QTimer waits needed -- the internal
+`_advance_*`/`_poof_away` methods are called directly, the same ones
+the real QTimers call) and its wiring into MainWindow's build
+lifecycle.
 """
 
 from __future__ import annotations
 
-from lender_package_builder.gui.widgets.cat_companion import CatCompanionWidget, _render_frame
+from PySide6.QtCore import Qt
+
+from lender_package_builder.gui.widgets.cat_companion import (
+    CatCompanionWidget,
+    _HEART_BEAT_FRAMES,
+    _HEART_GROW_FRAMES,
+    _IDLE_FRAMES,
+    _POOF_FRAMES,
+    _WALK_FRAMES,
+    _load,
+)
 
 
-def _run_to_sleep(cat: CatCompanionWidget, max_ticks: int = 50) -> list[str]:
-    poses = [cat._pose]
+def _run_walk_to_completion(cat: CatCompanionWidget) -> None:
+    while cat._state == "walking":
+        cat._advance_walk()
+
+
+def _run_poof_to_completion(cat: CatCompanionWidget, max_ticks: int = 20) -> None:
     for _ in range(max_ticks):
-        cat._advance()
-        poses.append(cat._pose)
-        if not cat._queue and cat._pose == "sleep" and len(poses) > 2:
-            break
-    return poses
+        if cat._state != "poofing":
+            return
+        cat._advance_cat()
 
 
 # ---------------------------------------------------------------------
-# animation state machine
+# idle
 # ---------------------------------------------------------------------
 
 
-def test_starts_sleeping(qtbot):
+def test_start_idle_shows_the_cat_in_the_corner(qtbot):
     cat = CatCompanionWidget()
     qtbot.addWidget(cat)
-    cat.start_sleeping()
+    cat.start_idle()
 
-    assert cat._pose == "sleep"
+    assert cat._state == "idle"
+    assert cat.isVisible()
+    assert cat._timer.isActive()
+
+
+def test_idle_frame_cycles_on_its_own_timer(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+
+    assert cat._cat_frame == 0
+    cat._advance_cat()
+    assert cat._cat_frame == 1
+    assert cat._state == "idle"  # still idling, just the next frame
+
+
+# ---------------------------------------------------------------------
+# walking + celebrating
+# ---------------------------------------------------------------------
+
+
+def test_celebrate_walks_then_settles_into_celebrating_with_a_heart(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+    corner_pos = cat.pos()
+
+    cat.celebrate()
+    assert cat._state == "walking"
+    assert cat._flipped is True  # faces its direction of travel
+
+    _run_walk_to_completion(cat)
+
+    assert cat._state == "celebrating"
+    assert cat.pos() != corner_pos  # it actually moved
+    assert cat._heart_label.isVisible()
+
+
+def test_celebrate_before_start_idle_still_shows_it(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    # celebrate() before start_idle() has ever been called (e.g. a very
+    # first build somehow finishing without an explicit start) must
+    # still show the widget, not crash.
+    cat.celebrate()
+
+    assert cat.isVisible()
+    assert cat._state == "walking"
+
+
+def test_heart_grows_then_loops_the_beat_frames(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+    cat.celebrate()
+    _run_walk_to_completion(cat)
+
+    assert cat._heart_phase == "grow"
+    for _ in range(len(_HEART_GROW_FRAMES)):
+        cat._advance_heart()
+    assert cat._heart_phase == "beat"
+
+    # the beat phase loops forever rather than running out
+    for _ in range(10):
+        cat._advance_heart()
+    assert cat._heart_phase == "beat"
+    assert cat._state == "celebrating"  # never advances past celebrating on its own
+
+
+def test_celebrate_interrupts_an_in_progress_walk_cleanly(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+    cat.celebrate()
+    cat._advance_walk()
+    cat._advance_walk()
+    assert cat._state == "walking"  # mid-walk
+
+    # a second build finishes before the first celebration was reached
+    cat.celebrate()
+    assert cat._state == "walking"
+    _run_walk_to_completion(cat)
+    assert cat._state == "celebrating"  # still resolves cleanly, no stuck state
+
+
+# ---------------------------------------------------------------------
+# click -> poof
+# ---------------------------------------------------------------------
+
+
+def test_clicking_while_celebrating_poofs_the_cat_away(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+    cat.celebrate()
+    _run_walk_to_completion(cat)
+    assert cat._state == "celebrating"
+
+    cat._poof_away()
+    assert cat._state == "poofing"
+    assert not cat._heart_label.isVisible()
+
+    _run_poof_to_completion(cat)
+    assert cat._state == "hidden"
+    assert not cat.isVisible()
+
+
+def test_clicking_while_idle_does_not_poof(qtbot):
+    cat = CatCompanionWidget()
+    qtbot.addWidget(cat)
+    cat.start_idle()
+
+    qtbot.mouseClick(cat, Qt.MouseButton.LeftButton)
+
+    assert cat._state == "idle"
     assert cat.isVisible()
 
 
-def test_sleep_frame_alternates_on_its_own_timer(qtbot):
+def test_clicking_while_celebrating_poofs_via_a_real_click(qtbot):
     cat = CatCompanionWidget()
     qtbot.addWidget(cat)
-    cat.start_sleeping()
+    cat.start_idle()
+    cat.celebrate()
+    _run_walk_to_completion(cat)
+    assert cat._state == "celebrating"
 
-    assert cat._frame == 0
-    cat._advance()
-    assert cat._frame == 1
-    assert cat._pose == "sleep"
+    qtbot.mouseClick(cat, Qt.MouseButton.LeftButton)
+
+    assert cat._state == "poofing"
 
 
-def test_wake_and_celebrate_runs_the_full_sequence_and_returns_to_sleep(qtbot):
+def test_start_idle_after_poofing_brings_the_cat_back(qtbot):
     cat = CatCompanionWidget()
     qtbot.addWidget(cat)
-    cat.start_sleeping()
+    cat.start_idle()
+    cat.celebrate()
+    _run_walk_to_completion(cat)
+    cat._poof_away()
+    _run_poof_to_completion(cat)
+    assert cat._state == "hidden"
 
-    cat.wake_and_celebrate()
-    assert cat._pose == "wake"  # the first frame shows immediately, no tick needed
+    cat.start_idle()
 
-    poses_seen = set(_run_to_sleep(cat))
-    assert poses_seen == {"wake", "stretch", "dance", "sleep"}
-
-
-def test_sequence_visits_poses_in_order(qtbot):
-    cat = CatCompanionWidget()
-    qtbot.addWidget(cat)
-    cat.start_sleeping()
-    cat.wake_and_celebrate()
-
-    order: list[str] = []
-    for _ in range(50):
-        if not order or cat._pose != order[-1]:
-            order.append(cat._pose)
-        cat._advance()
-        if not cat._queue and cat._pose == "sleep":
-            order.append("sleep")
-            break
-
-    assert order == ["wake", "stretch", "dance", "sleep"]
-
-
-def test_calling_wake_while_already_sleeping_still_shows_it(qtbot):
-    cat = CatCompanionWidget()
-    qtbot.addWidget(cat)
-    # wake_and_celebrate() before start_sleeping() has ever been called
-    # (e.g. a very first build) must still show the widget, not crash.
-    cat.wake_and_celebrate()
-
+    assert cat._state == "idle"
     assert cat.isVisible()
-    assert cat._pose == "wake"
-
-
-def test_wake_interrupts_an_in_progress_celebration_cleanly(qtbot):
-    cat = CatCompanionWidget()
-    qtbot.addWidget(cat)
-    cat.start_sleeping()
-    cat.wake_and_celebrate()
-    cat._advance()  # -> stretch[0]
-    cat._advance()  # -> stretch[1]
-    cat._advance()  # -> dance[0]
-    assert cat._pose == "dance"  # mid-celebration
-
-    # A second build finishes before the first celebration ended.
-    cat.wake_and_celebrate()
-    assert cat._pose == "wake"
-    poses_seen = set(_run_to_sleep(cat))
-    assert "sleep" in poses_seen  # still resolves cleanly, no stuck state
 
 
 # ---------------------------------------------------------------------
@@ -113,12 +207,14 @@ def test_wake_interrupts_an_in_progress_celebration_cleanly(qtbot):
 # ---------------------------------------------------------------------
 
 
-def test_every_pose_renders_a_non_null_pixmap(qtbot):
-    for pose, frame in [("sleep", 0), ("sleep", 1), ("wake", 0), ("stretch", 0), ("stretch", 1),
-                         ("dance", 0), ("dance", 1), ("dance", 2), ("dance", 3)]:
-        pixmap = _render_frame(pose, frame)
-        assert not pixmap.isNull(), f"{pose}[{frame}] rendered a null pixmap"
+def test_every_sprite_loads_a_non_null_pixmap(qtbot):
+    for name in [*_IDLE_FRAMES, *_WALK_FRAMES, *_HEART_GROW_FRAMES, *_HEART_BEAT_FRAMES]:
+        pixmap = _load(name, 16)
+        assert not pixmap.isNull(), f"{name} loaded a null pixmap"
         assert pixmap.width() > 0 and pixmap.height() > 0
+    for name in _POOF_FRAMES:
+        pixmap = _load(name, 26)
+        assert not pixmap.isNull(), f"{name} loaded a null pixmap"
 
 
 # ---------------------------------------------------------------------
@@ -131,7 +227,7 @@ def _start_build_without_actually_running_it(window, tmp_path, monkeypatch):
     # pipeline SYNCHRONOUSLY -- fine for most tests, but these only
     # care about the cat-companion side effects of _start_build()
     # itself, not a real build result. A no-op start_worker leaves
-    # _start_build()'s own setup (including creating/waking the cat)
+    # _start_build()'s own setup (including creating/showing the cat)
     # to run, without ever executing make_build_callable()'s pipeline.
     monkeypatch.setattr("lender_package_builder.gui.main_window.start_worker", lambda worker, thread_parent=None: None)
 
@@ -150,16 +246,16 @@ def _start_build_without_actually_running_it(window, tmp_path, monkeypatch):
     window.is_processing = False
 
 
-def test_cat_companion_is_created_and_sleeping_once_a_build_starts(window, tmp_path, monkeypatch):
+def test_cat_companion_is_created_and_idling_once_a_build_starts(window, tmp_path, monkeypatch):
     assert window.cat_companion is None
 
     _start_build_without_actually_running_it(window, tmp_path, monkeypatch)
 
     assert window.cat_companion is not None
-    assert window.cat_companion._pose == "sleep"
+    assert window.cat_companion._state == "idle"
 
 
-def test_cat_wakes_up_on_a_successful_build(window, tmp_path, monkeypatch):
+def test_cat_walks_to_celebrate_on_a_successful_build(window, tmp_path, monkeypatch):
     _start_build_without_actually_running_it(window, tmp_path, monkeypatch)
 
     from tests.gui.test_results import _make_successful_run  # reuse an existing real-shaped run
@@ -167,7 +263,7 @@ def test_cat_wakes_up_on_a_successful_build(window, tmp_path, monkeypatch):
     run = _make_successful_run(tmp_path)
     window._on_build_finished(run)
 
-    assert window.cat_companion._pose == "wake"
+    assert window.cat_companion._state == "walking"
 
 
 def test_cat_does_not_celebrate_a_failed_build(window, tmp_path, monkeypatch):
@@ -177,7 +273,7 @@ def test_cat_does_not_celebrate_a_failed_build(window, tmp_path, monkeypatch):
 
     window._on_build_cancelled(ProcessingCancelledError("cancelled", stage="x", output_path=None))
 
-    assert window.cat_companion._pose == "sleep"
+    assert window.cat_companion._state == "idle"
 
 
 def test_cat_companion_closes_with_the_window(window, tmp_path, monkeypatch):
@@ -190,18 +286,20 @@ def test_cat_companion_closes_with_the_window(window, tmp_path, monkeypatch):
     assert not cat.isVisible()
 
 
-# TEST - REGRESSION: closing the companion must stop its own QTimer, not
-# just hide the window -- a leaked, still-running timer on an orphaned
-# widget across many tests in one process was a real, confirmed
-# contributor to a test-suite-wide segfault found while writing these
-# tests (a different test here originally never registered its widget
-# with qtbot at all, leaving its timer running for the rest of the run).
-def test_closing_stops_the_animation_timer(qtbot):
+# TEST - REGRESSION: closing the companion must stop every timer it
+# owns, not just hide the window -- a leaked, still-running timer on an
+# orphaned widget across many tests in one process was a real,
+# confirmed contributor to a test-suite-wide segfault found while
+# writing the original version of these tests.
+def test_closing_stops_every_timer(qtbot):
     cat = CatCompanionWidget()
     qtbot.addWidget(cat)
-    cat.start_sleeping()
-    assert cat._timer.isActive() is True
+    cat.start_idle()
+    cat.celebrate()
+    assert cat._walk_timer.isActive() is True
 
     cat.close()
 
     assert cat._timer.isActive() is False
+    assert cat._heart_timer.isActive() is False
+    assert cat._walk_timer.isActive() is False
