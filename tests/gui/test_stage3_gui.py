@@ -46,6 +46,23 @@ def test_app_icon_resolves_via_runtime_paths():
     assert (_ASSETS_DIR / "app_icon.svg").exists()
 
 
+# TEST - REGRESSION: the cat companion's sprites used to be located via
+# `Path(__file__).resolve().parent.parent / "assets" / "cat"`, which
+# resolves fine in source/dev mode (where these tests run) but silently
+# fails in the real packaged .exe -- `__file__` for a module bundled
+# inside PyInstaller's compiled archive doesn't point to a real path on
+# disk, so every sprite loaded null and the cat was invisible. Real
+# user report after testing a fresh Windows build: "wheres the cat D:".
+def test_cat_companion_sprites_resolve_via_runtime_paths():
+    from lender_package_builder.gui.widgets.cat_companion import _ASSET_DIR
+
+    assert _ASSET_DIR == runtime_paths.bundled_assets_root() / "gui" / "assets" / "cat"
+    assert (_ASSET_DIR / "idle_0.png").exists()
+    assert (_ASSET_DIR / "walk_0.png").exists()
+    assert (_ASSET_DIR / "heart_0.png").exists()
+    assert (_ASSET_DIR / "poof_0.png").exists()
+
+
 # STAGE 3 TEST 30 - DRAG-ONTO-EXE PRESELECTION SELECTS THE INPUT WITHOUT STARTING A BUILD
 def test_preselect_path_selects_input_without_starting_build(qtbot, tmp_path):
     source = tmp_path / "dragged_input"

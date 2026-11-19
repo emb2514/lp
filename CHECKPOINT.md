@@ -1,5 +1,32 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 29): the cat companion was invisible in the real packaged .exe -- a real
+## PyInstaller path-resolution bug, not a "build hasn't started yet" misunderstanding
+
+Real user report after downloading and running a fresh Windows build containing the part-27 cat
+rebuild: "wheres the cat D:" Root cause: `cat_companion.py`'s `_ASSET_DIR` was computed as
+`Path(__file__).resolve().parent.parent / "assets" / "cat"` -- this resolves correctly in source/dev
+mode (where every test in this suite runs), but `__file__` for a module bundled inside PyInstaller's
+compiled archive does not point to a real path on disk, so in the actual packaged .exe every
+`QPixmap(str(_ASSET_DIR / name))` call loaded a null pixmap. Nothing crashed -- the widget still
+existed, was still positioned correctly, and still ran its state machine -- it just never painted
+anything, so the cat was there and simply invisible. This exact problem was already solved correctly
+elsewhere in this codebase (`main_window.py`'s `_ASSETS_DIR` for `app_icon.svg`, via
+`runtime_paths.bundled_assets_root()`, which resolves to `sys._MEIPASS` when frozen) -- the cat
+companion module just wasn't written against that helper when it was built from scratch in part 27.
+
+Fixed by switching to the same `runtime_paths.bundled_assets_root()` helper. New regression test in
+`tests/gui/test_stage3_gui.py`, mirroring the existing `app_icon.svg` one exactly: asserts `_ASSET_DIR`
+is literally computed via `bundled_assets_root()` and that all four sprite-set entry files actually
+exist under it. (Noted for anyone extending this test later: like its `app_icon.svg` sibling, this
+assertion doesn't simulate true frozen-mode conditions -- `__file__`-based and
+`bundled_assets_root()`-based resolution happen to agree in source mode, where these tests run -- it
+only catches a reversion away from the helper or a wrong relative path, which is what actually
+happened here and is the same rigor this codebase already applied to the icon asset.) Also verified
+directly by constructing a real `CatCompanionWidget` and confirming `_cat_label.pixmap()` is non-null
+with real pixel dimensions, not just that the file path exists. Full suite re-run clean. A fresh
+Windows build was triggered immediately after pushing so the user doesn't have to wait to confirm it.
+
 ## RC3 IN PROGRESS (part 28): remembered per-lender output-part size presets, plus two real lender-name-
 ## missing-from-naming gaps found and fixed along the way
 

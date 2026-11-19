@@ -29,13 +29,21 @@ Final flow, confirmed with the user before building:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QPixmap, QTransform
 from PySide6.QtWidgets import QLabel, QWidget
 
-_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "cat"
+from ... import runtime_paths
+
+# NOT `Path(__file__).resolve().parent.parent / "assets" / "cat"` -- that
+# resolves correctly in source/dev mode, but `__file__` for a module
+# bundled inside PyInstaller's compiled archive does not point to a
+# real path on disk, so it silently failed to find any sprite in the
+# packaged .exe (every QPixmap loaded null, so nothing ever painted --
+# the cat was there, just invisible). `bundled_assets_root()` is the
+# same helper `main_window.py` already uses for `app_icon.svg` for
+# exactly this reason.
+_ASSET_DIR = runtime_paths.bundled_assets_root() / "gui" / "assets" / "cat"
 _SCALE = 7
 
 _IDLE_FRAMES = ["idle_0.png", "idle_1.png", "idle_2.png"]
