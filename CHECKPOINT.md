@@ -1,5 +1,15 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 30): cat companion shrunk to roughly half an inch
+
+Real user request: "can you make the cat smaller? like half an inch at most." `_SCALE` (the
+nearest-neighbor upscale factor applied to every 16px-native sprite) was 7, putting the cat at 112px
+on screen -- about 1.17in at a typical desktop's 96 DPI. Dropped to 3 (48px, ~0.5in at that same
+reference) -- the smallest whole-number scale that lands at or under the half-inch ask while staying a
+whole-number multiple (required for crisp nearest-neighbor pixel art; a fractional scale would blur
+the sprite's edges). Verified visually (still clearly reads as the cat at the smaller size) and that
+no test hardcoded a pixel size derived from the old `_SCALE` value. Full suite re-run clean.
+
 ## RC3 IN PROGRESS (part 29): the cat companion was invisible in the real packaged .exe -- a real
 ## PyInstaller path-resolution bug, not a "build hasn't started yet" misunderstanding
 

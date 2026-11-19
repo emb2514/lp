@@ -44,7 +44,7 @@ from ... import runtime_paths
 # same helper `main_window.py` already uses for `app_icon.svg` for
 # exactly this reason.
 _ASSET_DIR = runtime_paths.bundled_assets_root() / "gui" / "assets" / "cat"
-_SCALE = 7
+_SCALE = 3  # 16px sprite * 3 = 48px -- ~half an inch at a typical 96 DPI desktop
 
 _IDLE_FRAMES = ["idle_0.png", "idle_1.png", "idle_2.png"]
 _WALK_FRAMES = ["walk_0.png", "walk_1.png", "walk_2.png", "walk_3.png"]
