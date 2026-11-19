@@ -8,7 +8,23 @@ on screen -- about 1.17in at a typical desktop's 96 DPI. Dropped to 3 (48px, ~0.
 reference) -- the smallest whole-number scale that lands at or under the half-inch ask while staying a
 whole-number multiple (required for crisp nearest-neighbor pixel art; a fractional scale would blur
 the sprite's edges). Verified visually (still clearly reads as the cat at the smaller size) and that
-no test hardcoded a pixel size derived from the old `_SCALE` value. Full suite re-run clean.
+no test hardcoded a pixel size derived from the old `_SCALE` value.
+
+While confirming the full suite, hit an intermittent native segfault a few times (`malloc_consolidate():
+unaligned fastbin chunk detected`, or a bare `Fatal Python error: Segmentation fault`) -- investigated
+rather than dismissed, since it could plausibly have been a real regression from this change. Pinned it
+down precisely with a verbose run: the crash happens inside pytest's OWN output-capture machinery
+(`_pytest/capture.py`'s `snap`/`readouterr`), immediately after
+`test_progress_worker.py::test_ui_event_loop_stays_responsive_during_background_work` -- a test that
+spins up a real background thread -- had already PASSED. Confirmed it's unrelated to this change by
+reproducing it running `test_progress_worker.py` alone, repeatedly, with nothing else in the suite
+involved: 1 crash in 5 isolated runs of just that 4-test file. This is pytest's fd-based capture
+snapshotting racing real background-thread activity under this sandboxed environment's offscreen-QPA
+PySide6 build -- the same general family of native instability already documented extensively
+elsewhere in this file for other reasons, now isolated to this specific file/test. Not fixed here (it's
+pre-existing, unrelated to any shipped code, and doesn't reproduce in the real Windows CI run, which
+uses an actual display rather than offscreen) -- noted here so a future intermittent crash on this
+exact test isn't mistaken for a new regression.
 
 ## RC3 IN PROGRESS (part 29): the cat companion was invisible in the real packaged .exe -- a real
 ## PyInstaller path-resolution bug, not a "build hasn't started yet" misunderstanding
