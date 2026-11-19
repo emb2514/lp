@@ -89,3 +89,12 @@ def history_file_path() -> Path:
     """
 
     return default_log_root().parent / "history.json"
+
+
+def lender_presets_file_path() -> Path:
+    """Where remembered per-lender output-part size limits are stored --
+    see `lender_presets.py`. Same per-user app-data location as
+    `history_file_path()`.
+    """
+
+    return default_log_root().parent / "lender_presets.json"

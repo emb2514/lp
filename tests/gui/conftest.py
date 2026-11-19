@@ -72,6 +72,18 @@ def _isolated_history_file(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolated_lender_presets_file(tmp_path, monkeypatch):
+    """Points remembered per-lender size-limit presets at a per-test
+    tmp_path file instead of the real per-user app-data location, same
+    reasoning as `_isolated_history_file` above.
+    """
+
+    presets_path = tmp_path / "_gui_test_lender_presets.json"
+    monkeypatch.setattr("lender_package_builder.runtime_paths.lender_presets_file_path", lambda: presets_path)
+    yield
+
+
 #: The identity every `window` fixture instance starts pre-filled
 #: with, since Package Details now lives inline in Advanced Settings
 #: (no modal dialog to auto-accept anymore) -- any test driving

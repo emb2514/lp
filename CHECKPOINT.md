@@ -1,5 +1,53 @@
 # CHECKPOINT — RC2 Content-Aware Deduplication Upgrade
 
+## RC3 IN PROGRESS (part 28): remembered per-lender output-part size presets, plus two real lender-name-
+## missing-from-naming gaps found and fixed along the way
+
+Real user question, then request: "I'm also wondering if we can have a little suggested section
+after uploading all the files to be combined that recommends the size of the max page and size per
+output? like idk if 750 pages and 100 mb is the best for every single package you get me? or am i
+wrong?" Investigated before building anything: the right ceiling for a package is driven almost
+entirely by an EXTERNAL constraint -- what a given lender's own upload portal, email system, or
+investor/custodian accepts -- not by how big any particular batch of input files happens to be
+(confirmed there's no existing pre-build page-count estimate at all, only a raw-byte-size estimate
+used solely for the large-input safety warning, per a dedicated research pass). Proposed instead:
+remember whatever limits were used last time for a given lender, and suggest them again next time --
+the user confirmed: "this would be good ig. its gotta remember? cause idrk what the presets would be."
+
+New `lender_presets.py` (pure Python, no Qt, deliberately mirrors `history.py`'s fail-soft JSON-file
+pattern): `remember_preset(lender, max_pages_per_part, max_size_mb_per_part)` and
+`lookup_preset(lender) -> LenderPreset | None`, keyed by a case/whitespace-insensitive normalization of
+the lender name while keeping the original casing for display. Stored at
+`runtime_paths.lender_presets_file_path()` (a sibling of `history.json`).
+
+`advanced_settings.py`: a new suggestion row under the max-pages/max-size fields. Typing a lender name
+that has a remembered preset -- and whose limits differ from the current spinbox values -- shows
+"Last used for '<lender>': N pages / M MB per part." with a "Use these" button; clicking it fills in
+both spinboxes. Deliberately never applied automatically (a partial/coincidental lender-name match
+silently overwriting a value the user may have already set would be more surprising than helpful).
+`main_window.py`'s `_on_build_clicked()` calls `remember_preset()` right after reading the identity, so
+every build attempt (successful or not) updates what's remembered for that lender.
+
+While investigating the user's original naming complaint ("i need the lender included in the name...
+isn't including it in the actual name of the file"), found via a dedicated research pass that the real
+output-naming engine (`naming.py`) already includes lender correctly (fixed in an earlier commit,
+`ba37915`) -- but two real, separate gaps existed upstream of it, both fixed in this same pass:
+Advanced Settings' own live "Output folder will be named:" preview never updated when typing into the
+Lender field (left out of the `textChanged` wiring entirely, so a user watching that preview would
+reasonably conclude lender wasn't being saved at all), and the History screen built its own ad-hoc name
+string that dropped lender/adverse/loan-number entirely instead of delegating to `naming.main_folder_name`.
+Also cleaned up a stale docstring in `naming.py` that still described that already-fixed bug as current.
+
+New tests: `tests/test_lender_presets.py` (9 tests -- round-trip, case/whitespace-insensitive lookup
+preserving display casing, overwriting, independent lenders, fail-soft against a corrupt/non-dict
+file, directory auto-creation) and 7 new tests in `tests/gui/test_advanced_settings.py` (suggestion
+shown/hidden in every relevant case, case-insensitive lookup, apply-and-hide, and an end-to-end test
+that a real build click remembers the preset for the next lookup) plus a new autouse
+`_isolated_lender_presets_file` fixture in `tests/gui/conftest.py` mirroring the existing
+`_isolated_history_file` one, a new regression test in `tests/test_history.py`
+(`test_display_name_includes_lender_adverse_and_loan_number`), and a new assertion appended to the
+existing `test_identity_preview_updates_live_as_fields_change`. Full suite re-run clean.
+
 ## RC3 IN PROGRESS (part 27): cat companion rebuilt entirely on real, properly-licensed sprites,
 ## with a new walk-to-center/click-to-poof behavior replacing sleep/wake/stretch/dance
 

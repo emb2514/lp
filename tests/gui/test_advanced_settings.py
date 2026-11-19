@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from fixtures.builders import make_zip
+from lender_package_builder import lender_presets
 from lender_package_builder.models import PackageIdentity
 
 
@@ -197,6 +200,126 @@ def test_get_identity_and_set_identity_round_trip(window):
     assert settings.adverse_checkbox.isChecked() is True
     assert settings.lender_edit.text() == "UWM"
     assert settings.get_identity() == identity
+
+
+# ---------------------------------------------------------------------
+# remembered per-lender presets -- real user request: "idk if 750 pages
+# and 100 mb is the best for every single package... this would be good
+# ig. its gotta remember? cause idrk what the presets would be"
+# ---------------------------------------------------------------------
+
+
+def test_no_suggestion_when_the_lender_has_never_been_seen_before(window):
+    settings = window.advanced_settings
+
+    settings.lender_edit.setText("Some New Lender")
+
+    assert settings.preset_suggestion_label.isVisible() is False
+    assert settings.preset_suggestion_button.isVisible() is False
+
+
+def test_typing_a_remembered_lender_shows_the_suggestion(window, tmp_path, qtbot):
+    lender_presets.remember_preset("UWM", 650, 80.0)
+    zip_path = tmp_path / "sample.zip"
+    make_zip(zip_path, [("a.txt", b"hello")])
+    with qtbot.waitSignal(window.drop_zone.input_selected, timeout=2000):
+        window.drop_zone._handle_paths([zip_path])
+    settings = window.advanced_settings
+    settings.toggle_button.setChecked(True)
+    settings.max_pages_spin.setValue(750)
+    settings.max_size_spin.setValue(100.0)
+
+    settings.lender_edit.setText("UWM")
+
+    assert settings.preset_suggestion_label.isVisible() is True
+    assert "UWM" in settings.preset_suggestion_label.text()
+    assert "650" in settings.preset_suggestion_label.text()
+    assert "80.0" in settings.preset_suggestion_label.text()
+
+
+def test_suggestion_lookup_is_case_insensitive(window, tmp_path, qtbot):
+    lender_presets.remember_preset("Rocket Mortgage", 500, 60.0)
+    zip_path = tmp_path / "sample.zip"
+    make_zip(zip_path, [("a.txt", b"hello")])
+    with qtbot.waitSignal(window.drop_zone.input_selected, timeout=2000):
+        window.drop_zone._handle_paths([zip_path])
+    settings = window.advanced_settings
+    settings.toggle_button.setChecked(True)
+
+    settings.lender_edit.setText("rocket mortgage")
+
+    assert settings.preset_suggestion_label.isVisible() is True
+
+
+def test_no_suggestion_when_current_values_already_match_the_preset(window):
+    lender_presets.remember_preset("UWM", 750, 100.0)
+    settings = window.advanced_settings
+    settings.max_pages_spin.setValue(750)
+    settings.max_size_spin.setValue(100.0)
+
+    settings.lender_edit.setText("UWM")
+
+    # nothing to suggest -- the current values are already what would be suggested
+    assert settings.preset_suggestion_label.isVisible() is False
+
+
+def test_clicking_use_these_applies_the_suggestion_and_hides_it(window, tmp_path, qtbot):
+    lender_presets.remember_preset("UWM", 650, 80.0)
+    zip_path = tmp_path / "sample.zip"
+    make_zip(zip_path, [("a.txt", b"hello")])
+    with qtbot.waitSignal(window.drop_zone.input_selected, timeout=2000):
+        window.drop_zone._handle_paths([zip_path])
+    settings = window.advanced_settings
+    settings.toggle_button.setChecked(True)
+    settings.lender_edit.setText("UWM")
+    assert settings.preset_suggestion_button.isVisible() is True
+
+    qtbot.mouseClick(settings.preset_suggestion_button, Qt.MouseButton.LeftButton)
+
+    assert settings.max_pages_spin.value() == 650
+    assert settings.max_size_spin.value() == 80.0
+    assert settings.preset_suggestion_label.isVisible() is False
+
+
+def test_clearing_the_lender_field_hides_the_suggestion(window, tmp_path, qtbot):
+    lender_presets.remember_preset("UWM", 650, 80.0)
+    zip_path = tmp_path / "sample.zip"
+    make_zip(zip_path, [("a.txt", b"hello")])
+    with qtbot.waitSignal(window.drop_zone.input_selected, timeout=2000):
+        window.drop_zone._handle_paths([zip_path])
+    settings = window.advanced_settings
+    settings.toggle_button.setChecked(True)
+    settings.lender_edit.setText("UWM")
+    assert settings.preset_suggestion_label.isVisible() is True
+
+    settings.lender_edit.setText("")
+
+    assert settings.preset_suggestion_label.isVisible() is False
+
+
+# TEST - REGRESSION: a successful build-click actually remembers the
+# lender + limits used, so the NEXT time that lender is typed in (even
+# in a brand new AdvancedSettingsWidget instance), the suggestion shows
+# up -- this is the whole point of the feature, exercised end to end
+# rather than just unit-testing lender_presets.py in isolation.
+def test_build_click_remembers_the_lender_preset_for_next_time(window, tmp_path, qtbot):
+    zip_path = tmp_path / "sample.zip"
+    make_zip(zip_path, [("a.txt", b"hello")])
+    with qtbot.waitSignal(window.drop_zone.input_selected, timeout=2000):
+        window.drop_zone._handle_paths([zip_path])
+
+    settings = window.advanced_settings
+    settings.last_name_edit.setText("True")
+    settings.lender_edit.setText("UWM")
+    settings.max_pages_spin.setValue(650)
+    settings.max_size_spin.setValue(80.0)
+
+    window._on_build_clicked()
+
+    preset = lender_presets.lookup_preset("UWM")
+    assert preset is not None
+    assert preset.max_pages_per_part == 650
+    assert preset.max_size_mb_per_part == 80.0
 
 
 # TEST - Build is blocked (with an auto-expanded validation message)

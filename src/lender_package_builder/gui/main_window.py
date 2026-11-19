@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import archives, history, runtime_paths
+from .. import archives, history, lender_presets, runtime_paths
 from .._version import PRODUCT_NAME, USER_VERSION
 from ..cancellation import CancellationToken
 from ..cli import _default_config_path
@@ -468,6 +468,9 @@ class MainWindow(QMainWindow):
                 allow_large_input = True
 
         identity = self.advanced_settings.get_identity()
+        lender_presets.remember_preset(
+            identity.lender, run_config.max_pages_per_part, run_config.max_size_mb_per_part
+        )
 
         self._start_build(run_config, allow_large_input, identity)
 

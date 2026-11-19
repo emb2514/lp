@@ -24,7 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import naming
+from pathlib import Path
+
+from ... import lender_presets, naming
 from ...models import PackageIdentity
 from ..state import AdvancedSettingsValues
 
@@ -57,11 +59,13 @@ class AdvancedSettingsWidget(QWidget):
         default_max_size_mb: float,
         default_enable_content_aware_dedup: bool = True,
         parent: QWidget | None = None,
+        presets_path: Path | None = None,
     ):
         super().__init__(parent)
         self._default_max_pages = default_max_pages
         self._default_max_size_mb = default_max_size_mb
         self._default_enable_content_aware_dedup = default_enable_content_aware_dedup
+        self._presets_path = presets_path
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -169,6 +173,20 @@ class AdvancedSettingsWidget(QWidget):
 
         content_layout.addLayout(form)
 
+        self._preset_suggestion: lender_presets.LenderPreset | None = None
+        suggestion_row = QHBoxLayout()
+        self.preset_suggestion_label = QLabel()
+        self.preset_suggestion_label.setObjectName("MutedLabel")
+        self.preset_suggestion_label.setWordWrap(True)
+        suggestion_row.addWidget(self.preset_suggestion_label, 1)
+        self.preset_suggestion_button = QPushButton("Use these")
+        self.preset_suggestion_button.clicked.connect(self._apply_preset_suggestion)
+        suggestion_row.addWidget(self.preset_suggestion_button)
+        content_layout.addLayout(suggestion_row)
+        self._set_preset_suggestion_visible(False)
+        self.lender_edit.textChanged.connect(self._update_preset_suggestion)
+        self._update_preset_suggestion()
+
         self.content_aware_dedup_checkbox = QCheckBox("Enable content-aware duplicate detection")
         self.content_aware_dedup_checkbox.setChecked(default_enable_content_aware_dedup)
         self.content_aware_dedup_checkbox.setToolTip(CONTENT_AWARE_DEDUP_TOOLTIP)
@@ -234,6 +252,49 @@ class AdvancedSettingsWidget(QWidget):
 
     def _update_identity_preview(self) -> None:
         self.identity_preview_label.setText(naming.main_folder_name(self.get_identity()))
+
+    def _set_preset_suggestion_visible(self, visible: bool) -> None:
+        self.preset_suggestion_label.setVisible(visible)
+        self.preset_suggestion_button.setVisible(visible)
+
+    def _update_preset_suggestion(self) -> None:
+        """Offers to re-apply whatever max-pages/max-size limits were
+        last used for this same lender, if any -- the right limit is
+        driven by what that lender's own systems accept, not by this
+        package's own content, so remembering beats guessing. Never
+        applied automatically: a typed lender name could be a
+        coincidental partial match for another real lender, and
+        silently overwriting a value the user may have already
+        deliberately set would be more surprising than helpful.
+        """
+
+        preset = lender_presets.lookup_preset(self.lender_edit.text(), self._presets_path)
+        if preset is None:
+            self._preset_suggestion = None
+            self._set_preset_suggestion_visible(False)
+            return
+        if (
+            preset.max_pages_per_part == self.max_pages_spin.value()
+            and preset.max_size_mb_per_part == self.max_size_spin.value()
+        ):
+            # already matches -- nothing to suggest
+            self._preset_suggestion = None
+            self._set_preset_suggestion_visible(False)
+            return
+        self._preset_suggestion = preset
+        self.preset_suggestion_label.setText(
+            f"Last used for '{preset.lender_label}': {preset.max_pages_per_part:,} pages / "
+            f"{preset.max_size_mb_per_part:.1f} MB per part."
+        )
+        self._set_preset_suggestion_visible(True)
+
+    def _apply_preset_suggestion(self) -> None:
+        if self._preset_suggestion is None:
+            return
+        self.max_pages_spin.setValue(self._preset_suggestion.max_pages_per_part)
+        self.max_size_spin.setValue(self._preset_suggestion.max_size_mb_per_part)
+        self._preset_suggestion = None
+        self._set_preset_suggestion_visible(False)
 
     def validate(self) -> tuple[bool, str]:
         if not naming.sanitize_component(self.last_name_edit.text()):
