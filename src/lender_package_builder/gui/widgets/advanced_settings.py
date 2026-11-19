@@ -129,7 +129,7 @@ class AdvancedSettingsWidget(QWidget):
         self.identity_preview_label.setWordWrap(True)
         content_layout.addWidget(self.identity_preview_label)
 
-        for edit in (self.last_name_edit, self.first_name_edit, self.loan_number_edit):
+        for edit in (self.last_name_edit, self.first_name_edit, self.loan_number_edit, self.lender_edit):
             edit.textChanged.connect(self._update_identity_preview)
         self.adverse_checkbox.toggled.connect(self._update_identity_preview)
         self._update_identity_preview()

@@ -174,6 +174,13 @@ def test_identity_preview_updates_live_as_fields_change(window):
     settings.adverse_checkbox.setChecked(True)
     assert settings.identity_preview_label.text() == "True, Michael, Adverse, 6192278785"
 
+    # REGRESSION: the Lender field used to be left out of the
+    # textChanged wiring entirely, so typing into it never updated this
+    # preview -- a user watching the preview would conclude lender
+    # wasn't being saved at all, even though the real build included it.
+    settings.lender_edit.setText("UWM")
+    assert settings.identity_preview_label.text() == "True, Michael, Adverse, UWM, 6192278785"
+
 
 # TEST - get_identity()/set_identity() round-trip exactly what was entered
 def test_get_identity_and_set_identity_round_trip(window):

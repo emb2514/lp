@@ -83,13 +83,6 @@ def main_folder_name(identity: PackageIdentity) -> str:
     6192278785". Falls back to a generic name only when no identity
     field at all was provided (defense in depth -- the GUI always
     collects at least a last name before processing).
-
-    REAL USER-FACING BUG: `identity.lender` was never included here at
-    all, even though every filename inside the folder
-    (`package_part_filename`, `key_document_filename`) already includes
-    it when set -- the one place a user would look first (the folder
-    name itself, and its live preview in Advanced Settings) silently
-    left it out.
     """
 
     identity = clean_identity(identity)

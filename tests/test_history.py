@@ -110,6 +110,20 @@ def test_display_name_matches_naming_convention_and_has_fallback():
     assert blank_entry.display_name() == "(no name entered)"
 
 
+# TEST - REGRESSION: display_name() used to re-derive its own name from
+# just last/first name, silently dropping lender (and adverse/loan
+# number) even though the real output folder on disk -- built via
+# naming.main_folder_name() -- always included them. A past build's
+# History row should show the same name the actual folder has.
+def test_display_name_includes_lender_adverse_and_loan_number():
+    entry = _entry(
+        identity=PackageIdentity(
+            last_name="True", first_name="Michael", lender="UWM", loan_number="6192278785", is_adverse=True
+        )
+    )
+    assert entry.display_name() == "True, Michael, Adverse, UWM, 6192278785"
+
+
 # TEST 9 - very old entries beyond the retention cap are dropped, newest
 # entries are always kept
 def test_append_history_entry_caps_total_entries(tmp_path):

@@ -37,7 +37,14 @@ class HistoryEntry:
     def display_name(self) -> str:
         from . import naming
 
-        parts = [p for p in (self.identity.last_name, self.identity.first_name) if naming.sanitize_component(p)]
+        identity = naming.clean_identity(self.identity)
+        parts = [p for p in (identity.last_name, identity.first_name) if p]
+        if identity.is_adverse:
+            parts.append("Adverse")
+        if identity.lender:
+            parts.append(identity.lender)
+        if identity.loan_number:
+            parts.append(identity.loan_number)
         return ", ".join(parts) if parts else "(no name entered)"
 
 
